@@ -45,7 +45,7 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             Hide();
-            _trayIcon?.ShowBalloonTip("Bluetooth Transfer", "Minimized to tray", BalloonIcon.Info);
+            _trayIcon?.ShowBalloonTip("蓝牙传输", "已最小化到系统托盘", BalloonIcon.Info);
         }
     }
 

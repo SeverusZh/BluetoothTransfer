@@ -16,11 +16,10 @@ public class MainViewModel : ViewModelBase
     private readonly EventBus _eventBus;
     private readonly AppConfig _config;
     private readonly Dispatcher _dispatcher;
-    private readonly ThemeService _themeService;
     private readonly CryptoService _crypto;
     private readonly FrameReassembler _reassembler;
 
-    private string _statusText = "Ready";
+    private string _statusText = "就绪";
     private bool _isScanning;
     private bool _isConnected;
     private bool _isAdvertising;
@@ -42,9 +41,8 @@ public class MainViewModel : ViewModelBase
     public string ReceivedText { get => _receivedText; set => SetProperty(ref _receivedText, value); }
     public string DeviceName { get => _deviceName; set => SetProperty(ref _deviceName, value); }
     public DeviceInfo? SelectedDevice { get => _selectedDevice; set { SetProperty(ref _selectedDevice, value); OnPropertyChanged(nameof(CanConnect)); } }
-    public string ScanButtonText => IsScanning ? "Stop Scan" : "Scan";
-    public string AdvertiseButtonText => IsAdvertising ? "Stop Advertise" : "Advertise";
-    public string ThemeButtonText => _themeService.CurrentTheme == "dark" ? "Light Theme" : "Dark Theme";
+    public string ScanButtonText => IsScanning ? "停止扫描" : "扫描";
+    public string AdvertiseButtonText => IsAdvertising ? "停止广播" : "广播";
     public bool CanSend => IsConnected && !string.IsNullOrWhiteSpace(SendText);
     public bool CanConnect => SelectedDevice != null && !IsConnected;
     public double TransferProgress { get => _transferProgress; set => SetProperty(ref _transferProgress, value); }
@@ -59,7 +57,6 @@ public class MainViewModel : ViewModelBase
     public RelayCommand RefreshRecordsCommand { get; }
     public RelayCommand ExportCsvCommand { get; }
     public RelayCommand ExportJsonCommand { get; }
-    public RelayCommand ToggleThemeCommand { get; }
 
     public MainViewModel()
     {
@@ -73,7 +70,6 @@ public class MainViewModel : ViewModelBase
         _gattServer = new BleGattServer(_eventBus, _crypto, _reassembler);
         _rfcomm = new RfcommChannel(_eventBus, _storage, _crypto);
         _fileTransfer = new FileTransferService(_eventBus, _storage, _config, _rfcomm, _ble, _crypto);
-        _themeService = new ThemeService();
 
         ScanCommand = new RelayCommand(ToggleScan);
         AdvertiseCommand = new RelayCommand(() => SafeAsync(ToggleAdvertiseAsync));
@@ -89,15 +85,7 @@ public class MainViewModel : ViewModelBase
         RefreshRecordsCommand = new RelayCommand(() => SafeAsync(LoadRecordsAsync));
         ExportCsvCommand = new RelayCommand(ExportCsv);
         ExportJsonCommand = new RelayCommand(ExportJson);
-        ToggleThemeCommand = new RelayCommand(() =>
-        {
-            _themeService.ToggleTheme();
-            _config.Theme = _themeService.CurrentTheme;
-            _config.Save();
-            OnPropertyChanged(nameof(ThemeButtonText));
-        });
 
-        _themeService.ApplyTheme(_config.Theme);
         SubscribeEvents();
         _ = LoadRecordsAsync();
     }
@@ -169,7 +157,7 @@ public class MainViewModel : ViewModelBase
 
         _eventBus.Subscribe<FileReceivedEvent>(e => _dispatcher.Invoke(() =>
         {
-            StatusText = $"Received file: {e.FileName}";
+            StatusText = $"已接收文件：{e.FileName}";
             _ = LoadRecordsAsync();
         }));
 
@@ -197,7 +185,7 @@ public class MainViewModel : ViewModelBase
     private async Task ConnectAsync()
     {
         if (SelectedDevice == null) return;
-        StatusText = $"Connecting to {SelectedDevice.Name}...";
+        StatusText = $"正在连接到 {SelectedDevice.Name}...";
         var ok = await _ble.ConnectAsync(SelectedDevice.Addr);
         if (ok)
         {
@@ -205,7 +193,7 @@ public class MainViewModel : ViewModelBase
         }
         else
         {
-            StatusText = "Connection failed";
+            StatusText = "连接失败";
         }
     }
 
@@ -222,7 +210,7 @@ public class MainViewModel : ViewModelBase
             _gattServer.Stop();
             _rfcomm.Close();
             IsAdvertising = false;
-            StatusText = "Advertising stopped";
+            StatusText = "已停止广播";
         }
         else
         {
@@ -230,7 +218,7 @@ public class MainViewModel : ViewModelBase
             if (ok)
                 await _rfcomm.StartServerAsync();
             IsAdvertising = ok;
-            StatusText = ok ? $"Advertising as \"{DeviceName}\"" : "Failed to start advertising";
+            StatusText = ok ? $"正在广播：\"{DeviceName}\"" : "启动广播失败";
         }
     }
 
@@ -253,12 +241,12 @@ public class MainViewModel : ViewModelBase
                 Channel = "ble"
             });
             SendText = "";
-            StatusText = "Text sent";
+            StatusText = "文本已发送";
             await LoadRecordsAsync();
         }
         else
         {
-            StatusText = "Send failed";
+            StatusText = "发送失败";
         }
     }
 
@@ -267,32 +255,32 @@ public class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Multiselect = true,
-            Title = "Select files to send"
+            Title = "选择要发送的文件"
         };
         if (dialog.ShowDialog() != true) return;
 
-        StatusText = $"Sending {dialog.FileNames.Length} file(s)...";
+        StatusText = $"正在发送 {dialog.FileNames.Length} 个文件...";
         foreach (var file in dialog.FileNames)
         {
             await _fileTransfer.SendFileAsync(file);
         }
-        StatusText = "File(s) sent";
+        StatusText = "文件已发送";
         await LoadRecordsAsync();
     }
 
     public async Task SendSingleFileAsync(string filePath)
     {
-        StatusText = $"Sending {System.IO.Path.GetFileName(filePath)}...";
+        StatusText = $"正在发送 {System.IO.Path.GetFileName(filePath)}...";
         await _fileTransfer.SendFileAsync(filePath);
-        StatusText = "File sent";
+        StatusText = "文件已发送";
         await LoadRecordsAsync();
     }
 
     public async Task SendFolderAsync(string folderPath)
     {
-        StatusText = $"Sending folder...";
+        StatusText = "正在发送文件夹...";
         await _fileTransfer.SendFolderAsync(folderPath);
-        StatusText = "Folder sent";
+        StatusText = "文件夹已发送";
         await LoadRecordsAsync();
     }
 
@@ -310,26 +298,26 @@ public class MainViewModel : ViewModelBase
     {
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Filter = "CSV files|*.csv",
+            Filter = "CSV 文件|*.csv",
             FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
         };
         if (dialog.ShowDialog() != true) return;
         var records = _storage.GetRecords(limit: 10000);
         ExportService.ExportCsv(records, dialog.FileName);
-        StatusText = $"Exported {records.Count} records to CSV";
+        StatusText = $"已导出 {records.Count} 条记录到 CSV";
     }
 
     private void ExportJson()
     {
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Filter = "JSON files|*.json",
+            Filter = "JSON 文件|*.json",
             FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.json"
         };
         if (dialog.ShowDialog() != true) return;
         var records = _storage.GetRecords(limit: 10000);
         ExportService.ExportJson(records, dialog.FileName);
-        StatusText = $"Exported {records.Count} records to JSON";
+        StatusText = $"已导出 {records.Count} 条记录到 JSON";
     }
 
     private async void SafeAsync(Func<Task> action)
@@ -341,7 +329,7 @@ public class MainViewModel : ViewModelBase
         catch (Exception ex)
         {
             _eventBus.Publish(new LogEvent("ERROR", $"Command failed: {ex.Message}"));
-            StatusText = $"Error: {ex.Message}";
+            StatusText = $"错误：{ex.Message}";
         }
     }
 }
