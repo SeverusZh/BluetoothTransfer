@@ -68,7 +68,7 @@ public class StorageService
             INSERT INTO transfer_records (created_at, direction, type, peer_name, peer_addr, name, size, status, checksum, channel, local_path, note)
             VALUES (@created_at, @direction, @type, @peer_name, @peer_addr, @name, @size, @status, @checksum, @channel, @local_path, @note)
             """;
-        cmd.Parameters.AddWithValue("@created_at", record.CreatedAt);
+        cmd.Parameters.AddWithValue("@created_at", string.IsNullOrEmpty(record.CreatedAt) ? DateTime.Now.ToString("o") : record.CreatedAt);
         cmd.Parameters.AddWithValue("@direction", record.Direction);
         cmd.Parameters.AddWithValue("@type", record.Type);
         cmd.Parameters.AddWithValue("@peer_name", record.PeerName);

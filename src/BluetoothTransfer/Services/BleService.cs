@@ -16,6 +16,8 @@ public class BleService
     private static readonly Guid MetaCharUuid = Guid.Parse("A0E9F1D2-7B3C-4E5A-9F8D-1C2B3A4E5F63");
 
     private readonly EventBus _eventBus;
+    private readonly CryptoService _crypto;
+    private readonly FrameReassembler _reassembler;
     private BluetoothLEAdvertisementWatcher? _watcher;
     private BluetoothLEDevice? _connectedDevice;
     private GattDeviceService? _service;
@@ -29,9 +31,11 @@ public class BleService
     public string? ConnectedAddr { get; private set; }
     public string? ConnectedName { get; private set; }
 
-    public BleService(EventBus eventBus)
+    public BleService(EventBus eventBus, CryptoService crypto, FrameReassembler reassembler)
     {
         _eventBus = eventBus;
+        _crypto = crypto;
+        _reassembler = reassembler;
     }
 
     public void StartScan()
@@ -78,21 +82,17 @@ public class BleService
 
     public async Task<bool> ConnectAsync(string addr)
     {
+        BluetoothLEDevice? bleDevice = null;
         try
         {
             _eventBus.Publish(new LogEvent("INFO", $"Connecting to {addr}..."));
             var selector = $"System.Devices.Aep.ProtocolId:=\"{{bb7bb05e-5972-42b5-94fc-76eaa7084d49}}\" AND System.Devices.Aep.DeviceAddress:=\"{FormatMac(addr)}\"";
             var devices = await DeviceInformation.FindAllAsync(selector);
 
-            BluetoothLEDevice? bleDevice = null;
             if (devices.Count > 0)
-            {
                 bleDevice = await BluetoothLEDevice.FromIdAsync(devices[0].Id);
-            }
             else
-            {
                 bleDevice = await BluetoothLEDevice.FromBluetoothAddressAsync(ParseMac(addr));
-            }
 
             if (bleDevice == null)
             {
@@ -116,6 +116,9 @@ public class BleService
             if (txChars.Status != GattCommunicationStatus.Success || txChars.Characteristics.Count == 0)
             {
                 _eventBus.Publish(new LogEvent("ERROR", "TX characteristic not found"));
+                _service.Dispose();
+                _service = null;
+                bleDevice.Dispose();
                 return false;
             }
 
@@ -138,16 +141,36 @@ public class BleService
 
             _eventBus.Publish(new DeviceConnectedEvent(addr, bleDevice.Name));
             _eventBus.Publish(new LogEvent("INFO", $"Connected to {bleDevice.Name} ({addr})"));
+
+            await InitiateKeyExchangeAsync();
             return true;
         }
         catch (Exception ex)
         {
+            if (_connectedDevice == null)
+            {
+                _service?.Dispose();
+                _service = null;
+                bleDevice?.Dispose();
+            }
             _eventBus.Publish(new LogEvent("ERROR", $"Connect failed: {ex.Message}"));
             return false;
         }
     }
 
     public void Disconnect()
+    {
+        CleanupConnection();
+        if (ConnectedAddr != null)
+        {
+            _eventBus.Publish(new DeviceDisconnectedEvent(ConnectedAddr));
+            _eventBus.Publish(new LogEvent("INFO", $"Disconnected from {ConnectedAddr}"));
+        }
+        ConnectedAddr = null;
+        ConnectedName = null;
+    }
+
+    private void CleanupConnection()
     {
         if (_rxChar != null)
         {
@@ -158,25 +181,24 @@ public class BleService
         _metaChar = null;
         _service?.Dispose();
         _service = null;
-        _connectedDevice?.Dispose();
-        _connectedDevice = null;
-
-        if (ConnectedAddr != null)
+        if (_connectedDevice != null)
         {
-            _eventBus.Publish(new DeviceDisconnectedEvent(ConnectedAddr));
-            _eventBus.Publish(new LogEvent("INFO", $"Disconnected from {ConnectedAddr}"));
+            _connectedDevice.ConnectionStatusChanged -= OnConnectionStatusChanged;
+            _connectedDevice.Dispose();
+            _connectedDevice = null;
         }
-        ConnectedAddr = null;
-        ConnectedName = null;
     }
 
     private void OnConnectionStatusChanged(BluetoothLEDevice sender, object args)
     {
-        if (sender.ConnectionStatus == BluetoothConnectionStatus.Disconnected)
-        {
-            _eventBus.Publish(new DeviceDisconnectedEvent(ConnectedAddr ?? ""));
-            _eventBus.Publish(new LogEvent("WARN", $"Device {ConnectedAddr} disconnected"));
-        }
+        if (sender.ConnectionStatus != BluetoothConnectionStatus.Disconnected) return;
+
+        var addr = ConnectedAddr ?? "";
+        CleanupConnection();
+        ConnectedAddr = null;
+        ConnectedName = null;
+        _eventBus.Publish(new DeviceDisconnectedEvent(addr));
+        _eventBus.Publish(new LogEvent("WARN", $"Device {addr} disconnected"));
     }
 
     private void OnRxValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
@@ -187,13 +209,54 @@ public class BleService
 
         switch (frame.MsgType)
         {
-            case MsgType.DATA:
-                var text = System.Text.Encoding.UTF8.GetString(frame.Payload);
-                _eventBus.Publish(new TextReceivedEvent(ConnectedAddr ?? "", ConnectedName ?? "", text));
+            case MsgType.KEY_EXCHANGE:
+                HandlePeerPublicKey(frame.Payload);
                 break;
             case MsgType.ACK:
                 _eventBus.Publish(new LogEvent("DEBUG", $"ACK received for task {frame.TaskId}"));
                 break;
+            default:
+                _reassembler.HandleFrame(frame, "ble", ConnectedAddr ?? "", ConnectedName ?? "");
+                break;
+        }
+    }
+
+    private async Task InitiateKeyExchangeAsync()
+    {
+        try
+        {
+            if (_txChar == null) return;
+            var pub = _crypto.GetPublicKey();
+            var frame = new Frame
+            {
+                MsgType = MsgType.KEY_EXCHANGE,
+                TaskId = 0,
+                SeqNo = 0,
+                TotalLen = (uint)pub.Length,
+                Offset = 0,
+                Flags = FrameFlags.FinalChunk,
+                Payload = pub
+            };
+            var result = await _txChar.WriteValueAsync(frame.Serialize().AsBuffer(), GattWriteOption.WriteWithResponse);
+            if (result == GattCommunicationStatus.Success)
+                _eventBus.Publish(new LogEvent("INFO", "Key exchange initiated"));
+        }
+        catch (Exception ex)
+        {
+            _eventBus.Publish(new LogEvent("WARN", $"Key exchange init failed: {ex.Message}"));
+        }
+    }
+
+    private void HandlePeerPublicKey(byte[] payload)
+    {
+        try
+        {
+            _crypto.DeriveSessionKey(payload);
+            _eventBus.Publish(new LogEvent("INFO", "Session key established"));
+        }
+        catch (Exception ex)
+        {
+            _eventBus.Publish(new LogEvent("WARN", $"Key derivation failed: {ex.Message}"));
         }
     }
 
@@ -255,22 +318,39 @@ public class BleService
         }
     }
 
-    public async Task<bool> SendBinaryChunkedAsync(MsgType msgType, uint taskId, byte[] data, FrameFlags flags)
+    public async Task<bool> SendBinaryChunkedAsync(MsgType msgType, uint taskId, byte[] data, FrameFlags flags, bool encrypt = false)
     {
         if (_txChar == null) return false;
+        if (encrypt && !_crypto.HasSessionKey)
+        {
+            _eventBus.Publish(new LogEvent("WARN", "Encryption requested but no session key; sending plaintext"));
+            encrypt = false;
+        }
         try
         {
+            const int cryptoOverhead = 28;
             var maxPayload = GetMaxPayloadSize();
+            var plainChunk = encrypt ? Math.Max(maxPayload - cryptoOverhead, 1) : maxPayload;
             var totalLen = (uint)data.Length;
             ushort seq = 0;
             uint offset = 0;
 
             while (offset < totalLen)
             {
-                var len = (int)Math.Min(maxPayload, totalLen - offset);
+                var len = (int)Math.Min(plainChunk, totalLen - offset);
                 var chunk = new byte[len];
                 Array.Copy(data, offset, chunk, 0, len);
                 var isFinal = offset + len >= totalLen;
+
+                byte[] payload = chunk;
+                var frameFlags = flags;
+                if (encrypt)
+                {
+                    payload = _crypto.Encrypt(chunk);
+                    frameFlags |= FrameFlags.Encrypted;
+                }
+                if (isFinal)
+                    frameFlags |= FrameFlags.FinalChunk;
 
                 var frame = new Frame
                 {
@@ -279,8 +359,8 @@ public class BleService
                     SeqNo = seq++,
                     TotalLen = totalLen,
                     Offset = offset,
-                    Flags = isFinal ? (flags | FrameFlags.FinalChunk) : flags,
-                    Payload = chunk
+                    Flags = frameFlags,
+                    Payload = payload
                 };
                 var result = await _txChar.WriteValueAsync(frame.Serialize().AsBuffer(), GattWriteOption.WriteWithResponse);
                 if (result != GattCommunicationStatus.Success) return false;
@@ -302,7 +382,7 @@ public class BleService
         return Math.Max(mtu - frameOverhead, 20);
     }
 
-    public async Task<bool> SendMetaAsync(byte[] metaPayload)
+    public async Task<bool> SendMetaAsync(byte[] metaPayload, uint taskId)
     {
         var target = _metaChar ?? _txChar;
         if (target == null) return false;
@@ -311,7 +391,7 @@ public class BleService
             var frame = new Frame
             {
                 MsgType = MsgType.META,
-                TaskId = (uint)Random.Shared.Next(),
+                TaskId = taskId,
                 SeqNo = 0,
                 TotalLen = (uint)metaPayload.Length,
                 Offset = 0,

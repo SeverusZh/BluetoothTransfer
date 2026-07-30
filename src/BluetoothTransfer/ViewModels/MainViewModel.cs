@@ -17,6 +17,8 @@ public class MainViewModel : ViewModelBase
     private readonly AppConfig _config;
     private readonly Dispatcher _dispatcher;
     private readonly ThemeService _themeService;
+    private readonly CryptoService _crypto;
+    private readonly FrameReassembler _reassembler;
 
     private string _statusText = "Ready";
     private bool _isScanning;
@@ -24,7 +26,6 @@ public class MainViewModel : ViewModelBase
     private bool _isAdvertising;
     private string _sendText = "";
     private string _receivedText = "";
-    private string _logText = "";
     private DeviceInfo? _selectedDevice;
     private string _deviceName = Environment.MachineName;
     private double _transferProgress;
@@ -39,7 +40,6 @@ public class MainViewModel : ViewModelBase
     public bool IsAdvertising { get => _isAdvertising; set { SetProperty(ref _isAdvertising, value); OnPropertyChanged(nameof(AdvertiseButtonText)); } }
     public string SendText { get => _sendText; set => SetProperty(ref _sendText, value); }
     public string ReceivedText { get => _receivedText; set => SetProperty(ref _receivedText, value); }
-    public string LogText { get => _logText; set => SetProperty(ref _logText, value); }
     public string DeviceName { get => _deviceName; set => SetProperty(ref _deviceName, value); }
     public DeviceInfo? SelectedDevice { get => _selectedDevice; set { SetProperty(ref _selectedDevice, value); OnPropertyChanged(nameof(CanConnect)); } }
     public string ScanButtonText => IsScanning ? "Stop Scan" : "Scan";
@@ -66,11 +66,13 @@ public class MainViewModel : ViewModelBase
         _dispatcher = Dispatcher.CurrentDispatcher;
         _eventBus = new EventBus();
         _storage = new StorageService();
-        _ble = new BleService(_eventBus);
-        _gattServer = new BleGattServer(_eventBus);
-        _rfcomm = new RfcommChannel(_eventBus);
         _config = AppConfig.Load();
-        _fileTransfer = new FileTransferService(_eventBus, _storage, _config, _rfcomm, _ble);
+        _crypto = new CryptoService();
+        _reassembler = new FrameReassembler(_eventBus, _crypto);
+        _ble = new BleService(_eventBus, _crypto, _reassembler);
+        _gattServer = new BleGattServer(_eventBus, _crypto, _reassembler);
+        _rfcomm = new RfcommChannel(_eventBus, _storage, _crypto);
+        _fileTransfer = new FileTransferService(_eventBus, _storage, _config, _rfcomm, _ble, _crypto);
         _themeService = new ThemeService();
 
         ScanCommand = new RelayCommand(ToggleScan);
@@ -84,7 +86,7 @@ public class MainViewModel : ViewModelBase
             if (!string.IsNullOrEmpty(ReceivedText))
                 Clipboard.SetText(ReceivedText);
         });
-        RefreshRecordsCommand = new RelayCommand(LoadRecords);
+        RefreshRecordsCommand = new RelayCommand(() => SafeAsync(LoadRecordsAsync));
         ExportCsvCommand = new RelayCommand(ExportCsv);
         ExportJsonCommand = new RelayCommand(ExportJson);
         ToggleThemeCommand = new RelayCommand(() =>
@@ -97,7 +99,7 @@ public class MainViewModel : ViewModelBase
 
         _themeService.ApplyTheme(_config.Theme);
         SubscribeEvents();
-        LoadRecords();
+        _ = LoadRecordsAsync();
     }
 
     private void SubscribeEvents()
@@ -155,7 +157,7 @@ public class MainViewModel : ViewModelBase
                 Status = "ok",
                 Channel = "ble"
             });
-            LoadRecords();
+            _ = LoadRecordsAsync();
         }));
 
         _eventBus.Subscribe<LogEvent>(e => _dispatcher.Invoke(() =>
@@ -163,6 +165,17 @@ public class MainViewModel : ViewModelBase
             var line = $"[{DateTime.Now:HH:mm:ss}] [{e.Level}] {e.Message}";
             LogLines.Add(line);
             if (LogLines.Count > 500) LogLines.RemoveAt(0);
+        }));
+
+        _eventBus.Subscribe<FileReceivedEvent>(e => _dispatcher.Invoke(() =>
+        {
+            StatusText = $"Received file: {e.FileName}";
+            _ = LoadRecordsAsync();
+        }));
+
+        _eventBus.Subscribe<TransferProgressEvent>(e => _dispatcher.Invoke(() =>
+        {
+            TransferProgress = e.TotalBytes > 0 ? (double)e.BytesSent / e.TotalBytes * 100.0 : 0;
         }));
     }
 
@@ -186,11 +199,19 @@ public class MainViewModel : ViewModelBase
         if (SelectedDevice == null) return;
         StatusText = $"Connecting to {SelectedDevice.Name}...";
         var ok = await _ble.ConnectAsync(SelectedDevice.Addr);
-        if (!ok) StatusText = "Connection failed";
+        if (ok)
+        {
+            await _rfcomm.ConnectToServerAsync(SelectedDevice.Name);
+        }
+        else
+        {
+            StatusText = "Connection failed";
+        }
     }
 
     private void Disconnect()
     {
+        _rfcomm.Close();
         _ble.Disconnect();
     }
 
@@ -199,12 +220,15 @@ public class MainViewModel : ViewModelBase
         if (IsAdvertising)
         {
             _gattServer.Stop();
+            _rfcomm.Close();
             IsAdvertising = false;
             StatusText = "Advertising stopped";
         }
         else
         {
             var ok = await _gattServer.StartAsync(DeviceName);
+            if (ok)
+                await _rfcomm.StartServerAsync();
             IsAdvertising = ok;
             StatusText = ok ? $"Advertising as \"{DeviceName}\"" : "Failed to start advertising";
         }
@@ -230,7 +254,7 @@ public class MainViewModel : ViewModelBase
             });
             SendText = "";
             StatusText = "Text sent";
-            LoadRecords();
+            await LoadRecordsAsync();
         }
         else
         {
@@ -253,7 +277,7 @@ public class MainViewModel : ViewModelBase
             await _fileTransfer.SendFileAsync(file);
         }
         StatusText = "File(s) sent";
-        LoadRecords();
+        await LoadRecordsAsync();
     }
 
     public async Task SendSingleFileAsync(string filePath)
@@ -261,7 +285,7 @@ public class MainViewModel : ViewModelBase
         StatusText = $"Sending {System.IO.Path.GetFileName(filePath)}...";
         await _fileTransfer.SendFileAsync(filePath);
         StatusText = "File sent";
-        LoadRecords();
+        await LoadRecordsAsync();
     }
 
     public async Task SendFolderAsync(string folderPath)
@@ -269,14 +293,17 @@ public class MainViewModel : ViewModelBase
         StatusText = $"Sending folder...";
         await _fileTransfer.SendFolderAsync(folderPath);
         StatusText = "Folder sent";
-        LoadRecords();
+        await LoadRecordsAsync();
     }
 
-    private void LoadRecords()
+    private async Task LoadRecordsAsync()
     {
-        var records = _storage.GetRecords(limit: 100);
-        Records.Clear();
-        foreach (var r in records) Records.Add(r);
+        var records = await Task.Run(() => _storage.GetRecords(limit: 100));
+        _dispatcher.Invoke(() =>
+        {
+            Records.Clear();
+            foreach (var r in records) Records.Add(r);
+        });
     }
 
     private void ExportCsv()

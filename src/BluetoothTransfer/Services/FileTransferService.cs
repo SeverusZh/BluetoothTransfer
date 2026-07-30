@@ -1,5 +1,4 @@
 using System.IO;
-using System.Security.Cryptography;
 using BluetoothTransfer.Models;
 
 namespace BluetoothTransfer.Services;
@@ -11,15 +10,18 @@ public class FileTransferService
     private readonly AppConfig _config;
     private readonly RfcommChannel _rfcomm;
     private readonly BleService _ble;
+    private readonly CryptoService _crypto;
 
     public FileTransferService(EventBus eventBus, StorageService storage, AppConfig config,
-        RfcommChannel rfcomm, BleService ble)
+        RfcommChannel rfcomm, BleService ble, CryptoService crypto)
     {
         _eventBus = eventBus;
         _storage = storage;
         _config = config;
         _rfcomm = rfcomm;
         _ble = ble;
+        _crypto = crypto;
+        _eventBus.Subscribe<FileDataReceivedEvent>(OnFileDataReceived);
     }
 
     public async Task<bool> SendFileAsync(string filePath)
@@ -33,17 +35,23 @@ public class FileTransferService
 
         var taskId = (uint)Random.Shared.Next();
         var useRfcomm = fileInfo.Length > 10240;
+        var encrypt = _config.EncryptionEnabled && _crypto.HasSessionKey;
 
         try
         {
+            bool ok;
+            string checksum;
+
             if (useRfcomm)
             {
-                await _rfcomm.SendFileAsync(filePath, taskId, _config.RfcommChunkSize, _config.CompressionEnabled);
+                checksum = await RfcommChannel.ComputeSha256Async(filePath);
+                ok = await _rfcomm.SendFileAsync(filePath, taskId, checksum,
+                    _config.RfcommChunkSize, _config.CompressionEnabled, encrypt);
             }
             else
             {
                 var fileBytes = await File.ReadAllBytesAsync(filePath);
-                var checksum = RfcommChannel.ComputeSha256(fileBytes);
+                checksum = RfcommChannel.ComputeSha256(fileBytes);
                 byte[] payload = fileBytes;
                 var flags = FrameFlags.None;
 
@@ -54,8 +62,8 @@ public class FileTransferService
                 }
 
                 var meta = MetaPayload.Encode("file", fileInfo.Name, fileInfo.Length, checksum, flags);
-                await _ble.SendMetaAsync(meta);
-                await _ble.SendBinaryChunkedAsync(MsgType.DATA, taskId, payload, flags);
+                var metaOk = await _ble.SendMetaAsync(meta, taskId);
+                ok = metaOk && await _ble.SendBinaryChunkedAsync(MsgType.DATA, taskId, payload, flags, encrypt);
             }
 
             _storage.AddRecord(new TransferRecord
@@ -66,13 +74,15 @@ public class FileTransferService
                 PeerAddr = _ble.ConnectedAddr ?? "",
                 Name = fileInfo.Name,
                 Size = fileInfo.Length,
-                Status = "ok",
+                Status = ok ? "ok" : "failed",
                 Channel = useRfcomm ? "rfcomm" : "ble",
-                Checksum = RfcommChannel.ComputeSha256(await File.ReadAllBytesAsync(filePath))
+                Checksum = checksum,
+                Note = ok ? "" : "Transfer reported failure"
             });
 
-            _eventBus.Publish(new LogEvent("INFO", $"File sent: {fileInfo.Name} via {(useRfcomm ? "RFCOMM" : "BLE")}"));
-            return true;
+            _eventBus.Publish(new LogEvent(ok ? "INFO" : "ERROR",
+                $"File {(ok ? "sent" : "send failed")}: {fileInfo.Name} via {(useRfcomm ? "RFCOMM" : "BLE")}"));
+            return ok;
         }
         catch (Exception ex)
         {
@@ -93,7 +103,20 @@ public class FileTransferService
         }
     }
 
-    public string ReceiveFile(string fileName, byte[] data, bool compressed, string checksum)
+    private void OnFileDataReceived(FileDataReceivedEvent e)
+    {
+        try
+        {
+            ReceiveFile(e.FileName, e.Data, e.Compressed, e.Checksum, e.Channel, e.PeerAddr, e.PeerName);
+        }
+        catch (Exception ex)
+        {
+            _eventBus.Publish(new LogEvent("ERROR", $"Receive file failed: {ex.Message}"));
+        }
+    }
+
+    public string ReceiveFile(string fileName, byte[] data, bool compressed, string checksum,
+        string channel, string peerAddr, string peerName)
     {
         var recvDir = _config.RecvDirectory;
         Directory.CreateDirectory(recvDir);
@@ -119,18 +142,18 @@ public class FileTransferService
         {
             Direction = "recv",
             Type = "file",
-            PeerName = "remote",
-            PeerAddr = "",
+            PeerName = peerName,
+            PeerAddr = peerAddr,
             Name = fileName,
             Size = fileData.Length,
             Status = valid ? "ok" : "failed",
-            Channel = "rfcomm",
+            Channel = channel,
             Checksum = actualChecksum,
             LocalPath = destPath,
             Note = valid ? "" : "Checksum mismatch"
         });
 
-        _eventBus.Publish(new FileReceivedEvent("", "Remote Device", fileName, destPath, fileData.Length));
+        _eventBus.Publish(new FileReceivedEvent(peerAddr, peerName, fileName, destPath, fileData.Length));
         _eventBus.Publish(new LogEvent("INFO", $"File received: {fileName} -> {destPath} (valid={valid})"));
         return destPath;
     }

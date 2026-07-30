@@ -14,6 +14,8 @@ public class BleGattServer
     private static readonly Guid MetaCharUuid = Guid.Parse("A0E9F1D2-7B3C-4E5A-9F8D-1C2B3A4E5F63");
 
     private readonly EventBus _eventBus;
+    private readonly CryptoService _crypto;
+    private readonly FrameReassembler _reassembler;
     private GattServiceProvider? _serviceProvider;
     private GattLocalCharacteristic? _rxChar;
     private BluetoothLEAdvertisementPublisher? _publisher;
@@ -21,9 +23,11 @@ public class BleGattServer
 
     public bool IsAdvertising => _isAdvertising;
 
-    public BleGattServer(EventBus eventBus)
+    public BleGattServer(EventBus eventBus, CryptoService crypto, FrameReassembler reassembler)
     {
         _eventBus = eventBus;
+        _crypto = crypto;
+        _reassembler = reassembler;
     }
 
     public async Task<bool> StartAsync(string deviceName)
@@ -49,6 +53,8 @@ public class BleGattServer
             if (txResult.Error != BluetoothError.Success)
             {
                 _eventBus.Publish(new LogEvent("ERROR", $"TX char create failed: {txResult.Error}"));
+                _serviceProvider.StopAdvertising();
+                _serviceProvider = null;
                 return false;
             }
             txResult.Characteristic.WriteRequested += OnWriteRequested;
@@ -88,6 +94,9 @@ public class BleGattServer
         }
         catch (Exception ex)
         {
+            _serviceProvider?.StopAdvertising();
+            _serviceProvider = null;
+            _rxChar = null;
             _eventBus.Publish(new LogEvent("ERROR", $"GATT server start failed: {ex.Message}"));
             return false;
         }
@@ -137,20 +146,48 @@ public class BleGattServer
 
         switch (frame.MsgType)
         {
-            case MsgType.DATA:
-                var text = System.Text.Encoding.UTF8.GetString(frame.Payload);
-                _eventBus.Publish(new TextReceivedEvent("remote", "Remote Device", text));
-                SendAck(frame.TaskId);
-                break;
-            case MsgType.META:
-                var meta = MetaPayload.Decode(frame.Payload);
-                if (meta != null)
-                    _eventBus.Publish(new LogEvent("INFO", $"META received: {meta.Value.type} / {meta.Value.name} / {meta.Value.size} bytes"));
-                SendAck(frame.TaskId);
+            case MsgType.KEY_EXCHANGE:
+                HandleKeyExchange(frame.Payload);
                 break;
             case MsgType.HEARTBEAT:
                 SendAck(frame.TaskId);
                 break;
+            default:
+                _reassembler.HandleFrame(frame, "ble", "remote", "Remote Device");
+                SendAck(frame.TaskId);
+                break;
+        }
+    }
+
+    private async void HandleKeyExchange(byte[] peerPublicKey)
+    {
+        try
+        {
+            var pub = _crypto.GetPublicKey();
+            _crypto.DeriveSessionKey(peerPublicKey);
+
+            if (_rxChar == null)
+            {
+                _eventBus.Publish(new LogEvent("WARN", "No RX characteristic to return public key"));
+                return;
+            }
+
+            var frame = new Frame
+            {
+                MsgType = MsgType.KEY_EXCHANGE,
+                TaskId = 0,
+                SeqNo = 0,
+                TotalLen = (uint)pub.Length,
+                Offset = 0,
+                Flags = FrameFlags.FinalChunk,
+                Payload = pub
+            };
+            await _rxChar.NotifyValueAsync(frame.Serialize().AsBuffer());
+            _eventBus.Publish(new LogEvent("INFO", "Session key established (server)"));
+        }
+        catch (Exception ex)
+        {
+            _eventBus.Publish(new LogEvent("WARN", $"Server key exchange failed: {ex.Message}"));
         }
     }
 

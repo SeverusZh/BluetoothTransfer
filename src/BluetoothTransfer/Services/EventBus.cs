@@ -43,6 +43,8 @@ public record DeviceConnectedEvent(string Addr, string Name);
 public record DeviceDisconnectedEvent(string Addr);
 public record TextReceivedEvent(string Addr, string PeerName, string Text);
 public record FileReceivedEvent(string Addr, string PeerName, string FileName, string LocalPath, long Size);
+/// <summary>BLE 路径分片重组完成后发布，由 FileTransferService 订阅以落盘并写库。</summary>
+public record FileDataReceivedEvent(uint TaskId, string FileName, byte[] Data, bool Compressed, string Checksum, string Channel, string PeerAddr, string PeerName);
 public record TransferProgressEvent(string TaskId, long BytesSent, long TotalBytes, double Speed);
 public record ResumeOffsetEvent(uint TaskId, uint Offset);
 public record LogEvent(string Level, string Message);

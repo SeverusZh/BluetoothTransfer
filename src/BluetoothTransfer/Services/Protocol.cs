@@ -11,7 +11,8 @@ public enum MsgType : byte
     END = 0x05,
     HEARTBEAT = 0x06,
     OPEN_RFCOMM = 0x07,
-    RFCOMM_READY = 0x08
+    RFCOMM_READY = 0x08,
+    KEY_EXCHANGE = 0x09
 }
 
 [Flags]
@@ -29,6 +30,10 @@ public class Frame
     public FrameFlags Flags { get; set; } = FrameFlags.None;
     public MsgType MsgType { get; set; }
     public uint TaskId { get; set; }
+    /// <summary>
+    /// 分片序号，16 位无符号滚动计数（mod 65536），超长传输（RFCOMM 4KB 分片约 256MB）后会回绕到 0。
+    /// 仅用于诊断/调试；分片的有序写入与断点续传一律以 <see cref="Offset"/> 为准，接收方不得依赖 SeqNo 的单调性。
+    /// </summary>
     public ushort SeqNo { get; set; }
     public uint TotalLen { get; set; }
     public uint Offset { get; set; }
@@ -115,6 +120,11 @@ public class Frame
     }
 }
 
+/// <summary>
+/// 帧校验所用 CRC-16 变体固定为 <b>CRC-16/CCITT-FALSE</b>：
+/// 多项式 0x1021、初值 0xFFFF、输入/输出均不反转（refin/refout=false）、异或输出 0x0000。
+/// 序列化与反序列化使用同一算法，内部自洽；与异构对端互通时须固定为该变体，否则跨端校验失败。
+/// </summary>
 public static class Crc16
 {
     private static readonly ushort[] Table = GenerateTable();

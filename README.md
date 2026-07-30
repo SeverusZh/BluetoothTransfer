@@ -156,6 +156,11 @@ BluetoothTransfer/
 
 支持加密（AES-GCM）、压缩（Deflate）、断点续传（Offset 字段）。
 
+协议约定：
+- **CRC16** 固定为 **CRC-16/CCITT-FALSE**（多项式 `0x1021`、初值 `0xFFFF`、输入/输出均不反转、异或输出 `0x0000`）。与异构对端互通时须固定该变体。
+- **SeqNo** 为 16 位无符号滚动计数（mod 65536），超长传输后会回绕；仅用于诊断，分片有序写入与续传一律以 **Offset** 为准。
+- **加密**：BLE 连接建立后经 `KEY_EXCHANGE` 控制帧完成 ECDH P-256 密钥协商，文件 `DATA` 载荷按帧 AES-GCM 加密并置 `Flags.Encrypted`（`META` 保持明文）；校验和始终针对未压缩、未加密的原始文件。
+
 ## 传输记录存储
 
 SQLite 数据库，`transfer_records` 表包含：时间、方向、类型、文件名/摘要、大小、对端设备、状态、SHA-256 校验值、传输通道、本地路径等字段；`devices` 表管理设备别名、收藏、最近连接时间。
