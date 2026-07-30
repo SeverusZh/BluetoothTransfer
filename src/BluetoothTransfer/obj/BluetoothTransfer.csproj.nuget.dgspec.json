@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "D:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj": {}
+    "E:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj": {}
   },
   "projects": {
-    "D:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj": {
+    "E:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj",
+        "projectUniqueName": "E:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj",
         "projectName": "BluetoothTransfer",
-        "projectPath": "D:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj",
-        "packagesPath": "C:\\Users\\admin\\.nuget\\packages\\",
-        "outputPath": "D:\\OpenCode\\Project001\\src\\BluetoothTransfer\\obj\\",
+        "projectPath": "E:\\OpenCode\\Project001\\src\\BluetoothTransfer\\BluetoothTransfer.csproj",
+        "packagesPath": "C:\\Users\\Sev\\.nuget\\packages\\",
+        "outputPath": "E:\\OpenCode\\Project001\\src\\BluetoothTransfer\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "C:\\Users\\admin\\AppData\\Roaming\\NuGet\\NuGet.Config"
+          "C:\\Users\\Sev\\AppData\\Roaming\\NuGet\\NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0-windows10.0.19041.0"
@@ -37,7 +37,8 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        }
+        },
+        "SdkAnalysisLevel": "9.0.300"
       },
       "frameworks": {
         "net8.0-windows10.0.19041": {
@@ -65,22 +66,38 @@
           "warn": true,
           "downloadDependencies": [
             {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.win-x64",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
+            },
+            {
               "name": "Microsoft.Windows.SDK.NET.Ref",
-              "version": "[10.0.19041.56, 10.0.19041.56]"
+              "version": "[10.0.19041.57, 10.0.19041.57]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Ref",
+              "version": "[8.0.28, 8.0.28]"
             }
           ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             },
-            "Microsoft.Windows.SDK.NET.Ref": {
+            "Microsoft.Windows.SDK.NET.Ref.Windows": {
               "privateAssets": "all"
             },
             "Microsoft.WindowsDesktop.App.WPF": {
               "privateAssets": "none"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.423/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.315/PortableRuntimeIdentifierGraph.json"
         }
       }
     }
