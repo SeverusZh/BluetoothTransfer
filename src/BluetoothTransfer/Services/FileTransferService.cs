@@ -29,7 +29,7 @@ public class FileTransferService
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"File not found: {filePath}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"文件不存在：{filePath}"));
             return false;
         }
 
@@ -68,37 +68,37 @@ public class FileTransferService
 
             _storage.AddRecord(new TransferRecord
             {
-                Direction = "send",
-                Type = "file",
-                PeerName = _ble.ConnectedName ?? "remote",
+                Direction = TransferConst.DirSend,
+                Type = TransferConst.TypeFile,
+                PeerName = _ble.ConnectedName ?? "远程设备",
                 PeerAddr = _ble.ConnectedAddr ?? "",
                 Name = fileInfo.Name,
                 Size = fileInfo.Length,
-                Status = ok ? "ok" : "failed",
-                Channel = useRfcomm ? "rfcomm" : "ble",
+                Status = ok ? TransferConst.StatusOk : TransferConst.StatusFailed,
+                Channel = useRfcomm ? TransferConst.ChannelRfcomm : TransferConst.ChannelBle,
                 Checksum = checksum,
-                Note = ok ? "" : "Transfer reported failure"
+                Note = ok ? "" : "传输报告失败"
             });
 
             _eventBus.Publish(new LogEvent(ok ? "INFO" : "ERROR",
-                $"File {(ok ? "sent" : "send failed")}: {fileInfo.Name} via {(useRfcomm ? "RFCOMM" : "BLE")}"));
+                $"文件{(ok ? "已发送" : "发送失败")}：{fileInfo.Name}，通道 {(useRfcomm ? "RFCOMM" : "BLE")}"));
             return ok;
         }
         catch (Exception ex)
         {
             _storage.AddRecord(new TransferRecord
             {
-                Direction = "send",
-                Type = "file",
-                PeerName = _ble.ConnectedName ?? "remote",
+                Direction = TransferConst.DirSend,
+                Type = TransferConst.TypeFile,
+                PeerName = _ble.ConnectedName ?? "远程设备",
                 PeerAddr = _ble.ConnectedAddr ?? "",
                 Name = fileInfo.Name,
                 Size = fileInfo.Length,
-                Status = "failed",
-                Channel = useRfcomm ? "rfcomm" : "ble",
+                Status = TransferConst.StatusFailed,
+                Channel = useRfcomm ? TransferConst.ChannelRfcomm : TransferConst.ChannelBle,
                 Note = ex.Message
             });
-            _eventBus.Publish(new LogEvent("ERROR", $"File send failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"文件发送失败：{ex.Message}"));
             return false;
         }
     }
@@ -111,57 +111,60 @@ public class FileTransferService
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Receive file failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"文件接收失败：{ex.Message}"));
         }
     }
 
-    public string ReceiveFile(string fileName, byte[] data, bool compressed, string checksum,
-        string channel, string peerAddr, string peerName)
+    public static string ResolveDestPath(string recvDir, string fileName)
     {
-        var recvDir = _config.RecvDirectory;
         Directory.CreateDirectory(recvDir);
-
-        byte[] fileData = compressed ? RfcommChannel.DecompressData(data) : data;
-
-        var actualChecksum = RfcommChannel.ComputeSha256(fileData);
-        var valid = string.IsNullOrEmpty(checksum) || actualChecksum == checksum;
-
         var safeName = string.Join("_", fileName.Split(Path.GetInvalidFileNameChars()));
         var destPath = Path.Combine(recvDir, safeName);
-
         if (File.Exists(destPath))
         {
             var nameNoExt = Path.GetFileNameWithoutExtension(safeName);
             var ext = Path.GetExtension(safeName);
             destPath = Path.Combine(recvDir, $"{nameNoExt}_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
         }
+        return destPath;
+    }
+
+    public string ReceiveFile(string fileName, byte[] data, bool compressed, string checksum,
+        string channel, string peerAddr, string peerName)
+    {
+        var destPath = ResolveDestPath(_config.RecvDirectory, fileName);
+
+        byte[] fileData = compressed ? RfcommChannel.DecompressData(data) : data;
+
+        var actualChecksum = RfcommChannel.ComputeSha256(fileData);
+        var valid = string.IsNullOrEmpty(checksum) || actualChecksum == checksum;
 
         File.WriteAllBytes(destPath, fileData);
 
         _storage.AddRecord(new TransferRecord
         {
-            Direction = "recv",
-            Type = "file",
+            Direction = TransferConst.DirRecv,
+            Type = TransferConst.TypeFile,
             PeerName = peerName,
             PeerAddr = peerAddr,
             Name = fileName,
             Size = fileData.Length,
-            Status = valid ? "ok" : "failed",
+            Status = valid ? TransferConst.StatusOk : TransferConst.StatusFailed,
             Channel = channel,
             Checksum = actualChecksum,
             LocalPath = destPath,
-            Note = valid ? "" : "Checksum mismatch"
+            Note = valid ? "" : "校验和不匹配"
         });
 
         _eventBus.Publish(new FileReceivedEvent(peerAddr, peerName, fileName, destPath, fileData.Length));
-        _eventBus.Publish(new LogEvent("INFO", $"File received: {fileName} -> {destPath} (valid={valid})"));
+        _eventBus.Publish(new LogEvent("INFO", $"文件已接收：{fileName} -> {destPath} (valid={valid})"));
         return destPath;
     }
 
     public async Task SendFolderAsync(string folderPath)
     {
         var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories);
-        _eventBus.Publish(new LogEvent("INFO", $"Sending folder: {folderPath} ({files.Length} files)"));
+        _eventBus.Publish(new LogEvent("INFO", $"正在发送文件夹：{folderPath}（{files.Length} 个文件）"));
 
         foreach (var file in files)
         {

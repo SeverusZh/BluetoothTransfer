@@ -15,6 +15,7 @@ public class RfcommChannel
     private readonly EventBus _eventBus;
     private readonly StorageService _storage;
     private readonly CryptoService _crypto;
+    private readonly AppConfig _config;
 
     private StreamSocketListener? _listener;
     private RfcommServiceProvider? _provider;
@@ -26,11 +27,12 @@ public class RfcommChannel
 
     public bool IsActive => _listener != null || _clientSocket != null;
 
-    public RfcommChannel(EventBus eventBus, StorageService storage, CryptoService crypto)
+    public RfcommChannel(EventBus eventBus, StorageService storage, CryptoService crypto, AppConfig config)
     {
         _eventBus = eventBus;
         _storage = storage;
         _crypto = crypto;
+        _config = config;
     }
 
     public async Task<bool> StartServerAsync()
@@ -41,12 +43,12 @@ public class RfcommChannel
             _listener = new StreamSocketListener();
             _listener.ConnectionReceived += OnConnectionReceived;
             _provider.StartAdvertising(_listener, true);
-            _eventBus.Publish(new LogEvent("INFO", "RFCOMM server started"));
+            _eventBus.Publish(new LogEvent("INFO", "RFCOMM 服务端已启动"));
             return true;
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM server start failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM 服务端启动失败：{ex.Message}"));
             return false;
         }
     }
@@ -65,14 +67,14 @@ public class RfcommChannel
 
             if (target == null)
             {
-                _eventBus.Publish(new LogEvent("ERROR", "No RFCOMM device found"));
+                _eventBus.Publish(new LogEvent("ERROR", "未找到 RFCOMM 设备"));
                 return false;
             }
 
             var service = await RfcommDeviceService.FromIdAsync(target.Id);
             if (service == null)
             {
-                _eventBus.Publish(new LogEvent("ERROR", "Could not get RFCOMM service"));
+                _eventBus.Publish(new LogEvent("ERROR", "无法获取 RFCOMM 服务"));
                 return false;
             }
 
@@ -80,20 +82,20 @@ public class RfcommChannel
             await socket.ConnectAsync(service.ConnectionHostName, service.ConnectionServiceName);
             _clientSocket = socket;
             _ = ReadLoopAsync(_clientSocket);
-            _eventBus.Publish(new LogEvent("INFO", $"RFCOMM client connected to {target.Name}"));
+            _eventBus.Publish(new LogEvent("INFO", $"RFCOMM 已连接到 {target.Name}"));
             return true;
         }
         catch (Exception ex)
         {
             socket?.Dispose();
-            _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM client connect failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM 连接失败：{ex.Message}"));
             return false;
         }
     }
 
     private async void OnConnectionReceived(StreamSocketListener sender, StreamSocketListenerConnectionReceivedEventArgs args)
     {
-        _eventBus.Publish(new LogEvent("INFO", "RFCOMM client connected"));
+        _eventBus.Publish(new LogEvent("INFO", "RFCOMM 对端已连接"));
         using var socket = args.Socket;
         try
         {
@@ -102,7 +104,7 @@ public class RfcommChannel
         finally
         {
             CloseOpenStreams();
-            _eventBus.Publish(new LogEvent("INFO", "RFCOMM client disconnected"));
+            _eventBus.Publish(new LogEvent("INFO", "RFCOMM 对端已断开"));
         }
     }
 
@@ -132,7 +134,7 @@ public class RfcommChannel
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("WARN", $"RFCOMM read error: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("WARN", $"RFCOMM 读取错误：{ex.Message}"));
         }
     }
 
@@ -175,7 +177,7 @@ public class RfcommChannel
         if (existing != null && existing.FileName == name && existing.ReceivedBytes > 0)
         {
             resumeOffset = (uint)existing.ReceivedBytes;
-            _eventBus.Publish(new LogEvent("INFO", $"Resuming task {frame.TaskId}: {name} from offset {resumeOffset}"));
+            _eventBus.Publish(new LogEvent("INFO", $"续传任务 {frame.TaskId}：{name}，偏移 {resumeOffset}"));
             _activeReceives[frame.TaskId] = existing;
         }
         else
@@ -196,7 +198,7 @@ public class RfcommChannel
             _activeReceives[frame.TaskId] = state;
         }
 
-        _eventBus.Publish(new LogEvent("INFO", $"META: {name} ({size} bytes, resume={resumeOffset})"));
+        _eventBus.Publish(new LogEvent("INFO", $"元数据：{name}（{size} 字节，续传偏移={resumeOffset}）"));
         _eventBus.Publish(new ResumeOffsetEvent(frame.TaskId, resumeOffset));
 
         _ = SendFrameOnSocketAsync(socket, new Frame
@@ -213,7 +215,7 @@ public class RfcommChannel
     {
         if (!_activeReceives.TryGetValue(frame.TaskId, out var state))
         {
-            _eventBus.Publish(new LogEvent("WARN", $"DATA for unknown task {frame.TaskId}"));
+            _eventBus.Publish(new LogEvent("WARN", $"收到未知任务 {frame.TaskId} 的数据"));
             return;
         }
 
@@ -224,7 +226,7 @@ public class RfcommChannel
             {
                 if (!_crypto.HasSessionKey)
                 {
-                    _eventBus.Publish(new LogEvent("ERROR", $"Encrypted chunk without session key (task {frame.TaskId})"));
+                    _eventBus.Publish(new LogEvent("ERROR", $"收到加密分片但无会话密钥（任务 {frame.TaskId}）"));
                     return;
                 }
                 payload = _crypto.Decrypt(payload);
@@ -243,7 +245,7 @@ public class RfcommChannel
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Write chunk failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"写入分片失败：{ex.Message}"));
         }
     }
 
@@ -259,19 +261,8 @@ public class RfcommChannel
 
         try
         {
-            var recvDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                "BluetoothTransfer", "recv");
-            Directory.CreateDirectory(recvDir);
-
-            var safeName = string.Join("_", state.FileName.Split(Path.GetInvalidFileNameChars()));
-            var destPath = Path.Combine(recvDir, safeName);
-            if (File.Exists(destPath))
-            {
-                var nameNoExt = Path.GetFileNameWithoutExtension(safeName);
-                var ext = Path.GetExtension(safeName);
-                destPath = Path.Combine(recvDir, $"{nameNoExt}_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
-            }
+            var recvDir = _config.RecvDirectory;
+            var destPath = FileTransferService.ResolveDestPath(recvDir, state.FileName);
 
             string actualChecksum;
             long finalSize;
@@ -300,25 +291,25 @@ public class RfcommChannel
 
             _storage.AddRecord(new TransferRecord
             {
-                Direction = "recv",
-                Type = "file",
-                PeerName = "Remote Device",
+                Direction = TransferConst.DirRecv,
+                Type = TransferConst.TypeFile,
+                PeerName = "远程设备",
                 PeerAddr = "",
                 Name = state.FileName,
                 Size = finalSize,
-                Status = valid ? "ok" : "failed",
-                Channel = "rfcomm",
+                Status = valid ? TransferConst.StatusOk : TransferConst.StatusFailed,
+                Channel = TransferConst.ChannelRfcomm,
                 Checksum = actualChecksum,
                 LocalPath = destPath,
-                Note = valid ? "" : "Checksum mismatch"
+                Note = valid ? "" : "校验和不匹配"
             });
 
-            _eventBus.Publish(new FileReceivedEvent("", "Remote Device", state.FileName, destPath, finalSize));
-            _eventBus.Publish(new LogEvent("INFO", $"File complete: {state.FileName} -> {destPath} (valid={valid})"));
+            _eventBus.Publish(new FileReceivedEvent("", "远程设备", state.FileName, destPath, finalSize));
+            _eventBus.Publish(new LogEvent("INFO", $"文件接收完成：{state.FileName} -> {destPath} (校验={(valid ? "通过" : "失败")})"));
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Finalize failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"文件落盘失败：{ex.Message}"));
         }
     }
 
@@ -327,13 +318,13 @@ public class RfcommChannel
     {
         if (_clientSocket == null)
         {
-            _eventBus.Publish(new LogEvent("ERROR", "RFCOMM not connected"));
+            _eventBus.Publish(new LogEvent("ERROR", "RFCOMM 未连接"));
             return false;
         }
 
         if (encrypt && !_crypto.HasSessionKey)
         {
-            _eventBus.Publish(new LogEvent("WARN", "Encryption requested but no session key; sending plaintext"));
+            _eventBus.Publish(new LogEvent("WARN", "请求加密但无会话密钥，将以明文发送"));
             encrypt = false;
         }
 
@@ -383,12 +374,12 @@ public class RfcommChannel
             }
             else
             {
-                _eventBus.Publish(new LogEvent("WARN", $"No resume offset from peer for task {taskId}; starting from {offset}"));
+                _eventBus.Publish(new LogEvent("WARN", $"任务 {taskId} 未收到对端续传偏移，从 {offset} 开始"));
             }
             _pendingResume.TryRemove(taskId, out _);
 
             if (offset > 0)
-                _eventBus.Publish(new LogEvent("INFO", $"Resuming transfer from offset {offset}/{totalLen}"));
+                _eventBus.Publish(new LogEvent("INFO", $"从偏移 {offset}/{totalLen} 续传"));
 
             ushort seq = 0;
             using (var fs = new FileStream(dataSource, FileMode.Open, FileAccess.Read, FileShare.None))
@@ -441,13 +432,13 @@ public class RfcommChannel
             });
             await writer.StoreAsync();
 
-            _eventBus.Publish(new LogEvent("INFO", $"File sent: {fileInfo.Name} ({totalLen} bytes, start={offset})"));
+            _eventBus.Publish(new LogEvent("INFO", $"文件已发送：{fileInfo.Name}（{totalLen} 字节，起始={offset}）"));
             return true;
         }
         catch (Exception ex)
         {
             _pendingResume.TryRemove(taskId, out _);
-            _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM send failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM 发送失败：{ex.Message}"));
             return false;
         }
         finally
@@ -469,7 +460,7 @@ public class RfcommChannel
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("WARN", $"Send control frame failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("WARN", $"发送控制帧失败：{ex.Message}"));
         }
     }
 
@@ -543,6 +534,6 @@ public class RfcommChannel
         _provider = null;
         _listener?.Dispose();
         _listener = null;
-        _eventBus.Publish(new LogEvent("INFO", "RFCOMM channel closed"));
+        _eventBus.Publish(new LogEvent("INFO", "RFCOMM 通道已关闭"));
     }
 }

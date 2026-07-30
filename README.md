@@ -41,7 +41,6 @@
 ### 体验增强
 - 系统托盘常驻 + 最小化到托盘
 - 传输完成系统通知（可配声音）
-- 暗色 / 浅色主题切换
 - 窗口置顶 + 全局快捷键唤起
 - 对端离线检测与自动重连
 - 蓝牙适配器状态检测与开关引导
@@ -130,10 +129,8 @@ BluetoothTransfer/
 │   │   ├── StorageService.cs     # SQLite 持久化
 │   │   ├── ExportService.cs      # CSV/JSON 导出
 │   │   ├── EventBus.cs           # 事件总线
-│   │   ├── ThemeService.cs       # 主题切换
 │   │   └── TransferState.cs      # 传输状态机
 │   ├── ViewModels/               # MVVM ViewModel
-│   ├── Themes/                   # 暗色/浅色主题 XAML
 │   ├── App.xaml / MainWindow.xaml
 │   └── BluetoothTransfer.csproj
 ├── tests/FeasibilityTest/        # BLE + RFCOMM 可行性验证

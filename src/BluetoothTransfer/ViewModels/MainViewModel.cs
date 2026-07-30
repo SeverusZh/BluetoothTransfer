@@ -68,7 +68,7 @@ public class MainViewModel : ViewModelBase
         _reassembler = new FrameReassembler(_eventBus, _crypto);
         _ble = new BleService(_eventBus, _crypto, _reassembler);
         _gattServer = new BleGattServer(_eventBus, _crypto, _reassembler);
-        _rfcomm = new RfcommChannel(_eventBus, _storage, _crypto);
+        _rfcomm = new RfcommChannel(_eventBus, _storage, _crypto, _config);
         _fileTransfer = new FileTransferService(_eventBus, _storage, _config, _rfcomm, _ble, _crypto);
 
         ScanCommand = new RelayCommand(ToggleScan);
@@ -109,7 +109,7 @@ public class MainViewModel : ViewModelBase
         _eventBus.Subscribe<DeviceConnectedEvent>(e => _dispatcher.Invoke(() =>
         {
             IsConnected = true;
-            StatusText = $"Connected: {e.Name}";
+            StatusText = $"已连接：{e.Name}";
             var dev = Devices.FirstOrDefault(d => d.Addr == e.Addr);
             if (dev != null) dev.IsConnected = true;
             _storage.UpsertDevice(new DeviceInfo
@@ -124,7 +124,7 @@ public class MainViewModel : ViewModelBase
         _eventBus.Subscribe<DeviceDisconnectedEvent>(e => _dispatcher.Invoke(() =>
         {
             IsConnected = false;
-            StatusText = "Disconnected";
+            StatusText = "已断开连接";
             var dev = Devices.FirstOrDefault(d => d.Addr == e.Addr);
             if (dev != null) dev.IsConnected = false;
         }));
@@ -134,17 +134,7 @@ public class MainViewModel : ViewModelBase
             ReceivedText = e.Text;
             if (_config.AutoCopyClipboard)
                 Clipboard.SetText(e.Text);
-            _storage.AddRecord(new TransferRecord
-            {
-                Direction = "recv",
-                Type = "text",
-                PeerName = e.PeerName,
-                PeerAddr = e.Addr,
-                Name = e.Text.Length > 50 ? e.Text[..50] + "..." : e.Text,
-                Size = System.Text.Encoding.UTF8.GetByteCount(e.Text),
-                Status = "ok",
-                Channel = "ble"
-            });
+            _storage.AddRecord(MakeTextRecord(TransferConst.DirRecv, e.PeerName, e.Addr, e.Text));
             _ = LoadRecordsAsync();
         }));
 
@@ -229,17 +219,7 @@ public class MainViewModel : ViewModelBase
         var ok = await _ble.SendTextAsync(text);
         if (ok)
         {
-            _storage.AddRecord(new TransferRecord
-            {
-                Direction = "send",
-                Type = "text",
-                PeerName = _ble.ConnectedName ?? "",
-                PeerAddr = _ble.ConnectedAddr ?? "",
-                Name = text.Length > 50 ? text[..50] + "..." : text,
-                Size = System.Text.Encoding.UTF8.GetByteCount(text),
-                Status = "ok",
-                Channel = "ble"
-            });
+            _storage.AddRecord(MakeTextRecord(TransferConst.DirSend, _ble.ConnectedName ?? "", _ble.ConnectedAddr ?? "", text));
             SendText = "";
             StatusText = "文本已发送";
             await LoadRecordsAsync();
@@ -294,30 +274,36 @@ public class MainViewModel : ViewModelBase
         });
     }
 
-    private void ExportCsv()
+    private void ExportCsv() => ExportRecords("CSV 文件|*.csv", "csv", ExportService.ExportCsv);
+
+    private void ExportJson() => ExportRecords("JSON 文件|*.json", "json", ExportService.ExportJson);
+
+    private void ExportRecords(string filter, string ext, Func<List<TransferRecord>, string, string> export)
     {
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Filter = "CSV 文件|*.csv",
-            FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
+            Filter = filter,
+            FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}"
         };
         if (dialog.ShowDialog() != true) return;
         var records = _storage.GetRecords(limit: 10000);
-        ExportService.ExportCsv(records, dialog.FileName);
-        StatusText = $"已导出 {records.Count} 条记录到 CSV";
+        export(records, dialog.FileName);
+        StatusText = $"已导出 {records.Count} 条记录到 {ext.ToUpperInvariant()}";
     }
 
-    private void ExportJson()
+    private static TransferRecord MakeTextRecord(string direction, string peerName, string peerAddr, string text)
     {
-        var dialog = new Microsoft.Win32.SaveFileDialog
+        return new TransferRecord
         {
-            Filter = "JSON 文件|*.json",
-            FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.json"
+            Direction = direction,
+            Type = TransferConst.TypeText,
+            PeerName = peerName,
+            PeerAddr = peerAddr,
+            Name = text.Length > 50 ? text[..50] + "..." : text,
+            Size = System.Text.Encoding.UTF8.GetByteCount(text),
+            Status = TransferConst.StatusOk,
+            Channel = TransferConst.ChannelBle
         };
-        if (dialog.ShowDialog() != true) return;
-        var records = _storage.GetRecords(limit: 10000);
-        ExportService.ExportJson(records, dialog.FileName);
-        StatusText = $"已导出 {records.Count} 条记录到 JSON";
     }
 
     private async void SafeAsync(Func<Task> action)
@@ -328,7 +314,7 @@ public class MainViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Command failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"命令执行失败：{ex.Message}"));
             StatusText = $"错误：{ex.Message}";
         }
     }

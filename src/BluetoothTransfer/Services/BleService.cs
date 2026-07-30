@@ -48,7 +48,7 @@ public class BleService
         };
         _watcher.Received += OnAdvertisementReceived;
         _watcher.Start();
-        _eventBus.Publish(new LogEvent("INFO", "BLE scan started"));
+        _eventBus.Publish(new LogEvent("INFO", "BLE 扫描已启动"));
     }
 
     public void StopScan()
@@ -57,7 +57,7 @@ public class BleService
         _watcher.Received -= OnAdvertisementReceived;
         _watcher.Stop();
         _watcher = null;
-        _eventBus.Publish(new LogEvent("INFO", "BLE scan stopped"));
+        _eventBus.Publish(new LogEvent("INFO", "BLE 扫描已停止"));
     }
 
     private void OnAdvertisementReceived(BluetoothLEAdvertisementWatcher sender, BluetoothLEAdvertisementReceivedEventArgs args)
@@ -85,7 +85,7 @@ public class BleService
         BluetoothLEDevice? bleDevice = null;
         try
         {
-            _eventBus.Publish(new LogEvent("INFO", $"Connecting to {addr}..."));
+            _eventBus.Publish(new LogEvent("INFO", $"正在连接 {addr}..."));
             var selector = $"System.Devices.Aep.ProtocolId:=\"{{bb7bb05e-5972-42b5-94fc-76eaa7084d49}}\" AND System.Devices.Aep.DeviceAddress:=\"{FormatMac(addr)}\"";
             var devices = await DeviceInformation.FindAllAsync(selector);
 
@@ -96,14 +96,14 @@ public class BleService
 
             if (bleDevice == null)
             {
-                _eventBus.Publish(new LogEvent("ERROR", $"Device {addr} not found"));
+                _eventBus.Publish(new LogEvent("ERROR", $"未找到设备 {addr}"));
                 return false;
             }
 
             var services = await bleDevice.GetGattServicesForUuidAsync(ServiceUuid);
             if (services.Status != GattCommunicationStatus.Success || services.Services.Count == 0)
             {
-                _eventBus.Publish(new LogEvent("ERROR", $"GATT service not found on {addr}"));
+                _eventBus.Publish(new LogEvent("ERROR", $"设备 {addr} 上未找到 GATT 服务"));
                 bleDevice.Dispose();
                 return false;
             }
@@ -115,7 +115,7 @@ public class BleService
 
             if (txChars.Status != GattCommunicationStatus.Success || txChars.Characteristics.Count == 0)
             {
-                _eventBus.Publish(new LogEvent("ERROR", "TX characteristic not found"));
+                _eventBus.Publish(new LogEvent("ERROR", "未找到 TX 特征"));
                 _service.Dispose();
                 _service = null;
                 bleDevice.Dispose();
@@ -140,7 +140,7 @@ public class BleService
             _connectedDevice.ConnectionStatusChanged += OnConnectionStatusChanged;
 
             _eventBus.Publish(new DeviceConnectedEvent(addr, bleDevice.Name));
-            _eventBus.Publish(new LogEvent("INFO", $"Connected to {bleDevice.Name} ({addr})"));
+            _eventBus.Publish(new LogEvent("INFO", $"已连接到 {bleDevice.Name}（{addr}）"));
 
             await InitiateKeyExchangeAsync();
             return true;
@@ -153,7 +153,7 @@ public class BleService
                 _service = null;
                 bleDevice?.Dispose();
             }
-            _eventBus.Publish(new LogEvent("ERROR", $"Connect failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"连接失败：{ex.Message}"));
             return false;
         }
     }
@@ -164,7 +164,7 @@ public class BleService
         if (ConnectedAddr != null)
         {
             _eventBus.Publish(new DeviceDisconnectedEvent(ConnectedAddr));
-            _eventBus.Publish(new LogEvent("INFO", $"Disconnected from {ConnectedAddr}"));
+            _eventBus.Publish(new LogEvent("INFO", $"已断开 {ConnectedAddr}"));
         }
         ConnectedAddr = null;
         ConnectedName = null;
@@ -198,7 +198,7 @@ public class BleService
         ConnectedAddr = null;
         ConnectedName = null;
         _eventBus.Publish(new DeviceDisconnectedEvent(addr));
-        _eventBus.Publish(new LogEvent("WARN", $"Device {addr} disconnected"));
+        _eventBus.Publish(new LogEvent("WARN", $"设备 {addr} 已断开"));
     }
 
     private void OnRxValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
@@ -213,10 +213,10 @@ public class BleService
                 HandlePeerPublicKey(frame.Payload);
                 break;
             case MsgType.ACK:
-                _eventBus.Publish(new LogEvent("DEBUG", $"ACK received for task {frame.TaskId}"));
+                _eventBus.Publish(new LogEvent("DEBUG", $"收到任务 {frame.TaskId} 的 ACK"));
                 break;
             default:
-                _reassembler.HandleFrame(frame, "ble", ConnectedAddr ?? "", ConnectedName ?? "");
+                _reassembler.HandleFrame(frame, TransferConst.ChannelBle, ConnectedAddr ?? "", ConnectedName ?? "");
                 break;
         }
     }
@@ -239,11 +239,11 @@ public class BleService
             };
             var result = await _txChar.WriteValueAsync(frame.Serialize().AsBuffer(), GattWriteOption.WriteWithResponse);
             if (result == GattCommunicationStatus.Success)
-                _eventBus.Publish(new LogEvent("INFO", "Key exchange initiated"));
+                _eventBus.Publish(new LogEvent("INFO", "密钥协商已发起"));
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("WARN", $"Key exchange init failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("WARN", $"密钥协商发起失败：{ex.Message}"));
         }
     }
 
@@ -252,11 +252,11 @@ public class BleService
         try
         {
             _crypto.DeriveSessionKey(payload);
-            _eventBus.Publish(new LogEvent("INFO", "Session key established"));
+            _eventBus.Publish(new LogEvent("INFO", "会话密钥已建立"));
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("WARN", $"Key derivation failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("WARN", $"密钥派生失败：{ex.Message}"));
         }
     }
 
@@ -313,7 +313,7 @@ public class BleService
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Send text failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"发送文本失败：{ex.Message}"));
             return false;
         }
     }
@@ -323,7 +323,7 @@ public class BleService
         if (_txChar == null) return false;
         if (encrypt && !_crypto.HasSessionKey)
         {
-            _eventBus.Publish(new LogEvent("WARN", "Encryption requested but no session key; sending plaintext"));
+            _eventBus.Publish(new LogEvent("WARN", "请求加密但无会话密钥，将以明文发送"));
             encrypt = false;
         }
         try
@@ -370,7 +370,7 @@ public class BleService
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Send binary failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"发送二进制数据失败：{ex.Message}"));
             return false;
         }
     }
@@ -403,7 +403,7 @@ public class BleService
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Send meta failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"发送元数据失败：{ex.Message}"));
             return false;
         }
     }

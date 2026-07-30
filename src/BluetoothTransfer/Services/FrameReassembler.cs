@@ -50,7 +50,7 @@ public class FrameReassembler
         {
             var compressed = (frame.Flags & FrameFlags.Compressed) != 0;
             _fileMeta[frame.TaskId] = new FileMeta(meta.Value.name, meta.Value.size, meta.Value.checksum, compressed);
-            _eventBus.Publish(new LogEvent("INFO", $"META: {meta.Value.name} ({meta.Value.size} bytes)"));
+            _eventBus.Publish(new LogEvent("INFO", $"元数据：{meta.Value.name}（{meta.Value.size} 字节）"));
         }
     }
 
@@ -61,7 +61,7 @@ public class FrameReassembler
         {
             if (!_crypto.HasSessionKey)
             {
-                _eventBus.Publish(new LogEvent("ERROR", $"Encrypted BLE chunk without session key (task {frame.TaskId})"));
+                _eventBus.Publish(new LogEvent("ERROR", $"收到加密 BLE 分片但无会话密钥（任务 {frame.TaskId}）"));
                 return;
             }
             payload = _crypto.Decrypt(payload);

@@ -1,7 +1,7 @@
 # 修复过程文档 — BluetoothTransfer
 
-> 依据：`CODE_REVIEW.md`（审查日期 2026-07-30，HEAD = 67e6c79）
-> 修复范围：全部 19 项（高 H1–H4 / 中 M1–M9 / 低 L1–L6）
+> 依据：`CODE_REVIEW.md`（第一轮，HEAD = 67e6c79）+ `CODE_REVIEW_R2.md`（第二轮，HEAD = 6d1f79f）
+> 修复范围：第一轮 19 项（H1–H4 / M1–M9 / L1–L6）+ 第二轮 12 项（P-H1–P-L1 / S-M1–S-L3）
 > 推进顺序：按审查报告「复查建议优先级」H → M → L
 > 验证方式：每完成一批执行 `dotnet build`（无蓝牙硬件，功能以编译通过 + 代码自洽性为准）
 > 基线：修复前构建 0 警告 0 错误。
@@ -139,3 +139,77 @@
 - `dotnet build BluetoothTransfer.sln -c Debug` → 0 警告 0 错误。
 - `dotnet build BluetoothTransfer.sln -c Release` → 0 警告 0 错误。
 - 说明：本环境无蓝牙硬件且为 WPF GUI，无法做实机收发回归；以上以编译通过与收发链路代码自洽性为准，建议具备硬件后按 README 流程做端到端验证。
+
+---
+
+### 2026-07-30 — 第二轮审查修复（12 项）
+
+> 依据：`CODE_REVIEW_R2.md`（第二轮审查，双轴并行）
+> 修复范围：Spec 轴 5 项（高2 + 中2 + 低1）+ Standards 轴 7 项（中4 + 低3）
+> 验证方式：`dotnet build`（Debug + Release）
+
+#### 修复台账
+
+| 编号 | 轴 | 等级 | 问题 | 状态 | 修复要点 |
+|---|---|---|---|---|---|
+| P-H1 | Spec | 高 | README 仍宣称已删除的主题功能 | ✅ | 删除 README.md:44 "暗色/浅色主题切换" |
+| P-H2 | Spec | 高 | README 项目结构仍列出已删除文件 | ✅ | 删除结构树中 `ThemeService.cs` 和 `Themes/` |
+| P-M1 | Spec | 中 | 状态栏残留英文 "Connected:"/"Disconnected" | ✅ | 改为"已连接：…"/"已断开连接" |
+| P-M2 | Spec | 中 | 数据库可见字段残留英文 | ✅ | "Remote Device"→"远程设备"、"Checksum mismatch"→"校验和不匹配"、"Transfer reported failure"→"传输报告失败" |
+| P-L1 | Spec | 低 | 日志消息全英文 | ✅ | 全部 Services + ViewModel 日志消息本地化（约 50 处） |
+| S-M1 | Standards | 中 | 文件落盘逻辑重复 + recvDir 硬编码 | ✅ | 提取 `FileTransferService.ResolveDestPath` 静态方法；`RfcommChannel` 注入 `AppConfig` 复用 `RecvDirectory` |
+| S-M2 | Standards | 中 | 同 P-M1 | ✅ | 合并修复 |
+| S-M3 | Standards | 中 | ExportCsv/ExportJson 高度雷同 | ✅ | 提取 `ExportRecords(filter, ext, export)` 通用方法 |
+| S-M4 | Standards | 中 | 文本传输记录构造重复 | ✅ | 提取 `MakeTextRecord(direction, peerName, peerAddr, text)` 工厂方法 |
+| S-L1 | Standards | 低 | 方向/类型/状态/通道为裸字符串 | ✅ | 新增 `TransferConst` 静态常量类，全量替换 |
+| S-L2 | Standards | 低 | `AppConfig.BleMtu` 未被使用 | ✅ | 删除该配置项 |
+| S-L3 | Standards | 低 | `App.xaml.cs` 无用 using | ✅ | 删除 `using System.Configuration; using System.Data;` |
+
+#### 变更文件
+
+**文档**
+- `README.md`：删除主题功能描述与结构树中已删除文件（P-H1/P-H2）。
+
+**模型（`Models/TransferRecord.cs`）**
+- 新增 `TransferConst` 静态类：`DirSend/DirRecv/TypeText/TypeFile/StatusOk/StatusFailed/ChannelBle/ChannelRfcomm`（S-L1）。
+
+**模型（`Models/AppConfig.cs`）**
+- 删除未使用的 `BleMtu` 属性（S-L2）。
+
+**RFCOMM 通道（`Services/RfcommChannel.cs`）**
+- 构造注入 `AppConfig`；`HandleEnd` 改用 `_config.RecvDirectory` + `FileTransferService.ResolveDestPath`（S-M1）。
+- 记录字段使用 `TransferConst` 常量；用户可见字段中文化（P-M2/S-L1）。
+- 全部日志消息本地化（P-L1）。
+
+**文件传输调度（`Services/FileTransferService.cs`）**
+- 新增 `public static ResolveDestPath(recvDir, fileName)` 共用方法（S-M1）。
+- `ReceiveFile` 改用 `ResolveDestPath`；记录字段使用常量；用户可见字段中文化（S-M1/P-M2/S-L1）。
+- 发送记录使用常量（S-L1）。
+- 日志消息本地化（P-L1）。
+
+**BLE 客户端（`Services/BleService.cs`）**
+- 重组器调用使用 `TransferConst.ChannelBle`（S-L1）。
+- 全部日志消息本地化（P-L1）。
+
+**BLE 服务端（`Services/BleGattServer.cs`）**
+- 重组器调用使用 `TransferConst.ChannelBle`；`PeerName` 改为"远程设备"（S-L1/P-M2）。
+- 全部日志消息本地化（P-L1）。
+
+**分片重组器（`Services/FrameReassembler.cs`）**
+- 日志消息本地化（P-L1）。
+
+**视图模型（`ViewModels/MainViewModel.cs`）**
+- 状态栏 "Connected:"/"Disconnected" 改中文（P-M1）。
+- 提取 `MakeTextRecord` 工厂方法消除收发文本记录重复（S-M4）。
+- 提取 `ExportRecords` 通用导出方法消除 ExportCsv/ExportJson 重复（S-M3）。
+- 文本记录使用 `TransferConst` 常量（S-L1）。
+- `RfcommChannel` 构造传入 `_config`（S-M1）。
+- SafeAsync 错误日志本地化（P-L1）。
+
+**App（`App.xaml.cs`）**
+- 删除无用 `using System.Configuration; using System.Data;`（S-L3）。
+
+#### 验证
+
+- `dotnet build BluetoothTransfer.sln -c Debug` → 0 警告 0 错误。
+- `dotnet build BluetoothTransfer.sln -c Release` → 0 警告 0 错误。

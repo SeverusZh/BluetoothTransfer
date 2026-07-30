@@ -1,5 +1,17 @@
 namespace BluetoothTransfer.Models;
 
+public static class TransferConst
+{
+    public const string DirSend = "send";
+    public const string DirRecv = "recv";
+    public const string TypeText = "text";
+    public const string TypeFile = "file";
+    public const string StatusOk = "ok";
+    public const string StatusFailed = "failed";
+    public const string ChannelBle = "ble";
+    public const string ChannelRfcomm = "rfcomm";
+}
+
 public class TransferRecord
 {
     public long Id { get; set; }

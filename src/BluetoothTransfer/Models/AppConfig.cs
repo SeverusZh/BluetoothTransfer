@@ -14,7 +14,6 @@ public class AppConfig
     public bool CompressionEnabled { get; set; } = false;
     public bool EncryptionEnabled { get; set; } = true;
     public int AutoCleanDays { get; set; } = 0;
-    public int BleMtu { get; set; } = 180;
     public int RfcommChunkSize { get; set; } = 4096;
     public bool AlwaysOnTop { get; set; } = false;
     public string GlobalHotkey { get; set; } = "Ctrl+Shift+B";

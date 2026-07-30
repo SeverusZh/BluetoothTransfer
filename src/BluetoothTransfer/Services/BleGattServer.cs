@@ -3,6 +3,7 @@ using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
 using Windows.Storage.Streams;
+using BluetoothTransfer.Models;
 
 namespace BluetoothTransfer.Services;
 
@@ -37,7 +38,7 @@ public class BleGattServer
             var result = await GattServiceProvider.CreateAsync(ServiceUuid);
             if (result.Error != BluetoothError.Success)
             {
-                _eventBus.Publish(new LogEvent("ERROR", $"GATT server create failed: {result.Error}"));
+                _eventBus.Publish(new LogEvent("ERROR", $"GATT 服务端创建失败：{result.Error}"));
                 return false;
             }
 
@@ -52,7 +53,7 @@ public class BleGattServer
 
             if (txResult.Error != BluetoothError.Success)
             {
-                _eventBus.Publish(new LogEvent("ERROR", $"TX char create failed: {txResult.Error}"));
+                _eventBus.Publish(new LogEvent("ERROR", $"TX 特征创建失败：{txResult.Error}"));
                 _serviceProvider.StopAdvertising();
                 _serviceProvider = null;
                 return false;
@@ -89,7 +90,7 @@ public class BleGattServer
             _publisher.Start();
 
             _isAdvertising = true;
-            _eventBus.Publish(new LogEvent("INFO", $"GATT server started, advertising as \"{deviceName}\""));
+            _eventBus.Publish(new LogEvent("INFO", $"GATT 服务端已启动，广播名称 \"{deviceName}\""));
             return true;
         }
         catch (Exception ex)
@@ -97,7 +98,7 @@ public class BleGattServer
             _serviceProvider?.StopAdvertising();
             _serviceProvider = null;
             _rxChar = null;
-            _eventBus.Publish(new LogEvent("ERROR", $"GATT server start failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"GATT 服务端启动失败：{ex.Message}"));
             return false;
         }
     }
@@ -110,7 +111,7 @@ public class BleGattServer
         _serviceProvider = null;
         _rxChar = null;
         _isAdvertising = false;
-        _eventBus.Publish(new LogEvent("INFO", "GATT server stopped"));
+        _eventBus.Publish(new LogEvent("INFO", "GATT 服务端已停止"));
     }
 
     private async void OnWriteRequested(GattLocalCharacteristic sender, GattWriteRequestedEventArgs args)
@@ -120,14 +121,14 @@ public class BleGattServer
         {
             var request = await args.GetRequestAsync();
             var data = request.Value.ToArray();
-            _eventBus.Publish(new LogEvent("DEBUG", $"GATT write received: {data.Length} bytes"));
+            _eventBus.Publish(new LogEvent("DEBUG", $"GATT 收到写入：{data.Length} 字节"));
             HandleReceivedData(data);
             if (request.Option == GattWriteOption.WriteWithResponse)
                 request.Respond();
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"GATT write handling failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"GATT 写入处理失败：{ex.Message}"));
         }
         finally
         {
@@ -140,7 +141,7 @@ public class BleGattServer
         var frame = Frame.Deserialize(data);
         if (frame == null)
         {
-            _eventBus.Publish(new LogEvent("WARN", "Invalid frame received"));
+            _eventBus.Publish(new LogEvent("WARN", "收到无效帧"));
             return;
         }
 
@@ -153,7 +154,7 @@ public class BleGattServer
                 SendAck(frame.TaskId);
                 break;
             default:
-                _reassembler.HandleFrame(frame, "ble", "remote", "Remote Device");
+                _reassembler.HandleFrame(frame, TransferConst.ChannelBle, "remote", "远程设备");
                 SendAck(frame.TaskId);
                 break;
         }
@@ -168,7 +169,7 @@ public class BleGattServer
 
             if (_rxChar == null)
             {
-                _eventBus.Publish(new LogEvent("WARN", "No RX characteristic to return public key"));
+                _eventBus.Publish(new LogEvent("WARN", "无 RX 特征用于回送公钥"));
                 return;
             }
 
@@ -183,11 +184,11 @@ public class BleGattServer
                 Payload = pub
             };
             await _rxChar.NotifyValueAsync(frame.Serialize().AsBuffer());
-            _eventBus.Publish(new LogEvent("INFO", "Session key established (server)"));
+            _eventBus.Publish(new LogEvent("INFO", "会话密钥已建立（服务端）"));
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("WARN", $"Server key exchange failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("WARN", $"服务端密钥协商失败：{ex.Message}"));
         }
     }
 
@@ -211,7 +212,7 @@ public class BleGattServer
         }
         catch (Exception ex)
         {
-            _eventBus.Publish(new LogEvent("ERROR", $"Send ACK failed: {ex.Message}"));
+            _eventBus.Publish(new LogEvent("ERROR", $"发送 ACK 失败：{ex.Message}"));
         }
     }
 }
