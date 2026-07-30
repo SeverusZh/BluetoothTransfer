@@ -1,0 +1,49 @@
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using BluetoothTransfer.Models;
+
+namespace BluetoothTransfer.Services;
+
+public class ExportService
+{
+    public static string ExportCsv(List<TransferRecord> records, string filePath)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Id,CreatedAt,Direction,Type,PeerName,PeerAddr,Name,Size,Status,Checksum,Channel,LocalPath,Note");
+        foreach (var r in records)
+        {
+            sb.AppendLine(string.Join(",",
+                r.Id,
+                EscapeCsv(r.CreatedAt),
+                r.Direction,
+                r.Type,
+                EscapeCsv(r.PeerName),
+                EscapeCsv(r.PeerAddr),
+                EscapeCsv(r.Name),
+                r.Size,
+                r.Status,
+                EscapeCsv(r.Checksum),
+                r.Channel,
+                EscapeCsv(r.LocalPath),
+                EscapeCsv(r.Note)));
+        }
+        File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+        return filePath;
+    }
+
+    public static string ExportJson(List<TransferRecord> records, string filePath)
+    {
+        var json = JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(filePath, json, Encoding.UTF8);
+        return filePath;
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
+            return $"\"{value.Replace("\"", "\"\"")}\"";
+        return value;
+    }
+}

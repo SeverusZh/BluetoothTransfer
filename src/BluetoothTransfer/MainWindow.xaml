@@ -1,0 +1,147 @@
+﻿<Window x:Class="BluetoothTransfer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:BluetoothTransfer.ViewModels"
+        xmlns:tb="http://www.hardcodet.net/taskbar"
+        Title="Bluetooth Transfer" Height="700" Width="1100"
+        WindowStartupLocation="CenterScreen"
+        AllowDrop="True" Drop="OnFileDrop" DragOver="OnDragOver"
+        Closing="OnClosing">
+    <Window.DataContext>
+        <vm:MainViewModel/>
+    </Window.DataContext>
+    <Window.Resources>
+        <tb:TaskbarIcon x:Key="TrayIcon" ToolTipText="Bluetooth Transfer"
+                        TrayMouseDoubleClick="OnTrayDoubleClick">
+            <tb:TaskbarIcon.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="Show" Click="OnTrayShow"/>
+                    <Separator/>
+                    <MenuItem Header="Exit" Click="OnTrayExit"/>
+                </ContextMenu>
+            </tb:TaskbarIcon.ContextMenu>
+        </tb:TaskbarIcon>
+    </Window.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="280"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="30"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Column="0" Grid.Row="0" BorderBrush="#DDD" BorderThickness="0,0,1,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Margin="10">
+                    <TextBlock Text="Devices" FontWeight="Bold" FontSize="16" Margin="0,0,0,8"/>
+                    <TextBox Text="{Binding DeviceName, UpdateSourceTrigger=PropertyChanged}" Height="26" Margin="0,0,0,8"
+                             ToolTip="Local device name for advertising"/>
+                    <Button Content="{Binding AdvertiseButtonText}" Command="{Binding AdvertiseCommand}" Height="28" Margin="0,0,0,8"/>
+                    <Button Content="{Binding ScanButtonText}" Command="{Binding ScanCommand}" Height="32" Margin="0,0,0,8"/>
+                    <Button Content="Disconnect" Command="{Binding DisconnectCommand}" Height="28" Margin="0,0,0,8"/>
+                </StackPanel>
+                <Button DockPanel.Dock="Bottom" Content="Connect" Command="{Binding ConnectCommand}"
+                        Height="32" Margin="10,5,10,10"/>
+                <ListView ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
+                          Margin="5,0,5,5" BorderThickness="0">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="2,4">
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Addr}" FontSize="11" Foreground="Gray"/>
+                                    <TextBlock Text="{Binding Rssi, StringFormat=' | {0} dBm'}" FontSize="11" Foreground="Gray"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Grid.Row="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="150"/>
+            </Grid.RowDefinitions>
+
+            <GroupBox Grid.Row="0" Header="Send" Margin="10,10,10,5">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="80"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Text="{Binding SendText, UpdateSourceTrigger=PropertyChanged}"
+                                 Height="50" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0"/>
+                        <Button Grid.Column="1" Content="Send Text" Command="{Binding SendTextCommand}" Height="50"/>
+                    </Grid>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Send File(s)" Command="{Binding SendFileCommand}" Padding="12,5" Margin="0,0,8,0"/>
+                        <ProgressBar Width="200" Height="20" Value="{Binding TransferProgress}" Minimum="0" Maximum="100" Margin="0,0,8,0"/>
+                        <TextBlock Text="{Binding TransferProgress, StringFormat={}{0:F0}%}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Row="1" Header="Received Text" Margin="10,5,10,5">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="80"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" Text="{Binding ReceivedText, Mode=OneWay}" IsReadOnly="True"
+                             Height="60" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0"/>
+                    <Button Grid.Column="1" Content="Copy" Command="{Binding CopyReceivedCommand}" Height="60"/>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Grid.Row="2" Header="Transfer Records" Margin="10,5,10,5">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,5">
+                        <Button Content="Refresh" Command="{Binding RefreshRecordsCommand}" Padding="10,3" Margin="0,0,5,0"/>
+                        <Button Content="Export CSV" Command="{Binding ExportCsvCommand}" Padding="10,3" Margin="0,0,5,0"/>
+                        <Button Content="Export JSON" Command="{Binding ExportJsonCommand}" Padding="10,3"/>
+                    </StackPanel>
+                    <DataGrid ItemsSource="{Binding Records}" AutoGenerateColumns="False" IsReadOnly="True"
+                              CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
+                              BorderThickness="1" BorderBrush="#DDD">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="140"/>
+                            <DataGridTextColumn Header="Dir" Binding="{Binding Direction}" Width="50"/>
+                            <DataGridTextColumn Header="Type" Binding="{Binding Type}" Width="50"/>
+                            <DataGridTextColumn Header="Peer" Binding="{Binding PeerName}" Width="100"/>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="70"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="60"/>
+                            <DataGridTextColumn Header="Channel" Binding="{Binding Channel}" Width="60"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </DockPanel>
+            </GroupBox>
+
+            <GroupBox Grid.Row="3" Header="Log" Margin="10,5,10,10">
+                <ListBox ItemsSource="{Binding LogLines}" BorderThickness="0"
+                         FontFamily="Consolas" FontSize="11"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+            </GroupBox>
+        </Grid>
+
+        <Border Grid.Row="1" Grid.ColumnSpan="2" Background="{DynamicResource StatusBarBgBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="{Binding ThemeButtonText}" Command="{Binding ToggleThemeCommand}"
+                        Padding="8,2" Margin="5,2" FontSize="11"/>
+                <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="10,0" FontSize="12"
+                           Foreground="{DynamicResource TextBrush}"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

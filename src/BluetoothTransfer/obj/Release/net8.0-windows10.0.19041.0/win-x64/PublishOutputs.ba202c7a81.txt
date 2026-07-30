@@ -1,0 +1,3 @@
+D:\OpenCode\Project001\publish-lite\BluetoothTransfer.pdb
+D:\OpenCode\Project001\publish-lite\e_sqlite3.dll
+D:\OpenCode\Project001\publish-lite\BluetoothTransfer.exe

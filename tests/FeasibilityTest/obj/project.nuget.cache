@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "rr5l3PYLw+A=",
+  "success": true,
+  "projectFilePath": "D:\\OpenCode\\Project001\\tests\\FeasibilityTest\\FeasibilityTest.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\admin\\.nuget\\packages\\microsoft.windows.sdk.net.ref\\10.0.19041.56\\microsoft.windows.sdk.net.ref.10.0.19041.56.nupkg.sha512"
+  ],
+  "logs": []
+}

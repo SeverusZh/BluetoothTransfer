@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{D305DF60-0333-4E54-ADCD-82F529559B86}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BluetoothTransfer", "src\BluetoothTransfer\BluetoothTransfer.csproj", "{9A12031C-711F-4157-A6FC-091A7A8A5A0B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{728692F3-06D9-4664-B29D-CCADF6647C34}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeasibilityTest", "tests\FeasibilityTest\FeasibilityTest.csproj", "{89EDB38C-6FAF-43A5-B55D-FEDE8A57BC89}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9A12031C-711F-4157-A6FC-091A7A8A5A0B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9A12031C-711F-4157-A6FC-091A7A8A5A0B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9A12031C-711F-4157-A6FC-091A7A8A5A0B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9A12031C-711F-4157-A6FC-091A7A8A5A0B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{89EDB38C-6FAF-43A5-B55D-FEDE8A57BC89}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{89EDB38C-6FAF-43A5-B55D-FEDE8A57BC89}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{89EDB38C-6FAF-43A5-B55D-FEDE8A57BC89}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{89EDB38C-6FAF-43A5-B55D-FEDE8A57BC89}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{9A12031C-711F-4157-A6FC-091A7A8A5A0B} = {D305DF60-0333-4E54-ADCD-82F529559B86}
+		{89EDB38C-6FAF-43A5-B55D-FEDE8A57BC89} = {728692F3-06D9-4664-B29D-CCADF6647C34}
+	EndGlobalSection
+EndGlobal
