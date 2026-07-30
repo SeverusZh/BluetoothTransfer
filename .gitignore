@@ -1,1 +1,30 @@
+## OpenCode
 .opencode/
+
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.sln.docstates
+
+## IDE
+.vs/
+.idea/
+*.swp
+*.swo
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]aunchSettings.json
+
+## Published outputs
+publish/
+publish-lite/
