@@ -162,8 +162,6 @@ SQLite 数据库，`transfer_records` 表包含：时间、方向、类型、文
 
 ## 开发状态
 
-项目按阶段迭代开发，当前状态参见 [PLAN.md](PLAN.md)（计划文档，待完成后移除）。
-
 ## 许可
 
-MIT
+[MIT](LICENSE)
