@@ -25,6 +25,9 @@ public class RfcommChannel
     private readonly ConcurrentDictionary<uint, FileStream> _openStreams = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<uint>> _pendingResume = new();
 
+    /// <summary>单帧长度上限（RFCOMM 分块为 4KB，留足余量防止对端异常帧导致内存暴涨）。</summary>
+    private const uint MaxFrameSize = 512 * 1024;
+
     public bool IsActive => _listener != null || _clientSocket != null;
 
     public RfcommChannel(EventBus eventBus, StorageService storage, CryptoService crypto, AppConfig config)
@@ -56,6 +59,7 @@ public class RfcommChannel
     public async Task<bool> ConnectToServerAsync(string deviceName)
     {
         StreamSocket? socket = null;
+        RfcommDeviceService? service = null;
         try
         {
             var selector = RfcommDeviceService.GetDeviceSelector(RfcommServiceId.SerialPort);
@@ -71,7 +75,7 @@ public class RfcommChannel
                 return false;
             }
 
-            var service = await RfcommDeviceService.FromIdAsync(target.Id);
+            service = await RfcommDeviceService.FromIdAsync(target.Id);
             if (service == null)
             {
                 _eventBus.Publish(new LogEvent("ERROR", "无法获取 RFCOMM 服务"));
@@ -90,6 +94,10 @@ public class RfcommChannel
             socket?.Dispose();
             _eventBus.Publish(new LogEvent("ERROR", $"RFCOMM 连接失败：{ex.Message}"));
             return false;
+        }
+        finally
+        {
+            service?.Dispose();
         }
     }
 
@@ -120,6 +128,11 @@ public class RfcommChannel
                 uint bytesRead = await reader.LoadAsync(4);
                 if (bytesRead < 4) break;
                 uint frameLen = reader.ReadUInt32();
+                if (frameLen == 0 || frameLen > MaxFrameSize)
+                {
+                    _eventBus.Publish(new LogEvent("WARN", $"帧长度异常（{frameLen}），终止读取"));
+                    break;
+                }
 
                 bytesRead = await reader.LoadAsync(frameLen);
                 if (bytesRead < frameLen) break;
@@ -154,6 +167,9 @@ public class RfcommChannel
             case MsgType.ACK:
                 HandleAck(frame);
                 break;
+            default:
+                _eventBus.Publish(new LogEvent("WARN", $"未知消息类型 {frame.MsgType}"));
+                break;
         }
     }
 
@@ -171,19 +187,33 @@ public class RfcommChannel
         var (type, name, size, checksum) = meta.Value;
         var compressed = (frame.Flags & FrameFlags.Compressed) != 0;
 
-        var existing = TransferState.Load(frame.TaskId);
         uint resumeOffset = 0;
-
+        var existing = TransferState.Load(frame.TaskId);
         if (existing != null && existing.FileName == name && existing.ReceivedBytes > 0)
         {
-            resumeOffset = (uint)existing.ReceivedBytes;
-            _eventBus.Publish(new LogEvent("INFO", $"续传任务 {frame.TaskId}：{name}，偏移 {resumeOffset}"));
-            _activeReceives[frame.TaskId] = existing;
+            var partial = new FileInfo(existing.PartialPath);
+            if (partial.Exists && partial.Length >= existing.ReceivedBytes)
+            {
+                resumeOffset = (uint)existing.ReceivedBytes;
+                _eventBus.Publish(new LogEvent("INFO", $"续传任务 {frame.TaskId}：{name}，偏移 {resumeOffset}"));
+                _activeReceives[frame.TaskId] = existing;
+            }
+            else
+            {
+                // 状态记录存在但部分文件缺失/长度不足（例如上次残留或手动清理），
+                // 直接续传会写出带空洞的损坏文件，须从 0 重新接收。
+                _eventBus.Publish(new LogEvent("WARN", $"续传状态无效（任务 {frame.TaskId}，partial 文件缺失），将从 0 重新接收"));
+                try { File.Delete(existing.PartialPath); } catch { }
+                existing = null;
+            }
         }
-        else
+
+        if (existing == null)
         {
             var partialDir = TransferState.GetPartialDir();
             var partialPath = Path.Combine(partialDir, $"{frame.TaskId}_{name}.partial");
+            // 清理可能残留的旧 partial 文件，避免新传输在文件末尾带上过期数据。
+            try { File.Delete(partialPath); } catch { }
             var state = new TransferState
             {
                 TaskId = frame.TaskId,
@@ -199,7 +229,6 @@ public class RfcommChannel
         }
 
         _eventBus.Publish(new LogEvent("INFO", $"元数据：{name}（{size} 字节，续传偏移={resumeOffset}）"));
-        _eventBus.Publish(new ResumeOffsetEvent(frame.TaskId, resumeOffset));
 
         _ = SendFrameOnSocketAsync(socket, new Frame
         {
@@ -329,6 +358,12 @@ public class RfcommChannel
         }
 
         var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length > uint.MaxValue)
+        {
+            _eventBus.Publish(new LogEvent("ERROR", $"文件过大（{fileInfo.Length} 字节），超出协议单任务上限"));
+            return false;
+        }
+
         string? tempCompressed = null;
 
         try
@@ -528,6 +563,8 @@ public class RfcommChannel
     public void Close()
     {
         CloseOpenStreams();
+        _activeReceives.Clear();
+        _pendingResume.Clear();
         _clientSocket?.Dispose();
         _clientSocket = null;
         _provider?.StopAdvertising();

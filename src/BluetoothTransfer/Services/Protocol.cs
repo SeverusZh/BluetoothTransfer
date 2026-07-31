@@ -76,6 +76,11 @@ public class Frame
             TotalLen = ReadUInt32(data, ref pos),
             Offset = ReadUInt32(data, ref pos)
         };
+        if (frame.Version != 1)
+        {
+            // 协议版本不匹配：拒绝解析，避免后续字段错位导致误判。
+            return null;
+        }
 
         var chunkLen = ReadUInt16(data, ref pos);
         if (data.Length < 19 + chunkLen + 2) return null;

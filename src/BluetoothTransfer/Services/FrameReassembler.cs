@@ -64,7 +64,18 @@ public class FrameReassembler
                 _eventBus.Publish(new LogEvent("ERROR", $"收到加密 BLE 分片但无会话密钥（任务 {frame.TaskId}）"));
                 return;
             }
-            payload = _crypto.Decrypt(payload);
+            try
+            {
+                payload = _crypto.Decrypt(payload);
+            }
+            catch (Exception ex)
+            {
+                // 解密失败（如认证标签不匹配）说明数据已损坏或密钥不一致：
+                // 丢弃该任务的缓冲，避免残留数据在后续 FinalChunk 时被误当完整消息发布。
+                _eventBus.Publish(new LogEvent("ERROR", $"BLE 分片解密失败（任务 {frame.TaskId}）：{ex.Message}"));
+                AbortTask(frame.TaskId);
+                return;
+            }
         }
 
         var ms = _buffers.GetOrAdd(frame.TaskId, _ => new MemoryStream());
@@ -76,6 +87,16 @@ public class FrameReassembler
 
         if ((frame.Flags & FrameFlags.FinalChunk) != 0)
             Finalize(frame.TaskId, channel, peerAddr, peerName);
+    }
+
+    private void AbortTask(uint taskId)
+    {
+        if (_buffers.TryRemove(taskId, out var ms))
+        {
+            lock (ms) { }
+            ms.Dispose();
+        }
+        _fileMeta.TryRemove(taskId, out _);
     }
 
     private void Finalize(uint taskId, string channel, string peerAddr, string peerName)

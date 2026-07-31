@@ -24,6 +24,7 @@ public class BleService
     private GattCharacteristic? _txChar;
     private GattCharacteristic? _rxChar;
     private GattCharacteristic? _metaChar;
+    private GattSession? _session;
     private readonly Dictionary<ulong, DeviceInfo> _discoveredDevices = new();
 
     public bool IsScanning => _watcher?.Status == BluetoothLEAdvertisementWatcherStatus.Started;
@@ -66,7 +67,14 @@ public class BleService
         var name = args.Advertisement.LocalName;
         if (string.IsNullOrEmpty(name)) return;
 
-        if (!_discoveredDevices.ContainsKey(args.BluetoothAddress))
+        if (_discoveredDevices.TryGetValue(args.BluetoothAddress, out var existing))
+        {
+            // 已发现的设备也要持续发布事件（携带最新 RSSI / 时间戳），
+            // 否则 UI 中的信号强度停留在首次发现值，永不刷新。
+            existing.Rssi = args.RawSignalStrengthInDBm;
+            existing.LastSeen = DateTime.Now.ToString("o");
+        }
+        else
         {
             var device = new DeviceInfo
             {
@@ -76,8 +84,9 @@ public class BleService
                 LastSeen = DateTime.Now.ToString("o")
             };
             _discoveredDevices[args.BluetoothAddress] = device;
-            _eventBus.Publish(new DeviceDiscoveredEvent(addr, name, args.RawSignalStrengthInDBm));
         }
+
+        _eventBus.Publish(new DeviceDiscoveredEvent(addr, name, args.RawSignalStrengthInDBm));
     }
 
     public async Task<bool> ConnectAsync(string addr)
@@ -138,6 +147,17 @@ public class BleService
             ConnectedAddr = addr;
             ConnectedName = bleDevice.Name;
             _connectedDevice.ConnectionStatusChanged += OnConnectionStatusChanged;
+            try
+            {
+                var deviceId = BluetoothDeviceId.FromId(bleDevice.DeviceId);
+                _session = await GattSession.FromDeviceIdAsync(deviceId);
+                if (_session != null)
+                    _session.MaintainConnection = true;
+            }
+            catch
+            {
+                // 会话建立失败时退回固定 MTU 估算，不影响连接本身。
+            }
 
             _eventBus.Publish(new DeviceConnectedEvent(addr, bleDevice.Name));
             _eventBus.Publish(new LogEvent("INFO", $"已连接到 {bleDevice.Name}（{addr}）"));
@@ -179,6 +199,8 @@ public class BleService
         }
         _txChar = null;
         _metaChar = null;
+        _session?.Dispose();
+        _session = null;
         _service?.Dispose();
         _service = null;
         if (_connectedDevice != null)
@@ -203,21 +225,29 @@ public class BleService
 
     private void OnRxValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
     {
-        var data = args.CharacteristicValue.ToArray();
-        var frame = Frame.Deserialize(data);
-        if (frame == null) return;
-
-        switch (frame.MsgType)
+        try
         {
-            case MsgType.KEY_EXCHANGE:
-                HandlePeerPublicKey(frame.Payload);
-                break;
-            case MsgType.ACK:
-                _eventBus.Publish(new LogEvent("DEBUG", $"收到任务 {frame.TaskId} 的 ACK"));
-                break;
-            default:
-                _reassembler.HandleFrame(frame, TransferConst.ChannelBle, ConnectedAddr ?? "", ConnectedName ?? "");
-                break;
+            var data = args.CharacteristicValue.ToArray();
+            var frame = Frame.Deserialize(data);
+            if (frame == null) return;
+
+            switch (frame.MsgType)
+            {
+                case MsgType.KEY_EXCHANGE:
+                    HandlePeerPublicKey(frame.Payload);
+                    break;
+                case MsgType.ACK:
+                    _eventBus.Publish(new LogEvent("DEBUG", $"收到任务 {frame.TaskId} 的 ACK"));
+                    break;
+                default:
+                    _reassembler.HandleFrame(frame, TransferConst.ChannelBle, ConnectedAddr ?? "", ConnectedName ?? "");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            // GATT 回调在系统线程上执行，未捕获异常可能导致应用崩溃，必须兜底。
+            _eventBus.Publish(new LogEvent("ERROR", $"接收 GATT 数据异常：{ex.Message}"));
         }
     }
 
@@ -332,6 +362,25 @@ public class BleService
             var maxPayload = GetMaxPayloadSize();
             var plainChunk = encrypt ? Math.Max(maxPayload - cryptoOverhead, 1) : maxPayload;
             var totalLen = (uint)data.Length;
+
+            if (totalLen == 0)
+            {
+                // 空文件也必须发送一个 FinalChunk 分片，
+                // 否则接收端重组器永远等不到收尾，文件静默丢失。
+                var emptyFrame = new Frame
+                {
+                    MsgType = msgType,
+                    TaskId = taskId,
+                    SeqNo = 0,
+                    TotalLen = 0,
+                    Offset = 0,
+                    Flags = flags | FrameFlags.FinalChunk,
+                    Payload = Array.Empty<byte>()
+                };
+                var emptyResult = await _txChar.WriteValueAsync(emptyFrame.Serialize().AsBuffer(), GattWriteOption.WriteWithResponse);
+                return emptyResult == GattCommunicationStatus.Success;
+            }
+
             ushort seq = 0;
             uint offset = 0;
 
@@ -378,8 +427,25 @@ public class BleService
     private int GetMaxPayloadSize()
     {
         const int frameOverhead = 21;
-        const int mtu = 180;
-        return Math.Max(mtu - frameOverhead, 20);
+        const int attHeaderOverhead = 3;
+
+        // 兜底估算：按 ATT MTU = 180 计算 attribute value 上限（MTU - 3）。
+        var attrValueMax = 180 - attHeaderOverhead;
+        try
+        {
+            if (_session != null && _session.MaxPduSize > 23)
+            {
+                // MaxPduSize 在不同文档中语义略有差异（ATT MTU 或 value 上限），
+                // 保守再减 3 字节 ATT 头，确保组帧后的写请求不会超过对端可接收长度。
+                attrValueMax = Math.Max((int)_session.MaxPduSize - attHeaderOverhead, 20);
+            }
+        }
+        catch
+        {
+            // 读取失败时沿用兜底值。
+        }
+
+        return Math.Max(attrValueMax - frameOverhead, 20);
     }
 
     public async Task<bool> SendMetaAsync(byte[] metaPayload, uint taskId)

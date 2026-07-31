@@ -124,7 +124,14 @@ public class FileTransferService
         {
             var nameNoExt = Path.GetFileNameWithoutExtension(safeName);
             var ext = Path.GetExtension(safeName);
-            destPath = Path.Combine(recvDir, $"{nameNoExt}_{DateTime.Now:yyyyMMdd_HHmmss}{ext}");
+            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            destPath = Path.Combine(recvDir, $"{nameNoExt}_{stamp}{ext}");
+            var counter = 1;
+            while (File.Exists(destPath))
+            {
+                // 同一秒内到达多个同名文件时追加序号，避免相互覆盖。
+                destPath = Path.Combine(recvDir, $"{nameNoExt}_{stamp}_{counter++}{ext}");
+            }
         }
         return destPath;
     }
@@ -157,18 +164,26 @@ public class FileTransferService
         });
 
         _eventBus.Publish(new FileReceivedEvent(peerAddr, peerName, fileName, destPath, fileData.Length));
-        _eventBus.Publish(new LogEvent("INFO", $"文件已接收：{fileName} -> {destPath} (valid={valid})"));
+        _eventBus.Publish(new LogEvent("INFO", $"文件已接收：{fileName} -> {destPath}（校验={(valid ? "通过" : "失败")}）"));
         return destPath;
     }
 
-    public async Task SendFolderAsync(string folderPath)
+    public async Task<bool> SendFolderAsync(string folderPath)
     {
         var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories);
+        if (files.Length == 0)
+        {
+            _eventBus.Publish(new LogEvent("WARN", $"文件夹中没有可发送的文件：{folderPath}"));
+            return false;
+        }
+
         _eventBus.Publish(new LogEvent("INFO", $"正在发送文件夹：{folderPath}（{files.Length} 个文件）"));
 
+        var allOk = true;
         foreach (var file in files)
         {
-            await SendFileAsync(file);
+            allOk &= await SendFileAsync(file);
         }
+        return allOk;
     }
 }

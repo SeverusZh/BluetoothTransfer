@@ -89,6 +89,19 @@ public class BleGattServer
             _publisher.Advertisement.ServiceUuids.Add(ServiceUuid);
             _publisher.Start();
 
+            if (_publisher.Status != BluetoothLEAdvertisementPublisherStatus.Started &&
+                _publisher.Status != BluetoothLEAdvertisementPublisherStatus.Waiting)
+            {
+                // 发布器进入 Aborted/Stopped 等异常状态时，GATT 服务虽已创建但不可被发现，
+                // 若仍将 IsAdvertising 置 true，UI 会误报"广播中"。
+                _eventBus.Publish(new LogEvent("ERROR", $"广播发布器启动失败：{_publisher.Status}"));
+                _publisher = null;
+                _serviceProvider.StopAdvertising();
+                _serviceProvider = null;
+                _rxChar = null;
+                return false;
+            }
+
             _isAdvertising = true;
             _eventBus.Publish(new LogEvent("INFO", $"GATT 服务端已启动，广播名称 \"{deviceName}\""));
             return true;
@@ -154,7 +167,7 @@ public class BleGattServer
                 SendAck(frame.TaskId);
                 break;
             default:
-                _reassembler.HandleFrame(frame, TransferConst.ChannelBle, "remote", "远程设备");
+                _reassembler.HandleFrame(frame, TransferConst.ChannelBle, "", "远程设备");
                 SendAck(frame.TaskId);
                 break;
         }

@@ -28,14 +28,15 @@ public class ExportService
                 EscapeCsv(r.LocalPath),
                 EscapeCsv(r.Note)));
         }
-        File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
+        // 带 BOM 的 UTF-8，便于 Excel 直接识别中文表头。
+        File.WriteAllText(filePath, sb.ToString(), new UTF8Encoding(true));
         return filePath;
     }
 
     public static string ExportJson(List<TransferRecord> records, string filePath)
     {
         var json = JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(filePath, json, Encoding.UTF8);
+        File.WriteAllText(filePath, json, new UTF8Encoding(true));
         return filePath;
     }
 

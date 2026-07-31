@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace BluetoothTransfer.Models;
 
 public static class TransferConst
@@ -28,4 +30,27 @@ public class TransferRecord
     public string Channel { get; set; } = "ble";
     public string LocalPath { get; set; } = "";
     public string Note { get; set; } = "";
+
+    /// <summary>
+    /// 供 DataGrid 展示的本地化时间（"yyyy-MM-dd HH:mm:ss"）。
+    /// CreatedAt 以 ISO-8601 字符串存储，直接套用 DateTime 的 StringFormat 不会生效。
+    /// </summary>
+    public string CreatedAtDisplay
+    {
+        get
+        {
+            if (DateTime.TryParse(CreatedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt))
+                return dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+            return CreatedAt;
+        }
+    }
+
+    public string DirectionDisplay => Direction == TransferConst.DirSend ? "发送"
+        : Direction == TransferConst.DirRecv ? "接收" : Direction;
+    public string TypeDisplay => Type == TransferConst.TypeText ? "文本"
+        : Type == TransferConst.TypeFile ? "文件" : Type;
+    public string StatusDisplay => Status == TransferConst.StatusOk ? "成功"
+        : Status == TransferConst.StatusFailed ? "失败" : Status;
+    public string ChannelDisplay => Channel == TransferConst.ChannelBle ? "BLE"
+        : Channel == TransferConst.ChannelRfcomm ? "RFCOMM" : Channel;
 }

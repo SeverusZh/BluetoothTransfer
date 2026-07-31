@@ -214,10 +214,12 @@ public class StorageService
             SELECT
                 COUNT(*),
                 COALESCE(SUM(size), 0),
-                COALESCE(SUM(CASE WHEN direction='send' THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN direction='recv' THEN 1 ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN direction=@dir_send THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN direction=@dir_recv THEN 1 ELSE 0 END), 0)
             FROM transfer_records WHERE status = 'ok'
             """;
+        cmd.Parameters.AddWithValue("@dir_send", TransferConst.DirSend);
+        cmd.Parameters.AddWithValue("@dir_recv", TransferConst.DirRecv);
         using var reader = cmd.ExecuteReader();
         reader.Read();
         return (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3));

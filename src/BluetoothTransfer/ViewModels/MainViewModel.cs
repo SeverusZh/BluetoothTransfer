@@ -79,8 +79,15 @@ public class MainViewModel : ViewModelBase
         SendFileCommand = new RelayCommand(() => SafeAsync(SendFileAsync));
         CopyReceivedCommand = new RelayCommand(() =>
         {
-            if (!string.IsNullOrEmpty(ReceivedText))
-                Clipboard.SetText(ReceivedText);
+            try
+            {
+                if (!string.IsNullOrEmpty(ReceivedText))
+                    Clipboard.SetText(ReceivedText);
+            }
+            catch (Exception ex)
+            {
+                _eventBus.Publish(new LogEvent("ERROR", $"复制到剪贴板失败：{ex.Message}"));
+            }
         });
         RefreshRecordsCommand = new RelayCommand(() => SafeAsync(LoadRecordsAsync));
         ExportCsvCommand = new RelayCommand(ExportCsv);
@@ -159,16 +166,25 @@ public class MainViewModel : ViewModelBase
 
     private void ToggleScan()
     {
-        if (IsScanning)
+        try
         {
-            _ble.StopScan();
-            IsScanning = false;
+            if (IsScanning)
+            {
+                _ble.StopScan();
+                IsScanning = false;
+            }
+            else
+            {
+                Devices.Clear();
+                _ble.StartScan();
+                IsScanning = true;
+            }
         }
-        else
+        catch (Exception ex)
         {
-            Devices.Clear();
-            _ble.StartScan();
-            IsScanning = true;
+            IsScanning = false;
+            _eventBus.Publish(new LogEvent("ERROR", $"扫描失败：{ex.Message}"));
+            StatusText = $"错误：{ex.Message}";
         }
     }
 
@@ -177,13 +193,17 @@ public class MainViewModel : ViewModelBase
         if (SelectedDevice == null) return;
         StatusText = $"正在连接到 {SelectedDevice.Name}...";
         var ok = await _ble.ConnectAsync(SelectedDevice.Addr);
-        if (ok)
-        {
-            await _rfcomm.ConnectToServerAsync(SelectedDevice.Name);
-        }
-        else
+        if (!ok)
         {
             StatusText = "连接失败";
+            return;
+        }
+
+        var rfcommOk = await _rfcomm.ConnectToServerAsync(SelectedDevice.Name);
+        if (!rfcommOk)
+        {
+            StatusText = "BLE 已连接，但 RFCOMM 通道连接失败（大文件传输不可用）";
+            _eventBus.Publish(new LogEvent("WARN", "RFCOMM 通道连接失败，大于 10KB 的文件将无法发送"));
         }
     }
 
@@ -204,9 +224,18 @@ public class MainViewModel : ViewModelBase
         }
         else
         {
-            var ok = await _gattServer.StartAsync(DeviceName);
-            if (ok)
-                await _rfcomm.StartServerAsync();
+            var gattOk = await _gattServer.StartAsync(DeviceName);
+            var ok = gattOk && await _rfcomm.StartServerAsync();
+            if (!ok && gattOk)
+            {
+                // GATT 已启动但 RFCOMM 失败：回滚已创建的服务，避免半启动状态。
+                _gattServer.Stop();
+                _eventBus.Publish(new LogEvent("ERROR", "RFCOMM 服务端启动失败"));
+            }
+            else if (!ok)
+            {
+                _eventBus.Publish(new LogEvent("ERROR", "GATT 服务端启动失败"));
+            }
             IsAdvertising = ok;
             StatusText = ok ? $"正在广播：\"{DeviceName}\"" : "启动广播失败";
         }
@@ -240,27 +269,31 @@ public class MainViewModel : ViewModelBase
         if (dialog.ShowDialog() != true) return;
 
         StatusText = $"正在发送 {dialog.FileNames.Length} 个文件...";
+        var okCount = 0;
         foreach (var file in dialog.FileNames)
         {
-            await _fileTransfer.SendFileAsync(file);
+            if (await _fileTransfer.SendFileAsync(file))
+                okCount++;
         }
-        StatusText = "文件已发送";
+        StatusText = okCount == dialog.FileNames.Length
+            ? $"已发送 {okCount} 个文件"
+            : $"发送完成：成功 {okCount}/{dialog.FileNames.Length}";
         await LoadRecordsAsync();
     }
 
     public async Task SendSingleFileAsync(string filePath)
     {
         StatusText = $"正在发送 {System.IO.Path.GetFileName(filePath)}...";
-        await _fileTransfer.SendFileAsync(filePath);
-        StatusText = "文件已发送";
+        var ok = await _fileTransfer.SendFileAsync(filePath);
+        StatusText = ok ? "文件已发送" : "文件发送失败";
         await LoadRecordsAsync();
     }
 
     public async Task SendFolderAsync(string folderPath)
     {
         StatusText = "正在发送文件夹...";
-        await _fileTransfer.SendFolderAsync(folderPath);
-        StatusText = "文件夹已发送";
+        var ok = await _fileTransfer.SendFolderAsync(folderPath);
+        StatusText = ok ? "文件夹已发送" : "文件夹发送失败";
         await LoadRecordsAsync();
     }
 
@@ -280,15 +313,24 @@ public class MainViewModel : ViewModelBase
 
     private void ExportRecords(string filter, string ext, Func<List<TransferRecord>, string, string> export)
     {
-        var dialog = new Microsoft.Win32.SaveFileDialog
+        try
         {
-            Filter = filter,
-            FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}"
-        };
-        if (dialog.ShowDialog() != true) return;
-        var records = _storage.GetRecords(limit: 10000);
-        export(records, dialog.FileName);
-        StatusText = $"已导出 {records.Count} 条记录到 {ext.ToUpperInvariant()}";
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = filter,
+                FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}"
+            };
+            if (dialog.ShowDialog() != true) return;
+            var records = _storage.GetRecords(limit: 10000);
+            export(records, dialog.FileName);
+            StatusText = $"已导出 {records.Count} 条记录到 {ext.ToUpperInvariant()}";
+        }
+        catch (Exception ex)
+        {
+            // 同步命令无 SafeAsync 兜底，异常须就地捕获，否则会逃逸到 WPF 导致应用崩溃。
+            _eventBus.Publish(new LogEvent("ERROR", $"导出失败：{ex.Message}"));
+            StatusText = $"导出失败：{ex.Message}";
+        }
     }
 
     private static TransferRecord MakeTextRecord(string direction, string peerName, string peerAddr, string text)

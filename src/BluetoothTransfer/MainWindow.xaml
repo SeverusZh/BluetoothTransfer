@@ -115,14 +115,14 @@
                               CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
                               BorderThickness="1" BorderBrush="#DDD">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="时间" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" Width="140"/>
-                            <DataGridTextColumn Header="方向" Binding="{Binding Direction}" Width="50"/>
-                            <DataGridTextColumn Header="类型" Binding="{Binding Type}" Width="50"/>
+                            <DataGridTextColumn Header="时间" Binding="{Binding CreatedAtDisplay}" Width="140"/>
+                            <DataGridTextColumn Header="方向" Binding="{Binding DirectionDisplay}" Width="50"/>
+                            <DataGridTextColumn Header="类型" Binding="{Binding TypeDisplay}" Width="50"/>
                             <DataGridTextColumn Header="对端" Binding="{Binding PeerName}" Width="100"/>
                             <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*"/>
                             <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="70"/>
-                            <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="60"/>
-                            <DataGridTextColumn Header="通道" Binding="{Binding Channel}" Width="60"/>
+                            <DataGridTextColumn Header="状态" Binding="{Binding StatusDisplay}" Width="60"/>
+                            <DataGridTextColumn Header="通道" Binding="{Binding ChannelDisplay}" Width="60"/>
                         </DataGrid.Columns>
                     </DataGrid>
                 </DockPanel>
