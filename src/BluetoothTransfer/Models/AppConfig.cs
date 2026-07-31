@@ -12,6 +12,21 @@ public class AppConfig
     public bool CompressionEnabled { get; set; } = false;
     public bool EncryptionEnabled { get; set; } = true;
     public int RfcommChunkSize { get; set; } = 4096;
+    /// <summary>OPP 通用推送分片大小（字节）。</summary>
+    public int OppChunkSize { get; set; } = 32768;
+    /// <summary>OPP 连接超时（秒）。</summary>
+    public int OppConnectTimeoutSeconds { get; set; } = 30;
+    /// <summary>OPP 发送超时（秒）。</summary>
+    public int OppSendTimeoutSeconds { get; set; } = 300;
+    /// <summary>OPP 文本推送默认文件名。</summary>
+    public string PushTextFileName { get; set; } = "bt-note.txt";
+    /// <summary>OPP 设备要求 OBEX 认证时的密码（默认为空表示不支持认证）。</summary>
+    public string OppAuthPassword { get; set; } = "";
+    /// <summary>
+    /// Name 头是否携带 UTF-16 BOM（0xFEFF）。多数接收端（Android/Windows）按无 BOM 解析，
+    /// 32feet/Windows 原生向导均不发送 BOM；个别老式设备可能需要 BOM，可按需开启。
+    /// </summary>
+    public bool OppNameUseBom { get; set; } = false;
 
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

@@ -30,6 +30,18 @@ public static class Help
               send-folder <地址> <文件夹> [同上选项]
                                     递归发送文件夹内全部文件
 
+            通用推送（OPP，1.1 新增：仅发送端需要本应用）
+              opp-scan [--seconds 秒] [--paired-only] [--json] [--db 路径]
+                                    扫描支持"蓝牙文件接收"（OPP）的经典蓝牙设备
+              opp-pair <地址> [--pin 1234] [--db 路径]
+                                    发起配对（无 PIN 时走系统确认流程）
+              opp-send-file <地址> <文件> [--db 路径]
+                                    向任意支持 OPP 的设备推送文件（无需对方运行本应用）
+              opp-send-text <地址> <文本> [--name 文件名] [--db 路径]
+                                    文本包装为 .txt 后推送
+              opp-send-folder <地址> <文件夹> [--db 路径]
+                                    文件夹压缩为 .zip 后推送
+
             记录 / 配置
               records [--direction send|recv] [--type text|file] [--status ok|failed]
                       [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]
@@ -39,11 +51,14 @@ public static class Help
               config                                   查看配置
               config set <key> <value>                 修改配置并保存
                       （RecvDirectory / AutoCopyClipboard / CompressionEnabled /
-                        EncryptionEnabled / RfcommChunkSize）
+                        EncryptionEnabled / RfcommChunkSize / OppChunkSize /
+                        OppConnectTimeout / OppSendTimeout / PushTextFileName /
+                        OppAuthPassword）
 
             测试
               selftest                                 无蓝牙硬件自检：
-                        分帧/CRC、ECDH+AES-GCM 加密、Deflate 压缩、存储与导出
+                        分帧/CRC、ECDH+AES-GCM 加密、Deflate 压缩、存储与导出、
+                        OBEX 编解码与假传输流程
               repl                                     交互式会话（推荐用于模拟真实交互）
 
             示例：
@@ -51,6 +66,8 @@ public static class Help
               btcli scan --seconds 5
               btcli connect A0E9F1D27B3C --peer TestPC
               btcli send-file A0E9F1D27B3C C:\tmp\doc.pdf --compress --encrypt
+              btcli opp-scan --seconds 5
+              btcli opp-send-file 00:11:22:33:44:55 C:\tmp\photo.jpg
               btcli records --direction recv --json
               btcli repl
             """);

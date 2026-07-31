@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.6" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!--
+    与 CLI 相同的做法：直接链接主工程的模型与服务源码，保证被测代码与产品一致，
+    同时把 OBEX 相关实现（不依赖 WPF）纳入离线单测。
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\src\BluetoothTransfer\Models\AppConfig.cs" Link="Models\AppConfig.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Models\DeviceInfo.cs" Link="Models\DeviceInfo.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Models\TransferRecord.cs" Link="Models\TransferRecord.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\CryptoService.cs" Link="Services\CryptoService.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\EventBus.cs" Link="Services\EventBus.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\FileChecksum.cs" Link="Services\FileChecksum.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\IObexTransport.cs" Link="Services\IObexTransport.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\MemoryObexTransport.cs" Link="Services\MemoryObexTransport.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\ObexClient.cs" Link="Services\ObexClient.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\ObexPacket.cs" Link="Services\ObexPacket.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\OppDiscoveryService.cs" Link="Services\OppDiscoveryService.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\OppPushService.cs" Link="Services\OppPushService.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\Protocol.cs" Link="Services\Protocol.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\SocketObexTransport.cs" Link="Services\SocketObexTransport.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
+  </ItemGroup>
+
+</Project>

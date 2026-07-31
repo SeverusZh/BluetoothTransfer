@@ -278,6 +278,106 @@ public static class Commands
         config.RfcommChunkSize = previous.Chunk;
     }
 
+    // ------------------------------------------------------------------ OPP 通用推送（1.1）
+
+    public static async Task<int> OppScanAsync(Args a)
+    {
+        using var session = NewSession(a, quiet: true);
+        var seconds = Math.Max(0, ParseInt(a.Option("seconds"), 5));
+        var pairedOnly = a.Has("paired-only");
+        if (!a.Has("json"))
+            Info($"正在扫描支持 OPP（蓝牙文件接收）的设备（{(pairedOnly ? "仅已配对" : "含可发现")}，{seconds} 秒）...");
+
+        var devices = await session.OppDiscovery.DiscoverAsync(pairedOnly, seconds);
+
+        if (a.Has("json"))
+        {
+            Console.WriteLine(JsonSerializer.Serialize(devices
+                .Select(d => new { addr = d.Addr, name = d.Name, paired = d.IsPaired })
+                .OrderByDescending(x => x.paired).ThenBy(x => x.name),
+                new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
+
+        Info($"发现 {devices.Count} 个 OPP 设备：");
+        if (devices.Count == 0)
+            Info("  （无结果：请确认对端已开启蓝牙且处于可发现状态，或先在 Windows 设置中完成配对）");
+        foreach (var d in devices.OrderByDescending(x => x.IsPaired).ThenBy(x => x.Name))
+            Info($"  {Pad(d.Name, 28)} {d.AddrDisplay}   {(d.IsPaired ? "已配对" : "未配对")}");
+        return 0;
+    }
+
+    public static async Task<int> OppPairAsync(Args a)
+    {
+        var addr = a.Get(1);
+        if (string.IsNullOrWhiteSpace(addr))
+        {
+            Error("用法：btcli opp-pair <设备地址> [--pin 1234] [--db 路径]");
+            return 2;
+        }
+        using var session = NewSession(a, quiet: true);
+        var ok = await session.OppDiscovery.PairAsync(addr, a.Option("pin"));
+        Info(ok ? $"配对成功：{addr}" : $"配对失败：{addr}（可尝试在系统设置中手动配对）");
+        return ok ? 0 : 1;
+    }
+
+    public static async Task<int> OppSendFileAsync(Args a)
+    {
+        var addr = a.Get(1);
+        var path = a.Get(2);
+        if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(path))
+        {
+            Error("用法：btcli opp-send-file <设备地址> <文件> [--db 路径]");
+            return 2;
+        }
+        if (!File.Exists(path))
+        {
+            Error($"文件不存在：{path}");
+            return 2;
+        }
+        using var session = NewSession(a, quiet: true);
+        var ok = await session.OppPush.SendFileAsync(addr, path);
+        Info(ok ? $"文件已通过 OPP 推送：{Path.GetFileName(path)}" : $"OPP 推送失败：{Path.GetFileName(path)}");
+        return ok ? 0 : 1;
+    }
+
+    public static async Task<int> OppSendTextAsync(Args a)
+    {
+        var addr = a.Get(1);
+        var text = a.RemainingFrom(2);
+        if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(text))
+        {
+            Error("用法：btcli opp-send-text <设备地址> <文本> [--name 文件名] [--db 路径]");
+            return 2;
+        }
+        using var session = NewSession(a, quiet: true);
+        var ok = await session.OppPush.SendTextAsync(addr, text, a.Option("name"));
+        Info(ok
+            ? $"文本已通过 OPP 推送（{Encoding.UTF8.GetByteCount(text)} 字节）"
+            : "OPP 文本推送失败");
+        return ok ? 0 : 1;
+    }
+
+    public static async Task<int> OppSendFolderAsync(Args a)
+    {
+        var addr = a.Get(1);
+        var folder = a.Get(2);
+        if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(folder))
+        {
+            Error("用法：btcli opp-send-folder <设备地址> <文件夹> [--db 路径]");
+            return 2;
+        }
+        if (!Directory.Exists(folder))
+        {
+            Error($"文件夹不存在：{folder}");
+            return 2;
+        }
+        using var session = NewSession(a, quiet: true);
+        var ok = await session.OppPush.SendFolderAsync(addr, folder);
+        Info(ok ? $"文件夹已压缩并通过 OPP 推送：{folder}" : "OPP 文件夹推送失败");
+        return ok ? 0 : 1;
+    }
+
     // ------------------------------------------------------------------ 记录 / 配置
 
     public static int Records(Args a)
@@ -421,7 +521,7 @@ public static class Commands
             }
             if (!SetConfigValue(session.Config, key, value))
             {
-                Error($"未知配置项：{key}（可选 RecvDirectory/AutoCopyClipboard/CompressionEnabled/EncryptionEnabled/RfcommChunkSize）");
+                Error($"未知配置项：{key}（可选 RecvDirectory/AutoCopyClipboard/CompressionEnabled/EncryptionEnabled/RfcommChunkSize/OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom）");
                 return 2;
             }
             session.Config.Save();
@@ -434,6 +534,12 @@ public static class Commands
         Info($"启用压缩       CompressionEnabled   = {session.Config.CompressionEnabled}");
         Info($"启用加密       EncryptionEnabled    = {session.Config.EncryptionEnabled}");
         Info($"RFCOMM 分块    RfcommChunkSize      = {session.Config.RfcommChunkSize}");
+        Info($"OPP 分块       OppChunkSize          = {session.Config.OppChunkSize}");
+        Info($"OPP 连接超时    OppConnectTimeout     = {session.Config.OppConnectTimeoutSeconds} 秒");
+        Info($"OPP 发送超时    OppSendTimeout        = {session.Config.OppSendTimeoutSeconds} 秒");
+        Info($"OPP 文本文件名  PushTextFileName       = {session.Config.PushTextFileName}");
+        Info($"OPP 认证密码    OppAuthPassword       = {(string.IsNullOrEmpty(session.Config.OppAuthPassword) ? "（未设置）" : "***")}");
+        Info($"OPP Name BOM    OppNameUseBom         = {session.Config.OppNameUseBom}");
         return 0;
     }
 
@@ -460,6 +566,29 @@ public static class Commands
                 if (!int.TryParse(value, out var chunk) || chunk <= 0) return false;
                 config.RfcommChunkSize = chunk;
                 return true;
+            case "oppchunk" or "oppchunksize":
+                if (!int.TryParse(value, out var oppChunk) || oppChunk <= 0) return false;
+                config.OppChunkSize = oppChunk;
+                return true;
+            case "oppconnecttimeout":
+                if (!int.TryParse(value, out var connectTimeout) || connectTimeout <= 0) return false;
+                config.OppConnectTimeoutSeconds = connectTimeout;
+                return true;
+            case "oppsendtimeout":
+                if (!int.TryParse(value, out var sendTimeout) || sendTimeout <= 0) return false;
+                config.OppSendTimeoutSeconds = sendTimeout;
+                return true;
+            case "pushtextfilename":
+                if (string.IsNullOrWhiteSpace(value)) return false;
+                config.PushTextFileName = value;
+                return true;
+            case "oppauthpassword":
+                config.OppAuthPassword = value;
+                return true;
+            case "oppnameusebom" or "oppbom":
+                if (!bool.TryParse(value, out var useBom)) return false;
+                config.OppNameUseBom = useBom;
+                return true;
             default:
                 return false;
         }
@@ -467,7 +596,7 @@ public static class Commands
 
     // ------------------------------------------------------------------ 自检
 
-    public static Task<int> SelftestAsync(Args _)
+    public static async Task<int> SelftestAsync(Args _)
     {
         var results = new List<(string Name, bool Ok, string Detail)>();
 
@@ -475,6 +604,7 @@ public static class Commands
         results.Add(TestCrypto());
         results.Add(TestCompression());
         results.Add(TestStorageAndExport());
+        results.Add(await TestObexAsync());
 
         var failed = results.Count(r => !r.Ok);
         Console.WriteLine();
@@ -482,7 +612,71 @@ public static class Commands
         foreach (var (name, ok, detail) in results)
             Console.WriteLine($"  [{(ok ? "PASS" : "FAIL")}] {name}{(detail.Length > 0 ? "：" + detail : "")}");
         Console.WriteLine(failed == 0 ? "全部通过 ✔" : $"{failed} 项失败 ✘");
-        return Task.FromResult(failed == 0 ? 0 : 1);
+        return failed == 0 ? 0 : 1;
+    }
+
+    private static async Task<(string Name, bool Ok, string Detail)> TestObexAsync()
+    {
+        try
+        {
+            // 1) Name 头编码往返（中文/emoji）
+            var nameHeader = ObexHeader.Name("中文文件 测试 😀.txt");
+            if (nameHeader.AsName() != "中文文件 测试 😀.txt")
+                return ("OBEX 协议（编解码/流程）", false, "Name 头往返不一致");
+
+            // 2) 超长名称截断（UTF-16 字节数 > 255）
+            var longHeader = ObexHeader.Name(new string('汉', 200) + ".txt");
+            var decoded = longHeader.AsName();
+            if (decoded == null || decoded.Length == 0 || longHeader.Value.Length > 259)
+                return ("OBEX 协议（编解码/流程）", false, "长名称截断失败");
+
+            // 3) PUT 包往返
+            var pkt = new ObexPacket { Opcode = (byte)ObexRequestOpcode.Put };
+            pkt.Headers.Add(ObexHeader.Name("a.txt"));
+            pkt.Headers.Add(ObexHeader.Type("application/octet-stream"));
+            pkt.Headers.Add(ObexHeader.LengthHeader(5));
+            pkt.Headers.Add(ObexHeader.Body(new byte[] { 1, 2, 3, 4, 5 }, true));
+            var parsed = ObexPacket.Deserialize(pkt.ToBytes(), out var error);
+            if (parsed == null || error != null || parsed.Headers.Count != 4)
+                return ("OBEX 协议（编解码/流程）", false, "PUT 包往返失败");
+
+            // 4) 篡改长度字段必须被拒绝
+            var raw = pkt.ToBytes();
+            raw[1] = 0xFF;
+            raw[2] = 0xFE;
+            if (ObexPacket.Deserialize(raw, out _) != null)
+                return ("OBEX 协议（编解码/流程）", false, "非法长度字段未被拒绝");
+
+            // 5) 假传输完整 PUT 流程（CONNECT -> 分片 PUT -> DISCONNECT）
+            var data = new byte[70000];
+            for (var i = 0; i < data.Length; i++) data[i] = (byte)(i % 251);
+            var transport = new MemoryObexTransport { AutoReply = true };
+            await using var client = new ObexClient(transport);
+            await client.ConnectAsync();
+            using var ms = new MemoryStream(data);
+            var result = await client.PushAsync("big.bin", "application/octet-stream", data.Length,
+                (offset, buffer, count, token) =>
+                {
+                    ms.Seek(offset, SeekOrigin.Begin);
+                    var n = ms.Read(buffer, 0, count);
+                    return Task.FromResult(n);
+                }, 32768);
+            await client.DisconnectAsync();
+
+            if (result.BytesSent != data.Length)
+                return ("OBEX 协议（编解码/流程）", false, $"分片字节数不符：{result.BytesSent} != {data.Length}");
+            var packets = transport.ParseWrittenPackets();
+            if (packets == null || packets.Count < 2 ||
+                !packets.Any(p => p.Headers.Any(h => h.Id == ObexHeaderId.EndOfBody)))
+                return ("OBEX 协议（编解码/流程）", false, "缺少 EndOfBody 头或包序列不完整");
+
+            return ("OBEX 协议（编解码/流程）", true,
+                $"编解码/截断/校验/假传输流程（{data.Length} 字节，{packets.Count} 包）全部通过");
+        }
+        catch (Exception ex)
+        {
+            return ("OBEX 协议（编解码/流程）", false, ex.Message);
+        }
     }
 
     private static (string Name, bool Ok, string Detail) TestFraming()

@@ -20,6 +20,8 @@ public sealed class CliSession : IDisposable
     public BleGattServer GattServer { get; }
     public RfcommChannel Rfcomm { get; }
     public FileTransferService FileTransfer { get; }
+    public OppDiscoveryService OppDiscovery { get; }
+    public OppPushService OppPush { get; }
 
     /// <summary>只输出关键结果，不打印 INFO/DEBUG 日志与进度条。</summary>
     public bool Quiet { get; init; }
@@ -39,6 +41,8 @@ public sealed class CliSession : IDisposable
         GattServer = new BleGattServer(Events, Crypto, Reassembler);
         Rfcomm = new RfcommChannel(Events, Storage, Crypto, Config);
         FileTransfer = new FileTransferService(Events, Storage, Config, Rfcomm, Ble, Crypto);
+        OppDiscovery = new OppDiscoveryService(Events);
+        OppPush = new OppPushService(Events, Storage, Config, OppDiscovery);
         SubscribeEvents();
     }
 
