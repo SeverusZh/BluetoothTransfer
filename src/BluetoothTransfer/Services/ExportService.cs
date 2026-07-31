@@ -36,7 +36,8 @@ public class ExportService
     public static string ExportJson(List<TransferRecord> records, string filePath)
     {
         var json = JsonSerializer.Serialize(records, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(filePath, json, new UTF8Encoding(true));
+        // JSON 文本按 RFC 8259 不得带 BOM，仅 CSV 需要 BOM 以兼容 Excel。
+        File.WriteAllText(filePath, json, Encoding.UTF8);
         return filePath;
     }
 

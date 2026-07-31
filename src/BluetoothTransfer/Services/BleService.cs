@@ -26,6 +26,9 @@ public class BleService
     private GattCharacteristic? _metaChar;
     private GattSession? _session;
     private readonly Dictionary<ulong, DeviceInfo> _discoveredDevices = new();
+    private readonly Dictionary<ulong, (DateTime Time, int Rssi)> _lastPublish = new();
+    private static readonly TimeSpan MinPublishInterval = TimeSpan.FromSeconds(1);
+    private const int MinRssiDelta = 3;
 
     public bool IsScanning => _watcher?.Status == BluetoothLEAdvertisementWatcherStatus.Started;
     public bool IsConnected => _connectedDevice != null;
@@ -43,6 +46,7 @@ public class BleService
     {
         if (IsScanning) return;
         _discoveredDevices.Clear();
+        _lastPublish.Clear();
         _watcher = new BluetoothLEAdvertisementWatcher
         {
             ScanningMode = BluetoothLEScanningMode.Active
@@ -67,26 +71,38 @@ public class BleService
         var name = args.Advertisement.LocalName;
         if (string.IsNullOrEmpty(name)) return;
 
+        var rssi = args.RawSignalStrengthInDBm;
+        var now = DateTime.UtcNow;
+
         if (_discoveredDevices.TryGetValue(args.BluetoothAddress, out var existing))
         {
             // 已发现的设备也要持续发布事件（携带最新 RSSI / 时间戳），
             // 否则 UI 中的信号强度停留在首次发现值，永不刷新。
-            existing.Rssi = args.RawSignalStrengthInDBm;
+            existing.Rssi = rssi;
             existing.LastSeen = DateTime.Now.ToString("o");
         }
         else
         {
-            var device = new DeviceInfo
+            existing = new DeviceInfo
             {
                 Addr = addr,
                 Name = name,
-                Rssi = args.RawSignalStrengthInDBm,
+                Rssi = rssi,
                 LastSeen = DateTime.Now.ToString("o")
             };
-            _discoveredDevices[args.BluetoothAddress] = device;
+            _discoveredDevices[args.BluetoothAddress] = existing;
         }
 
-        _eventBus.Publish(new DeviceDiscoveredEvent(addr, name, args.RawSignalStrengthInDBm));
+        // 节流：BLE 设备通常每秒广播 1-10 次，若每次都发布事件，
+        // 扫描期间会持续触发 Dispatcher.Invoke 造成 UI 卡顿。
+        // 仅当信号强度显著变化（>=3dBm）或距上次发布超过 1 秒时才发布。
+        var throttled = _lastPublish.TryGetValue(args.BluetoothAddress, out var last)
+            && now - last.Time < MinPublishInterval
+            && Math.Abs(rssi - last.Rssi) < MinRssiDelta;
+        if (throttled) return;
+
+        _lastPublish[args.BluetoothAddress] = (now, rssi);
+        _eventBus.Publish(new DeviceDiscoveredEvent(addr, name, rssi));
     }
 
     public async Task<bool> ConnectAsync(string addr)
@@ -152,11 +168,14 @@ public class BleService
                 var deviceId = BluetoothDeviceId.FromId(bleDevice.DeviceId);
                 _session = await GattSession.FromDeviceIdAsync(deviceId);
                 if (_session != null)
+                {
                     _session.MaintainConnection = true;
+                    _session.MaxPduSizeChanged += OnMaxPduSizeChanged;
+                }
             }
             catch
             {
-                // 会话建立失败时退回固定 MTU 估算，不影响连接本身。
+                // 会话建立失败时退回最小 MTU 估算，不影响连接本身。
             }
 
             _eventBus.Publish(new DeviceConnectedEvent(addr, bleDevice.Name));
@@ -199,8 +218,12 @@ public class BleService
         }
         _txChar = null;
         _metaChar = null;
-        _session?.Dispose();
-        _session = null;
+        if (_session != null)
+        {
+            _session.MaxPduSizeChanged -= OnMaxPduSizeChanged;
+            _session.Dispose();
+            _session = null;
+        }
         _service?.Dispose();
         _service = null;
         if (_connectedDevice != null)
@@ -429,8 +452,10 @@ public class BleService
         const int frameOverhead = 21;
         const int attHeaderOverhead = 3;
 
-        // 兜底估算：按 ATT MTU = 180 计算 attribute value 上限（MTU - 3）。
-        var attrValueMax = 180 - attHeaderOverhead;
+        // 协商完成前按最小 ATT MTU 保守估算（attribute value 上限 20 字节），
+        // 避免按固定 180 组出超过对端实际可接收长度的写请求；
+        // MTU 协商完成后经 MaxPduSizeChanged 以实际值重新计算。
+        var attrValueMax = 20;
         try
         {
             if (_session != null && _session.MaxPduSize > 23)
@@ -446,6 +471,21 @@ public class BleService
         }
 
         return Math.Max(attrValueMax - frameOverhead, 20);
+    }
+
+    private void OnMaxPduSizeChanged(GattSession session, object args)
+    {
+        try
+        {
+            var pdu = session.MaxPduSize;
+            _eventBus.Publish(new LogEvent("INFO", $"BLE MTU 协商完成：MaxPduSize={pdu}"));
+            if (pdu <= 23)
+                _eventBus.Publish(new LogEvent("WARN", "对端未启用扩展 MTU，分帧传输可能因帧头开销过大而失败"));
+        }
+        catch (Exception ex)
+        {
+            _eventBus.Publish(new LogEvent("WARN", $"读取 MTU 协商结果失败：{ex.Message}"));
+        }
     }
 
     public async Task<bool> SendMetaAsync(byte[] metaPayload, uint taskId)
