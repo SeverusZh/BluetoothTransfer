@@ -237,7 +237,11 @@ public class MainViewModel : ViewModelBase
                 _eventBus.Publish(new LogEvent("ERROR", "GATT 服务端启动失败"));
             }
             IsAdvertising = ok;
-            StatusText = ok ? $"正在广播：\"{DeviceName}\"" : "启动广播失败";
+            StatusText = ok
+                ? _gattServer.IsNameAdvertised
+                    ? $"正在广播：\"{DeviceName}\""
+                    : $"正在广播：\"{DeviceName}\"（本机名称广播不可用，可按地址连接）"
+                : "启动广播失败";
         }
     }
 

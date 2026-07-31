@@ -100,11 +100,67 @@ dotnet publish -r win-x64 -c Release `
 
 发布产物位于 `src/BluetoothTransfer/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/`。
 
+## 命令行工具（btcli）
+
+项目附带一个与桌面应用共享同一套核心服务的 CLI（`src/BluetoothTransfer.Cli`），
+覆盖全部核心功能，主要用于脚本自动化与双机真实交互测试（不依赖 WPF）。
+
+### 构建
+
+```bash
+dotnet build src/BluetoothTransfer.Cli -c Release
+```
+
+运行（Debug 构建产物）：
+
+```bash
+.\src\BluetoothTransfer.Cli\bin\Debug\net8.0-windows10.0.19041.0\btcli.exe --help
+```
+
+### 命令一览
+
+| 类别 | 命令 | 说明 |
+|---|---|---|
+| 扫描 | `btcli scan [--seconds 5] [--json]` | 扫描周边 BLE 设备（名称/地址/RSSI） |
+| 服务端 | `btcli serve [--name 名称] [--ble-only] [--timeout 秒] [--json]` | 启动 BLE 广播 + RFCOMM 服务端，实时显示收到的文本/文件 |
+| 连接 | `btcli connect <地址> [--peer 名称] [--no-rfcomm]` | 连接对端并保持会话（可实时接收对端数据） |
+| 发送 | `btcli send-text <地址> <文本>` | 发送文本（BLE） |
+| 发送 | `btcli send-file <地址> <文件> [--compress\|--no-compress] [--encrypt\|--no-encrypt] [--chunk 字节]` | 发送文件（>10KB 自动走 RFCOMM，小文件走 BLE） |
+| 发送 | `btcli send-folder <地址> <文件夹> [同上]` | 递归发送文件夹内全部文件 |
+| 记录 | `btcli records [--direction send\|recv] [--type text\|file] [--status ok\|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json]` | 查询传输记录 |
+| 导出 | `btcli export <csv\|json> <输出文件>` | 导出全部记录 |
+| 统计 | `btcli stats [--json]` | 收发统计 |
+| 设备 | `btcli devices [--json]` | 已记录设备 |
+| 配置 | `btcli config` / `btcli config set <key> <value>` | 查看/修改配置（RecvDirectory、AutoCopyClipboard、CompressionEnabled、EncryptionEnabled、RfcommChunkSize） |
+| 自检 | `btcli selftest` | 无硬件自检：分帧/CRC、ECDH+AES-GCM、Deflate、存储与导出 |
+| 交互 | `btcli repl` | 交互式会话，一条进程内完成扫描/连接/收发/查询，便于模拟真实交互 |
+
+所有读写记录的命令支持 `--db <路径>` 指定独立数据库，避免测试污染真实记录。
+
+### 双机交互测试示例
+
+```bash
+# 机器 A（接收端）
+btcli serve --name TestPC
+
+# 机器 B（发送端）
+btcli scan --seconds 5
+btcli connect A0E9F1D27B3C --peer TestPC
+btcli send-text A0E9F1D27B3C "hello from CLI"
+btcli send-file A0E9F1D27B3C C:\tmp\doc.pdf --compress --encrypt
+
+# 机器 A 上可实时看到收到的文本与文件落盘路径，再核对记录：
+btcli records --direction recv
+```
+
+`repl` 模式可在同一会话里完成全流程（`scan` → `serve`/`connect` → `send-text`/`send-file` → `records`），
+并实时打印对端发来的文本、文件路径与传输进度，适合模拟真实用户交互。
+
 ## 项目结构
 
 ```
 BluetoothTransfer/
-├── src/BluetoothTransfer/        # 主应用
+├── src/BluetoothTransfer/        # 主应用（WPF 桌面端）
 │   ├── Models/                   # 数据模型（TransferRecord/DeviceInfo/AppConfig）
 │   ├── Services/                 # 核心服务层
 │   │   ├── BleService.cs         # BLE 扫描/广播/连接
@@ -120,6 +176,11 @@ BluetoothTransfer/
 │   ├── ViewModels/               # MVVM ViewModel
 │   ├── App.xaml / MainWindow.xaml
 │   └── BluetoothTransfer.csproj
+├── src/BluetoothTransfer.Cli/    # 命令行工具（btcli，与服务层共享源码）
+│   ├── Program.cs / CliApp.cs    # 入口与命令分发
+│   ├── CliSession.cs             # 服务装配与事件输出
+│   ├── Commands.cs               # 全部命令实现 + selftest + repl
+│   └── BluetoothTransfer.Cli.csproj
 ├── tests/FeasibilityTest/        # BLE + RFCOMM 可行性验证
 ├── BluetoothTransfer.sln
 └── README.md

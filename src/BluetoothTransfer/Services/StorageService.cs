@@ -9,13 +9,30 @@ public class StorageService
     private readonly string _dbPath;
     private readonly string _connStr;
 
-    public StorageService()
+    public StorageService() : this(null)
     {
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "BluetoothTransfer");
-        Directory.CreateDirectory(dir);
-        _dbPath = Path.Combine(dir, "data.db");
+    }
+
+    /// <summary>
+    /// <paramref name="dbPath"/> 为空时使用默认用户目录数据库（%APPDATA%\BluetoothTransfer\data.db）；
+    /// 指定时使用给定路径（如 CLI 自检用临时库），避免污染真实记录。
+    /// </summary>
+    public StorageService(string? dbPath)
+    {
+        if (string.IsNullOrEmpty(dbPath))
+        {
+            var dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "BluetoothTransfer");
+            Directory.CreateDirectory(dir);
+            _dbPath = Path.Combine(dir, "data.db");
+        }
+        else
+        {
+            var fullPath = Path.GetFullPath(dbPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? ".");
+            _dbPath = fullPath;
+        }
         _connStr = $"Data Source={_dbPath}";
         InitDb();
     }

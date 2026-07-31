@@ -24,6 +24,11 @@ public class BleGattServer
 
     public bool IsAdvertising => _isAdvertising;
 
+    /// <summary>本机名称广播是否生效（仅影响扫描时是否显示名称，不影响 GATT 服务被发现/连接）。</summary>
+    public bool IsNameAdvertised
+        => _publisher?.Status is BluetoothLEAdvertisementPublisherStatus.Started
+            or BluetoothLEAdvertisementPublisherStatus.Waiting;
+
     public BleGattServer(EventBus eventBus, CryptoService crypto, FrameReassembler reassembler)
     {
         _eventBus = eventBus;
@@ -84,26 +89,39 @@ public class BleGattServer
                 IsDiscoverable = true
             });
 
-            _publisher = new BluetoothLEAdvertisementPublisher();
-            _publisher.Advertisement.LocalName = deviceName;
-            _publisher.Advertisement.ServiceUuids.Add(ServiceUuid);
-            _publisher.Start();
+            try
+            {
+                _publisher = new BluetoothLEAdvertisementPublisher();
+                _publisher.Advertisement.LocalName = deviceName;
+                _publisher.Advertisement.ServiceUuids.Add(ServiceUuid);
+                _publisher.Start();
+            }
+            catch (Exception ex)
+            {
+                // 部分 Intel 适配器的驱动不支持 BluetoothLEAdvertisementPublisher API。
+                // 名称广播只是锦上添花：GATT 服务已通过 StartAdvertising 正常广播，
+                // 对端仍可按服务 UUID / 设备地址发现并连接，因此这里只降级不失败。
+                _publisher = null;
+                _eventBus.Publish(new LogEvent("WARN",
+                    $"本机名称广播不可用（{ex.Message}），已降级为仅 GATT 服务广播，" +
+                    "对端仍可按服务 UUID / 设备地址发现并连接，但扫描列表不显示本机名称"));
+            }
 
-            if (_publisher.Status != BluetoothLEAdvertisementPublisherStatus.Started &&
+            if (_publisher != null &&
+                _publisher.Status != BluetoothLEAdvertisementPublisherStatus.Started &&
                 _publisher.Status != BluetoothLEAdvertisementPublisherStatus.Waiting)
             {
-                // 发布器进入 Aborted/Stopped 等异常状态时，GATT 服务虽已创建但不可被发现，
-                // 若仍将 IsAdvertising 置 true，UI 会误报"广播中"。
-                _eventBus.Publish(new LogEvent("ERROR", $"广播发布器启动失败：{_publisher.Status}"));
+                // 发布器进入 Aborted/Stopped 等异常状态：名称广播不可用，但 GATT 广播不受影响，
+                // 同样降级处理，避免误报"广播失败"。
+                _eventBus.Publish(new LogEvent("WARN",
+                    $"本机名称广播状态异常（{_publisher.Status}），已降级为仅 GATT 服务广播"));
                 _publisher = null;
-                _serviceProvider.StopAdvertising();
-                _serviceProvider = null;
-                _rxChar = null;
-                return false;
             }
 
             _isAdvertising = true;
-            _eventBus.Publish(new LogEvent("INFO", $"GATT 服务端已启动，广播名称 \"{deviceName}\""));
+            _eventBus.Publish(new LogEvent("INFO", IsNameAdvertised
+                ? $"GATT 服务端已启动，广播名称 \"{deviceName}\""
+                : $"GATT 服务端已启动（本机名称广播不可用，对端可按服务 UUID / 设备地址连接）"));
             return true;
         }
         catch (Exception ex)

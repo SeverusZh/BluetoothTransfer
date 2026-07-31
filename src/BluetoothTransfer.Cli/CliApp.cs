@@ -1,0 +1,36 @@
+namespace BluetoothTransfer.Cli;
+
+public static class CliApp
+{
+    public static async Task<int> RunAsync(string[] args)
+    {
+        var a = Args.Parse(args);
+        var command = (a.Get(0) ?? "help").ToLowerInvariant();
+        try
+        {
+            return command switch
+            {
+                "help" or "-h" or "--help" => Help.Show(),
+                "scan" => await Commands.ScanAsync(a),
+                "serve" => await Commands.ServeAsync(a),
+                "connect" => await Commands.ConnectAsync(a),
+                "send-text" => await Commands.SendTextAsync(a),
+                "send-file" => await Commands.SendFileAsync(a),
+                "send-folder" => await Commands.SendFolderAsync(a),
+                "config" => Commands.Config(a),
+                "records" => Commands.Records(a),
+                "export" => Commands.Export(a),
+                "stats" => Commands.Stats(a),
+                "devices" => Commands.Devices(a),
+                "selftest" => await Commands.SelftestAsync(a),
+                "repl" => await Commands.ReplAsync(a),
+                _ => Help.Unknown(command)
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] {ex.Message}");
+            return 1;
+        }
+    }
+}

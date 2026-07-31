@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <AssemblyName>btcli</AssemblyName>
+    <RootNamespace>BluetoothTransfer.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+  </ItemGroup>
+
+  <!--
+    与 GUI 共享同一份服务层源码（直接链接文件，不做复制），
+    保证 CLI 行为与桌面应用一致；不引入任何 WPF 依赖。
+  -->
+  <ItemGroup>
+    <Compile Include="..\BluetoothTransfer\Models\AppConfig.cs" Link="Models\AppConfig.cs" />
+    <Compile Include="..\BluetoothTransfer\Models\DeviceInfo.cs" Link="Models\DeviceInfo.cs" />
+    <Compile Include="..\BluetoothTransfer\Models\TransferRecord.cs" Link="Models\TransferRecord.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\BleGattServer.cs" Link="Services\BleGattServer.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\BleService.cs" Link="Services\BleService.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\CryptoService.cs" Link="Services\CryptoService.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\EventBus.cs" Link="Services\EventBus.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\ExportService.cs" Link="Services\ExportService.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\FileTransferService.cs" Link="Services\FileTransferService.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\FrameReassembler.cs" Link="Services\FrameReassembler.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\Protocol.cs" Link="Services\Protocol.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\RfcommChannel.cs" Link="Services\RfcommChannel.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\TransferState.cs" Link="Services\TransferState.cs" />
+  </ItemGroup>
+
+</Project>

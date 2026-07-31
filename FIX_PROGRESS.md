@@ -85,6 +85,87 @@
 
 ## 变更日志
 
+### 2026-07-31 — 广播降级修复（GUI + CLI）
+
+> 触发：本机（Intel Wireless Bluetooth，`USB\VID_8087&PID_0026`）实测发现
+> `BluetoothLEAdvertisementPublisher.Start()` 抛 `E_INVALIDARG`，导致启动广播整体失败。
+> 经 WinRT 探针确认 GATT 服务端创建与 `StartAdvertising` 均正常，名称广播仅影响扫描列表是否显示本机名称。
+
+#### 修复要点
+
+- `Services/BleGattServer.cs`：移除 `toleratePublisherFailure` 开关（GUI/CLI 行为统一）。
+  - 发布器启动异常/状态异常改为 `WARN` 级别降级提示，不再回滚 GATT 服务；
+  - 新增 `IsNameAdvertised` 属性供 UI/CLI 展示降级状态；
+  - 启动日志区分"广播名称正常"与"仅 GATT 服务广播"两种文案。
+- `ViewModels/MainViewModel.cs`：广播启动后状态栏文案同步显示降级提示（"可按地址连接"）。
+- `src/BluetoothTransfer.Cli/Commands.cs`：`serve` 横幅提示名称广播降级，便于测试时按地址连接。
+
+#### 验证
+
+- `dotnet build BluetoothTransfer.sln -c Debug/Release` → 0 警告 0 错误。
+- 本机实测 `btcli serve --ble-only`：GATT + RFCOMM 正常启动，WARN 提示名称广播不可用后继续广播，超时后干净退出。
+
+### 2026-07-31 — 第三轮审查修复（21 项）
+
+> 依据：`CODE_REVIEW_R3.md`（第三轮审查，基线 HEAD = 7dba4b3）
+> 修复范围：高 3 + 中 8 + 低 10
+> 验证方式：`dotnet build`（Debug + Release）
+
+#### 修复台账
+
+| 编号 | 问题 | 修复要点 |
+|---|---|---|
+| R3-H1 | 空文件 BLE 发送静默丢失 | `SendBinaryChunkedAsync` 在 `data.Length==0` 时发送一个带 `FinalChunk` 的空 DATA 帧，接收端正常收尾落盘 |
+| R3-H2 | GATT 回调无异常兜底 | `BleService.OnRxValueChanged` 整体 try/catch；`FrameReassembler.HandleData` 解密失败时记录日志并清理任务缓冲，异常不再逃逸 |
+| R3-H3 | README 失实 | 功能特性/系统架构/前置条件/通信协议/开发状态全面改写为实际实现；删除暂停/队列/统计/别名/置顶/快捷键等未实现声明 |
+| R3-M1 | BLE 帧长与 MTU 不匹配 | 接入 `GattSession.MaxPduSize` 动态计算载荷上限（扣除 3 字节 ATT 头，保守回退 MTU=180） |
+| R3-M2 | RSSI 不刷新 | 已发现设备也持续发布 `DeviceDiscoveredEvent`（更新 RSSI/LastSeen） |
+| R3-M3 | RFCOMM 帧长无上限 | 新增 512KB 上限，异常长度终止读取循环 |
+| R3-M4 | 发送结果被忽略 | 三个发送入口按返回值给出"成功/部分失败/失败"状态 |
+| R3-M5 | 同步命令无异常处理 | 扫描/导出/复制均就地捕获并记录日志，不再逃逸崩溃 |
+| R3-M6 | 记录列表显示缺陷 | 新增 `CreatedAtDisplay/DirectionDisplay/TypeDisplay/StatusDisplay/ChannelDisplay`，DataGrid 绑定展示属性 |
+| R3-M7 | 同名文件覆盖 | `ResolveDestPath` 冲突时追加递增序号 |
+| R3-M8 | 续传数据损坏 | `HandleMeta` 校验 partial 文件存在/长度，无效状态删除旧文件并从 0 接收；新传输清理旧 partial 尾巴 |
+| R3-L1 | 帧版本不校验 | `Frame.Deserialize` 拒绝 Version != 1 的帧 |
+| R3-L2 | 广播状态误报 | `BluetoothLEAdvertisementPublisher.Start()` 后检查状态，非 Started/Waiting 时回滚并返回失败 |
+| R3-L3 | RFCOMM 失败状态误导 | `ConnectAsync` 在 RFCOMM 失败时更新状态栏并输出警告 |
+| R3-L4 | 广播半启动状态 | GATT 成功但 RFCOMM 失败时调用 `_gattServer.Stop()` 回滚 |
+| R3-L5 | 本地化遗漏 | 日志 `(valid=...)` 改中文；BLE 服务端对端地址 `"remote"` 改空串 |
+| R3-L6 | 死配置 | 删除 5 个未使用配置项（NotificationSound/AutoConnectLast/AutoCleanDays/AlwaysOnTop/GlobalHotkey） |
+| R3-L7 | 死事件 | 删除 `ResumeOffsetEvent` 及发布点 |
+| R3-L8 | 裸字符串 | `GetStats` 改用 `TransferConst.DirSend/DirRecv` |
+| R3-L9 | 导出编码 | CSV/JSON 导出改为带 BOM 的 UTF-8 |
+| R3-L10 | 资源泄漏 | `ConnectToServerAsync` 释放 `RfcommDeviceService`；`Close()` 清空接收/续传字典 |
+
+#### 变更文件
+
+**服务层**
+- `Services/BleService.cs`：RSSI 持续更新、GATT 回调兜底、空文件 FinalChunk、`GattSession` 动态 MTU、会话释放。
+- `Services/RfcommChannel.cs`：帧长上限、未知消息告警、续传状态校验与旧 partial 清理、4GB 上限前置、`RfcommDeviceService` 释放、`Close()` 清理字典。
+- `Services/FrameReassembler.cs`：解密失败兜底与任务缓冲清理。
+- `Services/Protocol.cs`：帧版本校验。
+- `Services/BleGattServer.cs`：广播发布器状态检查、对端地址空串。
+- `Services/FileTransferService.cs`：`ResolveDestPath` 唯一化、`SendFolderAsync` 返回成败、日志中文化。
+- `Services/EventBus.cs`：删除 `ResumeOffsetEvent`。
+- `Services/StorageService.cs`：`GetStats` 使用常量。
+- `Services/ExportService.cs`：带 BOM UTF-8 导出。
+
+**模型 / UI**
+- `Models/TransferRecord.cs`：新增 5 个展示属性（时间/方向/类型/状态/通道中文化）。
+- `Models/AppConfig.cs`：删除 5 个未使用配置项。
+- `ViewModels/MainViewModel.cs`：发送结果状态、RFCOMM 失败提示、广播回滚、扫描/导出/复制异常兜底。
+- `MainWindow.xaml`：DataGrid 绑定展示属性。
+
+**文档**
+- `README.md`：功能特性、架构图、前置条件、协议说明、开发状态与实际实现对齐。
+- `CODE_REVIEW_R3.md`：第三轮审查报告（新增）。
+
+#### 验证
+
+- `dotnet build BluetoothTransfer.sln -c Debug` → 0 警告 0 错误。
+- `dotnet build BluetoothTransfer.sln -c Release` → 0 警告 0 错误。
+- 说明：本环境无蓝牙硬件且为 WPF GUI，仍以编译通过与收发链路代码自洽性为准。
+
 ### 2026-07-30 — 全量修复（19 项）
 
 **新增文件**
