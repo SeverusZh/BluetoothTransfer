@@ -82,4 +82,31 @@ public class StorageServiceTests : IDisposable
         var storage = new StorageService(_dbPath);
         Assert.Equal(0, storage.ClearRecords());
     }
+
+    [Fact]
+    public void DeviceFavoriteAndAlias_RoundTrip()
+    {
+        var storage = new StorageService(_dbPath);
+        storage.UpsertDevice(new DeviceInfo { Addr = "00:11:22:33:44:55", Name = "手机" });
+
+        Assert.True(storage.SetDeviceFavorite("00:11:22:33:44:55", true));
+        Assert.True(storage.SetDeviceAlias("00:11:22:33:44:55", "我的小米"));
+
+        var device = storage.GetDevices().Single();
+        Assert.True(device.Favorite);
+        Assert.Equal("我的小米", device.Alias);
+
+        Assert.True(storage.SetDeviceAlias("00:11:22:33:44:55", ""));
+        Assert.Equal("", storage.GetDevices().Single().Alias);
+        Assert.True(storage.SetDeviceFavorite("00:11:22:33:44:55", false));
+        Assert.False(storage.GetDevices().Single().Favorite);
+    }
+
+    [Fact]
+    public void DeviceFavorite_UnknownDevice_ReturnsFalse()
+    {
+        var storage = new StorageService(_dbPath);
+        Assert.False(storage.SetDeviceFavorite("00:00:00:00:00:00", true));
+        Assert.False(storage.SetDeviceAlias("00:00:00:00:00:00", "x"));
+    }
 }

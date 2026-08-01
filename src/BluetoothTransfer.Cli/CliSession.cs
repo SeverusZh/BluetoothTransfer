@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
@@ -6,7 +5,7 @@ using BluetoothTransfer.Services;
 namespace BluetoothTransfer.Cli;
 
 /// <summary>
-/// CLI 会话：与 GUI 的 MainViewModel 采用完全相同的服务装配方式（无 WPF 依赖），
+/// CLI 会话：与 GUI 采用相同的服务装配方式（无 WPF 依赖），
 /// 事件通过控制台输出，方便人工观察与脚本解析。
 /// </summary>
 public sealed class CliSession : IDisposable
@@ -14,12 +13,6 @@ public sealed class CliSession : IDisposable
     public EventBus Events { get; } = new();
     public StorageService Storage { get; }
     public AppConfig Config { get; }
-    public CryptoService Crypto { get; } = new();
-    public FrameReassembler Reassembler { get; }
-    public BleService Ble { get; }
-    public BleGattServer GattServer { get; }
-    public RfcommChannel Rfcomm { get; }
-    public FileTransferService FileTransfer { get; }
     public OppDiscoveryService OppDiscovery { get; }
     public OppPushService OppPush { get; }
 
@@ -36,11 +29,6 @@ public sealed class CliSession : IDisposable
     {
         Storage = new StorageService(dbPath);
         Config = AppConfig.Load();
-        Reassembler = new FrameReassembler(Events, Crypto);
-        Ble = new BleService(Events, Crypto, Reassembler);
-        GattServer = new BleGattServer(Events, Crypto, Reassembler);
-        Rfcomm = new RfcommChannel(Events, Storage, Crypto, Config);
-        FileTransfer = new FileTransferService(Events, Storage, Config, Rfcomm, Ble, Crypto);
         OppDiscovery = new OppDiscoveryService(Events);
         OppPush = new OppPushService(Events, Storage, Config, OppDiscovery);
         SubscribeEvents();
@@ -49,10 +37,6 @@ public sealed class CliSession : IDisposable
     private void SubscribeEvents()
     {
         Events.Subscribe<LogEvent>(OnLog);
-        Events.Subscribe<TextReceivedEvent>(OnTextReceived);
-        Events.Subscribe<FileReceivedEvent>(OnFileReceived);
-        Events.Subscribe<DeviceConnectedEvent>(OnDeviceConnected);
-        Events.Subscribe<DeviceDisconnectedEvent>(OnDeviceDisconnected);
         Events.Subscribe<TransferProgressEvent>(OnTransferProgress);
     }
 
@@ -79,54 +63,6 @@ public sealed class CliSession : IDisposable
         Console.ForegroundColor = old;
     }
 
-    private void OnTextReceived(TextReceivedEvent e)
-    {
-        if (JsonEvents)
-        {
-            PrintJson(new { @event = "text_received", peer = e.PeerName, addr = e.Addr, text = e.Text });
-            return;
-        }
-        Console.WriteLine($"[收到文本] 来自 {e.PeerName}（{e.Addr}）：{e.Text}");
-    }
-
-    private void OnFileReceived(FileReceivedEvent e)
-    {
-        if (JsonEvents)
-        {
-            PrintJson(new { @event = "file_received", peer = e.PeerName, addr = e.Addr, fileName = e.FileName, localPath = e.LocalPath, size = e.Size });
-            return;
-        }
-        Console.WriteLine($"[收到文件] {e.FileName}（{e.Size} 字节）-> {e.LocalPath}");
-    }
-
-    private void OnDeviceConnected(DeviceConnectedEvent e)
-    {
-        Storage.UpsertDevice(new DeviceInfo
-        {
-            Addr = e.Addr,
-            Name = e.Name,
-            LastSeen = DateTime.Now.ToString("o"),
-            LastConnected = DateTime.Now.ToString("o")
-        });
-
-        if (JsonEvents)
-        {
-            PrintJson(new { @event = "device_connected", addr = e.Addr, name = e.Name });
-            return;
-        }
-        Console.WriteLine($"[已连接] {e.Name}（{e.Addr}）");
-    }
-
-    private void OnDeviceDisconnected(DeviceDisconnectedEvent e)
-    {
-        if (JsonEvents)
-        {
-            PrintJson(new { @event = "device_disconnected", addr = e.Addr });
-            return;
-        }
-        Console.WriteLine($"[已断开] {e.Addr}");
-    }
-
     private void OnTransferProgress(TransferProgressEvent e)
     {
         if (Quiet || JsonEvents || Console.IsErrorRedirected) return;
@@ -137,11 +73,6 @@ public sealed class CliSession : IDisposable
 
     public void Dispose()
     {
-        if (GattServer.IsAdvertising)
-            GattServer.Stop();
-        if (Rfcomm.IsActive)
-            Rfcomm.Close();
-        Ble.Disconnect();
     }
 
     private static void PrintJson(object value)

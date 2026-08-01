@@ -11,8 +11,6 @@ public class DeviceInfo : INotifyPropertyChanged
     private bool _favorite;
     private string _lastSeen = "";
     private string _lastConnected = "";
-    private int _rssi;
-    private bool _isConnected;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -29,6 +27,4 @@ public class DeviceInfo : INotifyPropertyChanged
     public bool Favorite { get => _favorite; set => SetProperty(ref _favorite, value); }
     public string LastSeen { get => _lastSeen; set => SetProperty(ref _lastSeen, value); }
     public string LastConnected { get => _lastConnected; set => SetProperty(ref _lastConnected, value); }
-    public int Rssi { get => _rssi; set => SetProperty(ref _rssi, value); }
-    public bool IsConnected { get => _isConnected; set => SetProperty(ref _isConnected, value); }
 }

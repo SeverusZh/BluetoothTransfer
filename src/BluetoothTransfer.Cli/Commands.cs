@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using BluetoothTransfer.Models;
@@ -18,267 +18,7 @@ public static class Commands
     private static int ParseInt(string? text, int fallback)
         => int.TryParse(text, out var value) ? value : fallback;
 
-    // ------------------------------------------------------------------ 扫描
-
-    public static async Task<int> ScanAsync(Args a)
-    {
-        using var session = NewSession(a, quiet: true);
-        var seconds = Math.Max(1, ParseInt(a.Option("seconds"), 8));
-        var found = new Dictionary<string, (string Name, int Rssi, string LastSeen)>();
-        session.Events.Subscribe<DeviceDiscoveredEvent>(e =>
-            found[e.Addr] = (e.Name, e.Rssi, DateTime.Now.ToString("o")));
-
-        session.Ble.StartScan();
-        if (!a.Has("json"))
-            Info($"正在扫描 BLE 设备（{seconds} 秒）...");
-        await Task.Delay(TimeSpan.FromSeconds(seconds));
-        session.Ble.StopScan();
-
-        if (a.Has("json"))
-        {
-            Console.WriteLine(JsonSerializer.Serialize(found
-                .Select(kv => new { addr = kv.Key, name = kv.Value.Name, rssi = kv.Value.Rssi, lastSeen = kv.Value.LastSeen })
-                .OrderByDescending(x => x.rssi),
-                new JsonSerializerOptions { WriteIndented = true }));
-            return 0;
-        }
-
-        Info($"发现 {found.Count} 个设备：");
-        foreach (var kv in found.OrderByDescending(x => x.Value.Rssi))
-            Info($"  {Pad(kv.Value.Name, 24)} {kv.Key}  RSSI={kv.Value.Rssi} dBm");
-        return 0;
-    }
-
-    // ------------------------------------------------------------------ 服务端
-
-    public static async Task<int> ServeAsync(Args a)
-    {
-        using var session = NewSession(a, jsonEvents: a.Has("json"));
-        var name = a.Option("name") ?? Environment.MachineName;
-        var bleOnly = a.Has("ble-only");
-
-        var gattOk = await session.GattServer.StartAsync(name);
-        if (!gattOk)
-        {
-            Error("GATT 服务端启动失败（BLE 不可用或缺少蓝牙适配器）");
-            return 1;
-        }
-
-        var rfcommOk = bleOnly;
-        if (!bleOnly)
-        {
-            rfcommOk = await session.Rfcomm.StartServerAsync();
-            if (!rfcommOk)
-            {
-                Error("RFCOMM 服务端启动失败（经典蓝牙不可用）");
-                return 1;
-            }
-        }
-
-        if (!a.Has("json"))
-        {
-            var nameNote = session.GattServer.IsNameAdvertised ? "" : "，本机名称广播不可用，可按地址连接";
-            Info($"正在广播 \"{name}\"（BLE{(rfcommOk ? " + RFCOMM" : "")}{nameNote}），等待对端连接。Ctrl+C 退出。");
-        }
-
-        await WaitUntilCancelledOrTimeoutAsync(a.Option("timeout"));
-        Info("已停止广播");
-        return 0;
-    }
-
-    // ------------------------------------------------------------------ 连接
-
-    public static async Task<int> ConnectAsync(Args a)
-    {
-        var addr = a.Get(1);
-        if (string.IsNullOrWhiteSpace(addr))
-        {
-            Error("用法：btcli connect <设备地址> [--peer 名称] [--no-rfcomm] [--timeout 秒]");
-            return 2;
-        }
-
-        using var session = NewSession(a, jsonEvents: a.Has("json"));
-        if (!await EnsureConnectedAsync(session, addr, a.Option("peer"), !a.Has("no-rfcomm")))
-            return 1;
-
-        if (!a.Has("json"))
-            Info("会话保持中（Ctrl+C 退出），对端发来的文本/文件会实时显示。");
-        await WaitUntilCancelledOrTimeoutAsync(a.Option("timeout"));
-        Info("已断开");
-        return 0;
-    }
-
-    /// <summary>一次性命令共用：未连接则先建立 BLE（+可选 RFCOMM）连接。</summary>
-    private static async Task<bool> EnsureConnectedAsync(CliSession session, string addr, string? peerName, bool rfcomm)
-    {
-        if (session.Ble.IsConnected)
-        {
-            if (!string.Equals(session.Ble.ConnectedAddr, addr, StringComparison.OrdinalIgnoreCase))
-            {
-                session.Ble.Disconnect();
-                session.Rfcomm.Close();
-            }
-            else
-            {
-                return true;
-            }
-        }
-
-        var ok = await session.Ble.ConnectAsync(addr);
-        if (!ok)
-        {
-            Error($"BLE 连接失败：{addr}");
-            return false;
-        }
-
-        if (rfcomm)
-        {
-            var rfcommOk = await session.Rfcomm.ConnectToServerAsync(peerName ?? "");
-            if (!rfcommOk)
-                Warn("RFCOMM 通道连接失败（大文件传输不可用）");
-        }
-        return true;
-    }
-
-    private static async Task WaitUntilCancelledOrTimeoutAsync(string? timeoutSeconds)
-    {
-        var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) =>
-        {
-            e.Cancel = true;
-            cts.Cancel();
-        };
-        try
-        {
-            var seconds = ParseInt(timeoutSeconds, 0);
-            if (seconds > 0)
-                await Task.Delay(TimeSpan.FromSeconds(seconds), cts.Token);
-            else
-                await Task.Delay(Timeout.InfiniteTimeSpan, cts.Token);
-        }
-        catch (TaskCanceledException)
-        {
-            // 用户按 Ctrl+C，正常退出。
-        }
-    }
-
-    // ------------------------------------------------------------------ 发送
-
-    public static async Task<int> SendTextAsync(Args a)
-    {
-        var addr = a.Get(1);
-        var text = a.RemainingFrom(2);
-        if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(text))
-        {
-            Error("用法：btcli send-text <设备地址> <文本> [--peer 名称]");
-            return 2;
-        }
-
-        using var session = NewSession(a, quiet: true);
-        if (!await EnsureConnectedAsync(session, addr, a.Option("peer"), rfcomm: false))
-            return 1;
-
-        var ok = await session.Ble.SendTextAsync(text);
-        await Task.Delay(300);
-        if (ok)
-            Info($"文本已发送（{Encoding.UTF8.GetByteCount(text)} 字节）");
-        else
-            Error("文本发送失败");
-        return ok ? 0 : 1;
-    }
-
-    public static async Task<int> SendFileAsync(Args a)
-    {
-        var addr = a.Get(1);
-        var path = a.Get(2);
-        if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(path))
-        {
-            Error("用法：btcli send-file <设备地址> <文件路径> [--peer 名称] [--compress|--no-compress] [--encrypt|--no-encrypt] [--chunk 字节]");
-            return 2;
-        }
-        if (!File.Exists(path))
-        {
-            Error($"文件不存在：{path}");
-            return 2;
-        }
-
-        using var session = NewSession(a, quiet: true);
-        if (!await EnsureConnectedAsync(session, addr, a.Option("peer"), rfcomm: true))
-            return 1;
-
-        var previous = ApplyTransferOverrides(session.Config, a);
-        try
-        {
-            var ok = await session.FileTransfer.SendFileAsync(path);
-            await Task.Delay(500);
-            if (ok)
-                Info($"文件已发送：{Path.GetFileName(path)}");
-            else
-                Error($"文件发送失败：{Path.GetFileName(path)}");
-            return ok ? 0 : 1;
-        }
-        finally
-        {
-            RestoreTransferOverrides(session.Config, previous);
-        }
-    }
-
-    public static async Task<int> SendFolderAsync(Args a)
-    {
-        var addr = a.Get(1);
-        var folder = a.Get(2);
-        if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(folder))
-        {
-            Error("用法：btcli send-folder <设备地址> <文件夹路径> [--peer 名称] [--compress|--no-compress] [--encrypt|--no-encrypt]");
-            return 2;
-        }
-        if (!Directory.Exists(folder))
-        {
-            Error($"文件夹不存在：{folder}");
-            return 2;
-        }
-
-        using var session = NewSession(a, quiet: true);
-        if (!await EnsureConnectedAsync(session, addr, a.Option("peer"), rfcomm: true))
-            return 1;
-
-        var previous = ApplyTransferOverrides(session.Config, a);
-        try
-        {
-            var ok = await session.FileTransfer.SendFolderAsync(folder);
-            await Task.Delay(500);
-            if (ok)
-                Info($"文件夹已发送：{folder}");
-            else
-                Error($"文件夹发送失败：{folder}");
-            return ok ? 0 : 1;
-        }
-        finally
-        {
-            RestoreTransferOverrides(session.Config, previous);
-        }
-    }
-
-    private static (bool Compress, bool Encrypt, int Chunk) ApplyTransferOverrides(AppConfig config, Args a)
-    {
-        var previous = (config.CompressionEnabled, config.EncryptionEnabled, config.RfcommChunkSize);
-        if (a.Has("compress")) config.CompressionEnabled = true;
-        if (a.Has("no-compress")) config.CompressionEnabled = false;
-        if (a.Has("encrypt")) config.EncryptionEnabled = true;
-        if (a.Has("no-encrypt")) config.EncryptionEnabled = false;
-        if (a.Option("chunk") is { } chunkText && int.TryParse(chunkText, out var chunk) && chunk > 0)
-            config.RfcommChunkSize = chunk;
-        return previous;
-    }
-
-    private static void RestoreTransferOverrides(AppConfig config, (bool Compress, bool Encrypt, int Chunk) previous)
-    {
-        config.CompressionEnabled = previous.Compress;
-        config.EncryptionEnabled = previous.Encrypt;
-        config.RfcommChunkSize = previous.Chunk;
-    }
-
-    // ------------------------------------------------------------------ OPP 通用推送（1.1）
+    // ------------------------------------------------------------------ OPP 通用推送
 
     public static async Task<int> OppScanAsync(Args a)
     {
@@ -327,7 +67,7 @@ public static class Commands
         var path = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(path))
         {
-            Error("用法：btcli opp-send-file <设备地址> <文件> [--db 路径]");
+            Error("用法：btcli opp-send-file <设备地址> <文件> [--zip] [--db 路径]");
             return 2;
         }
         if (!File.Exists(path))
@@ -336,7 +76,7 @@ public static class Commands
             return 2;
         }
         using var session = NewSession(a, quiet: true);
-        var ok = await session.OppPush.SendFileAsync(addr, path);
+        var ok = await session.OppPush.SendFileAsync(addr, path, zip: a.Has("zip"));
         Info(ok ? $"文件已通过 OPP 推送：{Path.GetFileName(path)}" : $"OPP 推送失败：{Path.GetFileName(path)}");
         return ok ? 0 : 1;
     }
@@ -376,6 +116,42 @@ public static class Commands
         var ok = await session.OppPush.SendFolderAsync(addr, folder);
         Info(ok ? $"文件夹已压缩并通过 OPP 推送：{folder}" : "OPP 文件夹推送失败");
         return ok ? 0 : 1;
+    }
+
+    public static async Task<int> OppSendFilesAsync(Args a)
+    {
+        var addr = a.Get(1);
+        var paths = new List<string>();
+        for (var i = 2; ; i++)
+        {
+            var p = a.Get(i);
+            if (string.IsNullOrEmpty(p)) break;
+            paths.Add(p);
+        }
+        if (string.IsNullOrWhiteSpace(addr) || paths.Count == 0)
+        {
+            Error("用法：btcli opp-send-files <设备地址> <文件1> [文件2 ...] [--zip] [--db 路径]");
+            return 2;
+        }
+        var existing = paths.Where(File.Exists).ToList();
+        if (existing.Count == 0)
+        {
+            Error("没有可发送的文件（路径不存在）");
+            return 2;
+        }
+        using var session = NewSession(a, quiet: true);
+        var okCount = 0;
+        var failed = new List<string>();
+        foreach (var path in existing)
+        {
+            var ok = await session.OppPush.SendFileAsync(addr, path, zip: a.Has("zip"));
+            if (ok) okCount++;
+            else failed.Add(Path.GetFileName(path));
+        }
+        Info(existing.Count == okCount
+            ? $"已推送 {okCount} 个文件"
+            : $"推送完成：成功 {okCount}/{existing.Count}；失败：{string.Join("、", failed)}");
+        return okCount == existing.Count ? 0 : 1;
     }
 
     // ------------------------------------------------------------------ 记录 / 配置
@@ -493,10 +269,47 @@ public static class Commands
     public static int Devices(Args a)
     {
         using var session = NewSession(a, quiet: true);
+        var sub = (a.Get(1) ?? "").ToLowerInvariant();
+        if (sub == "favorite")
+        {
+            var addr = a.Get(2);
+            if (string.IsNullOrWhiteSpace(addr))
+            {
+                Error("用法：btcli devices favorite <设备地址> [--unset]");
+                return 2;
+            }
+            var ok = session.Storage.SetDeviceFavorite(addr, !a.Has("unset"));
+            Info(ok ? $"已更新收藏状态：{addr}" : $"设备不存在：{addr}");
+            return ok ? 0 : 1;
+        }
+        if (sub == "alias")
+        {
+            var addr = a.Get(2);
+            var alias = a.RemainingFrom(3);
+            if (string.IsNullOrWhiteSpace(addr))
+            {
+                Error("用法：btcli devices alias <设备地址> <别名>（别名留空清除）");
+                return 2;
+            }
+            var ok = session.Storage.SetDeviceAlias(addr, alias.Trim());
+            Info(ok ? $"已更新别名：{addr} = \"{alias.Trim()}\"" : $"设备不存在：{addr}");
+            return ok ? 0 : 1;
+        }
+
+        var sort = (a.Option("sort") ?? "last").ToLowerInvariant();
         var devices = session.Storage.GetDevices();
+        IEnumerable<DeviceInfo> ordered;
+        if (sort == "name")
+            ordered = devices.OrderBy(d => d.Alias.Length > 0 ? d.Alias : d.Name);
+        else if (sort == "favorite")
+            ordered = devices.OrderByDescending(d => d.Favorite).ThenBy(d => d.Alias.Length > 0 ? d.Alias : d.Name);
+        else
+            ordered = devices.OrderByDescending(d => d.LastConnected);
+        var list = ordered.ToList();
+
         if (a.Has("json"))
         {
-            Console.WriteLine(JsonSerializer.Serialize(devices.Select(d => new
+            Console.WriteLine(JsonSerializer.Serialize(list.Select(d => new
             {
                 addr = d.Addr,
                 name = d.Name,
@@ -507,13 +320,13 @@ public static class Commands
             }), new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
-        if (devices.Count == 0)
+        if (list.Count == 0)
         {
             Info("无已记录设备");
             return 0;
         }
         var header = new[] { "地址", "名称", "别名", "收藏", "最近连接" };
-        var rows = devices.Select(d => new[]
+        var rows = list.Select(d => new[]
         {
             d.Addr,
             d.Name,
@@ -540,7 +353,7 @@ public static class Commands
             }
             if (!SetConfigValue(session.Config, key, value))
             {
-                Error($"未知配置项：{key}（可选 RecvDirectory/AutoCopyClipboard/CompressionEnabled/EncryptionEnabled/RfcommChunkSize/OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel）");
+                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel）");
                 return 2;
             }
             session.Config.Save();
@@ -548,11 +361,6 @@ public static class Commands
             return 0;
         }
 
-        Info($"接收目录       RecvDirectory        = {session.Config.RecvDirectory}");
-        Info($"自动复制剪贴板 AutoCopyClipboard    = {session.Config.AutoCopyClipboard}");
-        Info($"启用压缩       CompressionEnabled   = {session.Config.CompressionEnabled}");
-        Info($"启用加密       EncryptionEnabled    = {session.Config.EncryptionEnabled}");
-        Info($"RFCOMM 分块    RfcommChunkSize      = {session.Config.RfcommChunkSize}");
         Info($"OPP 分块       OppChunkSize          = {session.Config.OppChunkSize}");
         Info($"OPP 连接超时    OppConnectTimeout     = {session.Config.OppConnectTimeoutSeconds} 秒");
         Info($"OPP 发送超时    OppSendTimeout        = {session.Config.OppSendTimeoutSeconds} 秒");
@@ -567,25 +375,6 @@ public static class Commands
     {
         switch (key.Trim().ToLowerInvariant())
         {
-            case "recvdir" or "recvdirectory" or "接收目录":
-                config.RecvDirectory = value;
-                return true;
-            case "autocopy" or "autocopyclipboard" or "自动复制":
-                if (!bool.TryParse(value, out var autoCopy)) return false;
-                config.AutoCopyClipboard = autoCopy;
-                return true;
-            case "compression" or "compressionenabled" or "压缩":
-                if (!bool.TryParse(value, out var compression)) return false;
-                config.CompressionEnabled = compression;
-                return true;
-            case "encryption" or "encryptionenabled" or "加密":
-                if (!bool.TryParse(value, out var encryption)) return false;
-                config.EncryptionEnabled = encryption;
-                return true;
-            case "rfcommchunk" or "rfcommchunksize" or "分块":
-                if (!int.TryParse(value, out var chunk) || chunk <= 0) return false;
-                config.RfcommChunkSize = chunk;
-                return true;
             case "oppchunk" or "oppchunksize":
                 if (!int.TryParse(value, out var oppChunk) || oppChunk <= 0) return false;
                 config.OppChunkSize = oppChunk;
@@ -622,12 +411,13 @@ public static class Commands
 
     public static async Task<int> SelftestAsync(Args _)
     {
-        var results = new List<(string Name, bool Ok, string Detail)>();
-
-        results.Add(TestFraming());
-        results.Add(TestCrypto());
-        results.Add(TestCompression());
-        results.Add(TestStorageAndExport());
+        var results = new List<(string Name, bool Ok, string Detail)>
+        {
+            TestStorageAndExport(),
+            TestRetryPolicy(),
+            TestZipPack(),
+            TestDeviceManagement()
+        };
         results.Add(await TestObexAsync());
 
         var failed = results.Count(r => !r.Ok);
@@ -637,6 +427,94 @@ public static class Commands
             Console.WriteLine($"  [{(ok ? "PASS" : "FAIL")}] {name}{(detail.Length > 0 ? "：" + detail : "")}");
         Console.WriteLine(failed == 0 ? "全部通过 ✔" : $"{failed} 项失败 ✘");
         return failed == 0 ? 0 : 1;
+    }
+
+    private static (string Name, bool Ok, string Detail) TestRetryPolicy()
+    {
+        var ok = true;
+        var policy = new OppRetryPolicy(3, 3);
+        ok &= policy.MaxAttempts == 4;
+        ok &= policy.ShouldRetry(1, "OBEX PUT 失败：Forbidden (0xC3)");
+        ok &= policy.ShouldRetry(2, "对端提前关闭连接");
+        ok &= !policy.ShouldRetry(4, "连接失败");
+        ok &= !policy.ShouldRetry(1, "设备未配对");
+        ok &= policy.NextDelay(2) == TimeSpan.FromSeconds(6);
+        var tracker = new TransferSpeedTracker();
+        tracker.AddSample(0);
+        ok &= tracker.SpeedBytesPerSecond == 0;
+        return ("重试策略 / 速率", ok,
+            ok ? "错误分类/次数上限/退避/速率窗口全部通过" : "重试策略校验失败");
+    }
+
+    private static (string Name, bool Ok, string Detail) TestZipPack()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "btcli_zip_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(dir, "sub"));
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "a.txt"), "hello");
+            File.WriteAllText(Path.Combine(dir, "sub", "b.txt"), "world");
+            var zipPath = Path.Combine(dir, "out.zip");
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                archive.CreateEntryFromFile(Path.Combine(dir, "a.txt"), "a.txt", CompressionLevel.Optimal);
+                archive.CreateEntryFromFile(Path.Combine(dir, "sub", "b.txt"), "sub/b.txt", CompressionLevel.Optimal);
+            }
+            using var read = ZipFile.OpenRead(zipPath);
+            var names = read.Entries.Select(e => e.FullName).OrderBy(x => x).ToList();
+            var ok = names.SequenceEqual(new[] { "a.txt", "sub/b.txt" });
+            return ("zip 打包", ok, ok ? "相对路径/子目录条目全部通过" : "zip 条目不符合预期");
+        }
+        catch (Exception ex)
+        {
+            return ("zip 打包", false, ex.Message);
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
+            }
+            catch
+            {
+                // 清理失败不影响自检结论
+            }
+        }
+    }
+
+    private static (string Name, bool Ok, string Detail) TestDeviceManagement()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "btcli_dev_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var storage = new StorageService(Path.Combine(dir, "dev.db"));
+            storage.UpsertDevice(new DeviceInfo { Addr = "00:11:22:33:44:55", Name = "手机" });
+            var ok = storage.SetDeviceFavorite("00:11:22:33:44:55", true);
+            ok &= storage.SetDeviceAlias("00:11:22:33:44:55", "我的小米");
+            var device = storage.GetDevices().Single();
+            ok &= device.Favorite && device.Alias == "我的小米";
+            ok &= !storage.SetDeviceFavorite("00:00:00:00:00:00", true);
+            return ("设备管理", ok,
+                ok ? "收藏/别名写入与读取全部通过" : "设备管理校验失败");
+        }
+        catch (Exception ex)
+        {
+            return ("设备管理", false, ex.Message);
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
+            }
+            catch
+            {
+                // 清理失败不影响自检结论
+            }
+        }
     }
 
     private static async Task<(string Name, bool Ok, string Detail)> TestObexAsync()
@@ -651,7 +529,7 @@ public static class Commands
             // 2) 超长名称截断（UTF-16 字节数 > 255）
             var longHeader = ObexHeader.Name(new string('汉', 200) + ".txt");
             var decoded = longHeader.AsName();
-            if (decoded == null || decoded.Length == 0 || longHeader.Value.Length > 259)
+            if (decoded == null || decoded.Length == 0 || longHeader.Value.Length > 250)
                 return ("OBEX 协议（编解码/流程）", false, "长名称截断失败");
 
             // 3) PUT 包往返
@@ -700,106 +578,6 @@ public static class Commands
         catch (Exception ex)
         {
             return ("OBEX 协议（编解码/流程）", false, ex.Message);
-        }
-    }
-
-    private static (string Name, bool Ok, string Detail) TestFraming()
-    {
-        var ok = true;
-        var detail = "";
-        foreach (var size in new[] { 0, 1, 20, 4096, 60000 })
-        {
-            var payload = size == 0
-                ? Array.Empty<byte>()
-                : Enumerable.Range(0, size).Select(i => (byte)(i % 251)).ToArray();
-            var frame = new Frame
-            {
-                MsgType = MsgType.DATA,
-                TaskId = 0xDEADBEEF,
-                SeqNo = 12345,
-                TotalLen = (uint)size,
-                Offset = 100,
-                Flags = FrameFlags.FinalChunk | FrameFlags.Compressed,
-                Payload = payload
-            };
-            var parsed = Frame.Deserialize(frame.Serialize());
-            if (parsed == null || parsed.MsgType != frame.MsgType || parsed.TaskId != frame.TaskId ||
-                parsed.SeqNo != frame.SeqNo || parsed.TotalLen != frame.TotalLen || parsed.Offset != frame.Offset ||
-                parsed.Flags != frame.Flags || !parsed.Payload.SequenceEqual(payload))
-            {
-                ok = false;
-                detail = $"size={size} 往返不一致";
-                break;
-            }
-        }
-
-        if (ok)
-        {
-            var frame = new Frame { MsgType = MsgType.META, TaskId = 7, TotalLen = 3, Payload = new byte[] { 1, 2, 3 } };
-            var raw = frame.Serialize();
-            raw[^1] ^= 0xFF;
-            if (Frame.Deserialize(raw) != null)
-            {
-                ok = false;
-                detail = "CRC 未拦截篡改帧";
-            }
-        }
-
-        return ("协议分帧 / CRC16", ok, ok ? "多尺寸往返一致，篡改帧被拒绝" : detail);
-    }
-
-    private static (string Name, bool Ok, string Detail) TestCrypto()
-    {
-        try
-        {
-            var alice = new CryptoService();
-            var bob = new CryptoService();
-            var alicePub = alice.GetPublicKey();
-            var bobPub = bob.GetPublicKey();
-            alice.DeriveSessionKey(bobPub);
-            bob.DeriveSessionKey(alicePub);
-
-            var plain = Encoding.UTF8.GetBytes("蓝牙传输 CLI 自检 AES-GCM 0123456789");
-            var cipher = alice.Encrypt(plain);
-            var roundTrip = bob.Decrypt(cipher).SequenceEqual(plain);
-
-            var tampered = (byte[])cipher.Clone();
-            tampered[^1] ^= 0x01;
-            var tamperRejected = false;
-            try
-            {
-                bob.Decrypt(tampered);
-            }
-            catch (CryptographicException)
-            {
-                tamperRejected = true;
-            }
-
-            return ("加密（ECDH + AES-GCM）", roundTrip && tamperRejected,
-                roundTrip && tamperRejected ? "密钥协商成功，加解密一致，篡改被拒绝" : "往返或篡改检测失败");
-        }
-        catch (Exception ex)
-        {
-            return ("加密（ECDH + AES-GCM）", false, ex.Message);
-        }
-    }
-
-    private static (string Name, bool Ok, string Detail) TestCompression()
-    {
-        try
-        {
-            var data = new byte[200_000];
-            for (var i = 0; i < data.Length; i++)
-                data[i] = (byte)(i % 97);
-            var compressed = RfcommChannel.CompressData(data);
-            var restored = RfcommChannel.DecompressData(compressed);
-            var ok = restored.SequenceEqual(data) && compressed.Length < data.Length;
-            return ("Deflate 压缩", ok,
-                ok ? $"200KB -> {compressed.Length} 字节，往返一致" : "往返不一致或未压缩");
-        }
-        catch (Exception ex)
-        {
-            return ("Deflate 压缩", false, ex.Message);
         }
     }
 
@@ -888,38 +666,24 @@ public static class Commands
                         ReplHelp();
                         break;
                     case "quit" or "exit":
-                        // Dispose 会统一清理连接，避免重复关闭打印两次日志。
                         return 0;
                     case "clear":
                         Console.Clear();
                         break;
-                    case "scan":
-                        await ReplScanAsync(session, parts);
+                    case "opp-scan":
+                        await OppScanAsync(parts);
                         break;
-                    case "serve":
-                        await ReplServeAsync(session, parts);
+                    case "opp-pair":
+                        await OppPairAsync(parts);
                         break;
-                    case "stop":
-                        session.GattServer.Stop();
-                        session.Rfcomm.Close();
-                        Info("已停止广播/服务");
+                    case "opp-send-file":
+                        await OppSendFileAsync(parts);
                         break;
-                    case "connect":
-                        await ReplConnectAsync(session, parts);
+                    case "opp-send-text":
+                        await OppSendTextAsync(parts);
                         break;
-                    case "disconnect":
-                        session.Ble.Disconnect();
-                        session.Rfcomm.Close();
-                        Info("已断开");
-                        break;
-                    case "send-text":
-                        await ReplSendTextAsync(session, parts);
-                        break;
-                    case "send-file":
-                        await ReplSendFileAsync(session, parts);
-                        break;
-                    case "send-folder":
-                        await ReplSendFolderAsync(session, parts);
+                    case "opp-send-folder":
+                        await OppSendFolderAsync(parts);
                         break;
                     case "records":
                         Records(parts);
@@ -949,168 +713,23 @@ public static class Commands
         return 0;
     }
 
-    private static async Task ReplScanAsync(CliSession session, Args parts)
-    {
-        var seconds = Math.Max(1, ParseInt(parts.Option("seconds"), 8));
-        var found = new List<(string Addr, string Name, int Rssi)>();
-        session.Events.Subscribe<DeviceDiscoveredEvent>(e =>
-        {
-            var index = found.FindIndex(x => x.Addr == e.Addr);
-            if (index >= 0)
-                found[index] = (e.Addr, e.Name, e.Rssi);
-            else
-                found.Add((e.Addr, e.Name, e.Rssi));
-        });
-
-        session.Ble.StartScan();
-        Info($"正在扫描 BLE 设备（{seconds} 秒）...");
-        await Task.Delay(TimeSpan.FromSeconds(seconds));
-        session.Ble.StopScan();
-
-        foreach (var (addr, name, rssi) in found.OrderByDescending(x => x.Rssi))
-            Info($"  {Pad(name, 24)} {addr}  RSSI={rssi} dBm");
-    }
-
-    private static async Task ReplServeAsync(CliSession session, Args parts)
-    {
-        var name = parts.Option("name") ?? Environment.MachineName;
-        var bleOnly = parts.Has("ble-only");
-        var gattOk = await session.GattServer.StartAsync(name);
-        if (!gattOk)
-        {
-            Error("GATT 服务端启动失败（BLE 不可用或缺少蓝牙适配器）");
-            return;
-        }
-
-        var rfcommOk = bleOnly;
-        if (!bleOnly)
-        {
-            rfcommOk = await session.Rfcomm.StartServerAsync();
-            if (!rfcommOk)
-            {
-                session.GattServer.Stop();
-                Error("RFCOMM 服务端启动失败");
-                return;
-            }
-        }
-        Info($"正在广播 \"{name}\"（BLE{(rfcommOk ? " + RFCOMM" : "")}），输入 stop 停止。");
-    }
-
-    private static async Task ReplConnectAsync(CliSession session, Args parts)
-    {
-        var addr = parts.Get(1);
-        if (string.IsNullOrWhiteSpace(addr))
-        {
-            Error("用法：connect <设备地址> [--peer 名称] [--no-rfcomm]");
-            return;
-        }
-
-        if (session.Ble.IsConnected &&
-            !string.Equals(session.Ble.ConnectedAddr, addr, StringComparison.OrdinalIgnoreCase))
-        {
-            session.Ble.Disconnect();
-            session.Rfcomm.Close();
-        }
-
-        if (!await session.Ble.ConnectAsync(addr))
-        {
-            Error($"BLE 连接失败：{addr}");
-            return;
-        }
-
-        if (!parts.Has("no-rfcomm"))
-        {
-            var rfcommOk = await session.Rfcomm.ConnectToServerAsync(parts.Option("peer") ?? "");
-            if (!rfcommOk)
-                Warn("RFCOMM 通道连接失败（大文件传输不可用）");
-        }
-        Info("已连接");
-    }
-
-    private static async Task ReplSendTextAsync(CliSession session, Args parts)
-    {
-        if (!session.Ble.IsConnected)
-        {
-            Error("尚未连接，请先 connect <地址>");
-            return;
-        }
-        var text = parts.RemainingFrom(1);
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            Error("用法：send-text <文本>");
-            return;
-        }
-        var ok = await session.Ble.SendTextAsync(text);
-        Info(ok ? $"文本已发送（{Encoding.UTF8.GetByteCount(text)} 字节）" : "发送失败");
-    }
-
-    private static async Task ReplSendFileAsync(CliSession session, Args parts)
-    {
-        if (!session.Ble.IsConnected)
-        {
-            Error("尚未连接，请先 connect <地址>");
-            return;
-        }
-        var path = parts.Get(1);
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-        {
-            Error("用法：send-file <文件路径>");
-            return;
-        }
-        var previous = ApplyTransferOverrides(session.Config, parts);
-        try
-        {
-            var ok = await session.FileTransfer.SendFileAsync(path);
-            Info(ok ? $"文件已发送：{Path.GetFileName(path)}" : $"文件发送失败：{Path.GetFileName(path)}");
-        }
-        finally
-        {
-            RestoreTransferOverrides(session.Config, previous);
-        }
-    }
-
-    private static async Task ReplSendFolderAsync(CliSession session, Args parts)
-    {
-        if (!session.Ble.IsConnected)
-        {
-            Error("尚未连接，请先 connect <地址>");
-            return;
-        }
-        var folder = parts.Get(1);
-        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
-        {
-            Error("用法：send-folder <文件夹路径>");
-            return;
-        }
-        var previous = ApplyTransferOverrides(session.Config, parts);
-        try
-        {
-            var ok = await session.FileTransfer.SendFolderAsync(folder);
-            Info(ok ? $"文件夹已发送：{folder}" : $"文件夹发送失败：{folder}");
-        }
-        finally
-        {
-            RestoreTransferOverrides(session.Config, previous);
-        }
-    }
-
     private static void ReplHelp()
     {
         Info("""
             help                    显示本帮助
-            scan [seconds]          扫描 BLE 设备
-            serve [--name 名称] [--ble-only]
-                                  启动接收端（BLE + RFCOMM），stop 停止
-            stop                    停止广播/服务
-            connect <地址> [--peer 名称] [--no-rfcomm]
-                                  连接对端
-            disconnect              断开连接
-            send-text <文本>        发送文本（需已连接）
-            send-file <路径>        发送文件（需已连接，支持 --compress/--encrypt/--chunk）
-            send-folder <路径>      发送文件夹
+            opp-scan [--seconds N] [--paired-only]
+                                  扫描支持 OPP（蓝牙文件接收）的设备
+            opp-pair <地址> [--pin 1234]
+                                  发起配对
+            opp-send-file <地址> <文件> [--zip]
+                                  推送文件（可打包 zip）
+            opp-send-text <地址> <文本> [--name 文件名]
+                                  推送文本
+            opp-send-folder <地址> <文件夹>
+                                  推送文件夹（自动打包 zip）
             records / stats / devices / config / export <csv|json> <路径>
                                   查询记录、统计、设备、配置与导出
-            quit / exit             退出
+            quit / exit            退出
             """);
     }
 

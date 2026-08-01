@@ -11,15 +11,10 @@ public static class CliApp
             return command switch
             {
                 "help" or "-h" or "--help" => Help.Show(),
-                "scan" => await Commands.ScanAsync(a),
-                "serve" => await Commands.ServeAsync(a),
-                "connect" => await Commands.ConnectAsync(a),
-                "send-text" => await Commands.SendTextAsync(a),
-                "send-file" => await Commands.SendFileAsync(a),
-                "send-folder" => await Commands.SendFolderAsync(a),
                 "opp-scan" => await Commands.OppScanAsync(a),
                 "opp-pair" => await Commands.OppPairAsync(a),
                 "opp-send-file" => await Commands.OppSendFileAsync(a),
+                "opp-send-files" => await Commands.OppSendFilesAsync(a),
                 "opp-send-text" => await Commands.OppSendTextAsync(a),
                 "opp-send-folder" => await Commands.OppSendFolderAsync(a),
                 "config" => Commands.Config(a),

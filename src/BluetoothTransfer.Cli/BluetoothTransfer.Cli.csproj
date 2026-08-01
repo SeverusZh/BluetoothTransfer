@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
@@ -23,25 +23,20 @@
     <Compile Include="..\BluetoothTransfer\Models\AppConfig.cs" Link="Models\AppConfig.cs" />
     <Compile Include="..\BluetoothTransfer\Models\DeviceInfo.cs" Link="Models\DeviceInfo.cs" />
     <Compile Include="..\BluetoothTransfer\Models\TransferRecord.cs" Link="Models\TransferRecord.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\BleGattServer.cs" Link="Services\BleGattServer.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\BleService.cs" Link="Services\BleService.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\CryptoService.cs" Link="Services\CryptoService.cs" />
     <Compile Include="..\BluetoothTransfer\Services\EventBus.cs" Link="Services\EventBus.cs" />
     <Compile Include="..\BluetoothTransfer\Services\ExportService.cs" Link="Services\ExportService.cs" />
     <Compile Include="..\BluetoothTransfer\Services\FileChecksum.cs" Link="Services\FileChecksum.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\FileTransferService.cs" Link="Services\FileTransferService.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\FrameReassembler.cs" Link="Services\FrameReassembler.cs" />
     <Compile Include="..\BluetoothTransfer\Services\IObexTransport.cs" Link="Services\IObexTransport.cs" />
     <Compile Include="..\BluetoothTransfer\Services\MemoryObexTransport.cs" Link="Services\MemoryObexTransport.cs" />
     <Compile Include="..\BluetoothTransfer\Services\ObexClient.cs" Link="Services\ObexClient.cs" />
     <Compile Include="..\BluetoothTransfer\Services\ObexPacket.cs" Link="Services\ObexPacket.cs" />
     <Compile Include="..\BluetoothTransfer\Services\OppDiscoveryService.cs" Link="Services\OppDiscoveryService.cs" />
     <Compile Include="..\BluetoothTransfer\Services\OppPushService.cs" Link="Services\OppPushService.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\Protocol.cs" Link="Services\Protocol.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\RfcommChannel.cs" Link="Services\RfcommChannel.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\OppRetryPolicy.cs" Link="Services\OppRetryPolicy.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\OppSendQueue.cs" Link="Services\OppSendQueue.cs" />
     <Compile Include="..\BluetoothTransfer\Services\SocketObexTransport.cs" Link="Services\SocketObexTransport.cs" />
     <Compile Include="..\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
-    <Compile Include="..\BluetoothTransfer\Services\TransferState.cs" Link="Services\TransferState.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\TransferSpeedTracker.cs" Link="Services\TransferSpeedTracker.cs" />
   </ItemGroup>
 
 </Project>

@@ -13,7 +13,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.1.1"}";
+        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.2.0"}";
         Loaded += (_, _) =>
         {
             _trayIcon = (TaskbarIcon)FindResource("TrayIcon");
@@ -27,7 +27,7 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 // 托盘图标加载失败不影响主界面，仅记录日志
-                var vm = (ViewModels.MainViewModel)DataContext;
+                var vm = (ViewModels.OppViewModel)DataContext;
                 vm.PublishLog("WARN", $"托盘图标加载失败：{ex.Message}");
             }
         };
@@ -47,14 +47,8 @@ public partial class MainWindow : Window
         var files = (string[])e.Data.GetData(DataFormats.FileDrop);
         if (files.Length == 0) return;
 
-        var vm = (ViewModels.MainViewModel)DataContext;
-        foreach (var file in files)
-        {
-            if (System.IO.Directory.Exists(file))
-                await vm.SendFolderAsync(file);
-            else
-                await vm.SendSingleFileAsync(file);
-        }
+        var vm = (ViewModels.OppViewModel)DataContext;
+        await vm.SendDroppedAsync(files);
     }
 
     private void OnClosing(object? sender, CancelEventArgs e)

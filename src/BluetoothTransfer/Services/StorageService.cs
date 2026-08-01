@@ -208,6 +208,30 @@ public class StorageService
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>设置设备收藏状态，返回是否存在该设备。</summary>
+    public bool SetDeviceFavorite(string addr, bool favorite)
+    {
+        using var conn = new SqliteConnection(_connStr);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE devices SET favorite = @favorite WHERE addr = @addr";
+        cmd.Parameters.AddWithValue("@favorite", favorite ? 1 : 0);
+        cmd.Parameters.AddWithValue("@addr", addr);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>设置设备别名（空字符串清除别名），返回是否存在该设备。</summary>
+    public bool SetDeviceAlias(string addr, string alias)
+    {
+        using var conn = new SqliteConnection(_connStr);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE devices SET alias = @alias WHERE addr = @addr";
+        cmd.Parameters.AddWithValue("@alias", alias ?? "");
+        cmd.Parameters.AddWithValue("@addr", addr);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
     public List<DeviceInfo> GetDevices()
     {
         using var conn = new SqliteConnection(_connStr);

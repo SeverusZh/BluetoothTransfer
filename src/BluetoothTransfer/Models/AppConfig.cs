@@ -5,13 +5,6 @@ namespace BluetoothTransfer.Models;
 
 public class AppConfig
 {
-    public string RecvDirectory { get; set; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "BluetoothTransfer", "recv");
-    public bool AutoCopyClipboard { get; set; } = true;
-    public bool CompressionEnabled { get; set; } = false;
-    public bool EncryptionEnabled { get; set; } = true;
-    public int RfcommChunkSize { get; set; } = 4096;
     /// <summary>OPP 通用推送分片大小（字节）。</summary>
     public int OppChunkSize { get; set; } = 32768;
     /// <summary>OPP 连接超时（秒）。</summary>
@@ -32,6 +25,10 @@ public class AppConfig
     /// Windows 接收端（系统蓝牙文件接收向导）可能要求加密连接；Android 一般接受明文。
     /// </summary>
     public string OppProtectionLevel { get; set; } = "auto";
+    /// <summary>OPP 推送失败自动重试次数（0 表示不重试）。</summary>
+    public int OppRetryCount { get; set; } = 3;
+    /// <summary>OPP 重试基础间隔（秒），按 1x/2x/3x 指数退避。</summary>
+    public int OppRetryDelaySeconds { get; set; } = 3;
 
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

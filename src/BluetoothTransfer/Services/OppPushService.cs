@@ -27,7 +27,7 @@ public class OppPushService
         _discovery = discovery ?? new OppDiscoveryService(events);
     }
 
-    public async Task<bool> SendFileAsync(string deviceAddr, string filePath, CancellationToken ct = default)
+    public async Task<bool> SendFileAsync(string deviceAddr, string filePath, bool zip = false, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
         {
@@ -39,6 +39,28 @@ public class OppPushService
         {
             _events.Publish(new LogEvent("ERROR", $"文件超过 4GB 上限：{info.Name}"));
             return false;
+        }
+        if (zip)
+        {
+            var zipPath = Path.Combine(Path.GetTempPath(), $"bt_opp_zip_{Guid.NewGuid():N}.zip");
+            try
+            {
+                await Task.Run(() =>
+                {
+                    using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+                    archive.CreateEntryFromFile(filePath, info.Name, CompressionLevel.Optimal);
+                }, ct);
+                return await SendSourceAsync(deviceAddr, zipPath, info.Name + ".zip", "application/zip", filePath, ct);
+            }
+            catch (Exception ex)
+            {
+                _events.Publish(new LogEvent("ERROR", $"文件打包失败：{ex.Message}"));
+                return false;
+            }
+            finally
+            {
+                TryDelete(zipPath);
+            }
         }
         return await SendSourceAsync(deviceAddr, filePath, info.Name, MimeForName(info.Name), filePath, ct);
     }
@@ -248,69 +270,103 @@ public class OppPushService
             return false;
         }
 
-        try
+        var retryPolicy = new OppRetryPolicy(_config.OppRetryCount, _config.OppRetryDelaySeconds);
+        var attempt = 1;
+        string? lastError = null;
+        while (true)
         {
-            using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            connectCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _config.OppConnectTimeoutSeconds)));
-            await using var transport = await OpenTransportAsync(device, connectCts.Token);
-            await using var client = new ObexClient(transport, new ObexOptions { NameUseBom = _config.OppNameUseBom }, _events, _config.OppAuthPassword);
-            await client.ConnectAsync(connectCts.Token);
-
-            using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            sendCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _config.OppSendTimeoutSeconds)));
-            using var fs = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var result = await client.PushAsync(displayName, mimeType, totalLength,
-                async (offset, buffer, count, token) =>
-                {
-                    fs.Seek(offset, SeekOrigin.Begin);
-                    var n = await fs.ReadAsync(buffer.AsMemory(0, count), token);
-                    _events.Publish(new TransferProgressEvent(taskId.ToString(), offset + n, totalLength, 0));
-                    return n;
-                },
-                _config.OppChunkSize, sendCts.Token);
-
-            _events.Publish(new TransferProgressEvent(taskId.ToString(), totalLength, totalLength, 0));
             try
             {
-                await client.DisconnectAsync(sendCts.Token);
+                await PushOnceAsync(device, sourcePath, displayName, mimeType, totalLength, checksum, localPathForRecord, taskId, ct);
+                return true;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
+                WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消");
+                return false;
+            }
+            catch (OperationCanceledException)
+            {
+                lastError = "连接或发送超时";
             }
             catch (Exception ex)
             {
-                // 部分接收端（如 Android）在收到最终 PUT 后即主动断开，
-                // DISCONNECT 失败不代表推送失败，仅记录警告。
-                _events.Publish(new LogEvent("WARN", $"推送成功但 DISCONNECT 异常（可忽略）：{ex.Message}"));
+                lastError = ex.Message;
             }
 
-            _storage.UpsertDevice(new DeviceInfo
+            if (retryPolicy.ShouldRetry(attempt, lastError))
             {
-                Addr = device.Addr,
-                Name = device.Name,
-                LastSeen = DateTime.Now.ToString("o"),
-                LastConnected = DateTime.Now.ToString("o")
-            });
-            _events.Publish(new LogEvent("INFO",
-                $"OPP 推送成功：{displayName} -> {device.Name}（{device.AddrDisplay}，{result.BytesSent} 字节）"));
-            WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, result.BytesSent);
-            return true;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
-            WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消");
+                var delay = retryPolicy.NextDelay(attempt);
+                _events.Publish(new LogEvent("WARN",
+                    $"OPP 推送失败（{displayName}）：{lastError}；{delay.TotalSeconds:0} 秒后第 {attempt + 1}/{retryPolicy.MaxAttempts} 次重试"));
+                attempt++;
+                try
+                {
+                    await Task.Delay(delay, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
+                    WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消");
+                    return false;
+                }
+                continue;
+            }
+
+            var note = attempt > 1 ? $"{lastError}（已重试 {attempt - 1} 次）" : lastError;
+            _events.Publish(new LogEvent("ERROR", $"OPP 推送失败：{displayName}（{note}）"));
+            WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, note ?? "未知错误");
             return false;
         }
-        catch (OperationCanceledException)
+    }
+
+    /// <summary>单次推送尝试：连接 → CONNECT → 流式 PUT → DISCONNECT，成功后写成功记录。</summary>
+    private async Task PushOnceAsync(
+        OppDeviceInfo device, string sourcePath, string displayName, string mimeType,
+        long totalLength, string checksum, string localPathForRecord, uint taskId, CancellationToken ct)
+    {
+        using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _config.OppConnectTimeoutSeconds)));
+        await using var transport = await OpenTransportAsync(device, connectCts.Token);
+        await using var client = new ObexClient(transport, new ObexOptions { NameUseBom = _config.OppNameUseBom }, _events, _config.OppAuthPassword);
+        await client.ConnectAsync(connectCts.Token);
+
+        using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        sendCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _config.OppSendTimeoutSeconds)));
+        using var fs = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var result = await client.PushAsync(displayName, mimeType, totalLength,
+            async (offset, buffer, count, token) =>
+            {
+                fs.Seek(offset, SeekOrigin.Begin);
+                var n = await fs.ReadAsync(buffer.AsMemory(0, count), token);
+                _events.Publish(new TransferProgressEvent(taskId.ToString(), offset + n, totalLength, 0));
+                return n;
+            },
+            _config.OppChunkSize, sendCts.Token);
+
+        _events.Publish(new TransferProgressEvent(taskId.ToString(), totalLength, totalLength, 0));
+        try
         {
-            _events.Publish(new LogEvent("ERROR", $"OPP 推送超时：{displayName}"));
-            WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "连接或发送超时");
-            return false;
+            await client.DisconnectAsync(sendCts.Token);
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"OPP 推送失败：{displayName}（{ex.Message}）"));
-            WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, ex.Message);
-            return false;
+            // 部分接收端（如 Android）在收到最终 PUT 后即主动断开，
+            // DISCONNECT 失败不代表推送失败，仅记录警告。
+            _events.Publish(new LogEvent("WARN", $"推送成功但 DISCONNECT 异常（可忽略）：{ex.Message}"));
         }
+
+        _storage.UpsertDevice(new DeviceInfo
+        {
+            Addr = device.Addr,
+            Name = device.Name,
+            LastSeen = DateTime.Now.ToString("o"),
+            LastConnected = DateTime.Now.ToString("o")
+        });
+        _events.Publish(new LogEvent("INFO",
+            $"OPP 推送成功：{displayName} -> {device.Name}（{device.AddrDisplay}，{result.BytesSent} 字节）"));
+        WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, result.BytesSent);
     }
 
     private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent)
