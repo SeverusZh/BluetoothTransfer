@@ -12,7 +12,25 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += (_, _) => _trayIcon = (TaskbarIcon)FindResource("TrayIcon");
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.1.1"}";
+        Loaded += (_, _) =>
+        {
+            _trayIcon = (TaskbarIcon)FindResource("TrayIcon");
+            try
+            {
+                using var stream = Application.GetResourceStream(
+                    new Uri("pack://application:,,,/Assets/app.ico", UriKind.Absolute))?.Stream;
+                if (stream != null)
+                    _trayIcon.Icon = new System.Drawing.Icon(stream);
+            }
+            catch (Exception ex)
+            {
+                // 托盘图标加载失败不影响主界面，仅记录日志
+                var vm = (ViewModels.MainViewModel)DataContext;
+                vm.PublishLog("WARN", $"托盘图标加载失败：{ex.Message}");
+            }
+        };
     }
 
     private void OnDragOver(object sender, DragEventArgs e)

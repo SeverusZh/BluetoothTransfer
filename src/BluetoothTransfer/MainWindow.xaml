@@ -5,13 +5,15 @@
         xmlns:tb="http://www.hardcodet.net/taskbar"
         Title="蓝牙传输" Height="700" Width="1100"
         WindowStartupLocation="CenterScreen"
+        Icon="pack://application:,,,/Assets/app.ico"
+        Background="{StaticResource BackgroundBrush}"
         AllowDrop="True" Drop="OnFileDrop" DragOver="OnDragOver"
         Closing="OnClosing">
     <Window.DataContext>
         <vm:MainViewModel/>
     </Window.DataContext>
     <Window.Resources>
-        <tb:TaskbarIcon x:Key="TrayIcon" ToolTipText="蓝牙传输"
+        <tb:TaskbarIcon x:Key="TrayIcon" ToolTipText="蓝牙传输 v1.1.1"
                         TrayMouseDoubleClick="OnTrayDoubleClick">
             <tb:TaskbarIcon.ContextMenu>
                 <ContextMenu>
@@ -116,7 +118,8 @@
                                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,5">
                                     <Button Content="刷新" Command="{Binding RefreshRecordsCommand}" Padding="10,3" Margin="0,0,5,0"/>
                                     <Button Content="导出 CSV" Command="{Binding ExportCsvCommand}" Padding="10,3" Margin="0,0,5,0"/>
-                                    <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}" Padding="10,3"/>
+                                    <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}" Padding="10,3" Margin="0,0,5,0"/>
+                                    <Button Content="清空" Command="{Binding ClearRecordsCommand}" Padding="10,3"/>
                                 </StackPanel>
                                 <DataGrid ItemsSource="{Binding Records}" AutoGenerateColumns="False" IsReadOnly="True"
                                           CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
@@ -167,21 +170,38 @@
                         <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
 
-                    <ListView Grid.Row="2" ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
-                              BorderThickness="1" BorderBrush="#DDD">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Margin="2,4">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
-                                        <TextBlock Text="{Binding PairedDisplay}" FontSize="11" Foreground="Gray"
-                                                   Margin="8,1,0,0"/>
+                    <Grid Grid.Row="2">
+                        <ListView ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,4">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding PairedDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
+                                                       Margin="8,1,0,0"/>
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding AddrDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                                     </StackPanel>
-                                    <TextBlock Text="{Binding AddrDisplay}" FontSize="11" Foreground="Gray"/>
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBlock Text="未发现 OPP 设备&#x0a;请确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   TextAlignment="Center" LineHeight="20"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   IsHitTestVisible="False">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Devices.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
 
                     <GroupBox Grid.Row="3" Header="发送" Margin="0,8,0,0">
                         <Grid>
@@ -216,8 +236,13 @@
             </TabItem>
         </TabControl>
 
-        <Border Grid.Row="1" Background="#F0F0F0" BorderBrush="#DDD" BorderThickness="0,1,0,0">
-            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="10,0" FontSize="12"/>
+        <Border Grid.Row="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,1,0,0">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Right" Text="v1.1.1" VerticalAlignment="Center"
+                           Margin="10,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="10,0" FontSize="12"/>
+            </DockPanel>
         </Border>
     </Grid>
 </Window>

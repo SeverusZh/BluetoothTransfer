@@ -46,6 +46,12 @@
   - 未配对 / 设备不支持 OPP / 接收端拒绝 / 超时等失败场景均会写入传输记录（channel=opp）便于排查
   - Android 同时只接受一个 OPP 传输：若对端已有未完成/待确认的传输，新推送会被拒绝（0xC3 Forbidden），请先在对端完成或取消上一次传输
 
+#### Windows 兼容性说明（1.1.1）
+- Windows 作为发送端：实现路径与微软官方文档 *RFCOMM Scenario: Send File as a Client* 一致（`RfcommServiceId.ObexObjectPush` + `StreamSocket`），并与 32feet.NET 的 `ObexWebRequest`（Windows 蓝牙栈 OPP 客户端）逐字节对齐，Windows 10 2004+ / Windows 11 上可行。
+- Windows 作为接收端：由系统"蓝牙文件传输向导"（fsquirt）承载，接收端无需本应用；若 Win11 设置页找不到"通过蓝牙发送或接收文件"入口，可运行 `fsquirt` 或检查注册表 `DisableFsquirt`。
+- 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；OPP 连接默认使用与 Android 真机验证一致的明文（PlainSocket），部分接收端（如 Windows 向导）可能要求加密，可用 `btcli config set OppProtectionLevel encrypt` 强制加密（auto/plain/encrypt）。
+- 双 Windows 主机互传属于真机验收项：A 机本应用发送 → B 机系统向导接收；B 机本应用发送 → A 机系统向导接收。发布前需按测试矩阵执行。
+
 ## 技术栈
 
 | 层 | 技术 |
@@ -148,10 +154,11 @@ dotnet build src/BluetoothTransfer.Cli -c Release
 | 通用推送 | `btcli opp-send-text <地址> <文本> [--name 文件名]` | 文本包装为 .txt 后推送 |
 | 通用推送 | `btcli opp-send-folder <地址> <文件夹>` | 文件夹压缩为 .zip 后推送 |
 | 记录 | `btcli records [--direction send\|recv] [--type text\|file] [--status ok\|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json]` | 查询传输记录 |
+| 清空记录 | `btcli records clear [--yes]` | 清空全部传输记录（交互确认，--yes 跳过确认） |
 | 导出 | `btcli export <csv\|json> <输出文件>` | 导出全部记录 |
 | 统计 | `btcli stats [--json]` | 收发统计 |
 | 设备 | `btcli devices [--json]` | 已记录设备 |
-| 配置 | `btcli config` / `btcli config set <key> <value>` | 查看/修改配置（RecvDirectory、AutoCopyClipboard、CompressionEnabled、EncryptionEnabled、RfcommChunkSize、OppChunkSize、OppConnectTimeout、OppSendTimeout、PushTextFileName、OppAuthPassword、OppNameUseBom） |
+| 配置 | `btcli config` / `btcli config set <key> <value>` | 查看/修改配置（RecvDirectory、AutoCopyClipboard、CompressionEnabled、EncryptionEnabled、RfcommChunkSize、OppChunkSize、OppConnectTimeout、OppSendTimeout、PushTextFileName、OppAuthPassword、OppNameUseBom、OppProtectionLevel） |
 | 自检 | `btcli selftest` | 无硬件自检：分帧/CRC、ECDH+AES-GCM、Deflate、存储与导出、OBEX 编解码与假传输流程 |
 | 交互 | `btcli repl` | 交互式会话，一条进程内完成扫描/连接/收发/查询，便于模拟真实交互 |
 
@@ -262,6 +269,8 @@ SQLite 数据库，`transfer_records` 表包含：时间、方向、类型、文
 **v1.0**：核心收发链路（BLE 文本 / 小文件、RFCOMM 大文件、端到端加密、压缩、断点续传、记录入库与导出）已实现并通过编译验证。
 
 **v1.1**：新增通用推送模式（OBEX OPP）——仅发送端运行本应用即可向任意支持“蓝牙文件接收”的设备推送文件，覆盖 Android 手机/平板、Windows 电脑、功能机等，内置/外置蓝牙适配器均适用。配套新增 `opp-*` CLI 命令、GUI「通用推送」面板、OBEX 协议层与 xUnit 自动化单元测试（`dotnet test`），离线自检 `btcli selftest` 全部通过。
+
+**v1.1.1**：GUI 视觉升级（SVG 图标 + 统一主题样式），新增传输记录清空（GUI「清空」按钮 / `btcli records clear [--yes]`），并按微软官方 RFCOMM 示例与 32feet.NET 实现补充 Windows 兼容性增强（OPP 连接保护级别 auto/plain/encrypt 自适应、SDP 服务预检）。应用图标矢量源位于 `src/BluetoothTransfer/Assets/app.svg`（与 `AppIcons.xaml` 同源），打包产物由 `tools/IconGenerator` 生成（`dotnet run --project tools/IconGenerator`）。
 
 蓝牙相关功能建议在具备蓝牙硬件（内置或外置 USB 适配器）的 Windows 10 2004+ / Windows 11 机器上按「快速开始」流程做端到端验证。真机验证覆盖：内置/外置适配器 × Android/Windows 接收端；小文件（1KB）/ 大文件（1MB、100MB）；中文与 emoji 文件名；文本推送；文件夹 zip；未配对、接收端拒绝、无 OPP 能力设备、传输中取消与超时等异常场景；以及对 1.0 双端互联全流程的回归验证。
 

@@ -383,6 +383,25 @@ public static class Commands
     public static int Records(Args a)
     {
         using var session = NewSession(a, quiet: true);
+        var sub = (a.Get(1) ?? "").ToLowerInvariant();
+        if (sub == "clear")
+        {
+            if (!a.Has("yes"))
+            {
+                var count = session.Storage.GetRecords(limit: 100000).Count;
+                Console.Error.Write($"确定要清空全部 {count} 条传输记录吗？该操作不可恢复。输入 yes 确认：");
+                var answer = Console.ReadLine()?.Trim();
+                if (!string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    Info("已取消");
+                    return 1;
+                }
+            }
+            var deleted = session.Storage.ClearRecords();
+            Info($"已清空 {deleted} 条传输记录");
+            return 0;
+        }
+
         var records = session.Storage.GetRecords(
             direction: a.Option("direction"),
             type: a.Option("type"),
@@ -521,7 +540,7 @@ public static class Commands
             }
             if (!SetConfigValue(session.Config, key, value))
             {
-                Error($"未知配置项：{key}（可选 RecvDirectory/AutoCopyClipboard/CompressionEnabled/EncryptionEnabled/RfcommChunkSize/OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom）");
+                Error($"未知配置项：{key}（可选 RecvDirectory/AutoCopyClipboard/CompressionEnabled/EncryptionEnabled/RfcommChunkSize/OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel）");
                 return 2;
             }
             session.Config.Save();
@@ -540,6 +559,7 @@ public static class Commands
         Info($"OPP 文本文件名  PushTextFileName       = {session.Config.PushTextFileName}");
         Info($"OPP 认证密码    OppAuthPassword       = {(string.IsNullOrEmpty(session.Config.OppAuthPassword) ? "（未设置）" : "***")}");
         Info($"OPP Name BOM    OppNameUseBom         = {session.Config.OppNameUseBom}");
+        Info($"OPP 保护级别    OppProtectionLevel    = {session.Config.OppProtectionLevel}（auto/plain/encrypt）");
         return 0;
     }
 
@@ -588,6 +608,10 @@ public static class Commands
             case "oppnameusebom" or "oppbom":
                 if (!bool.TryParse(value, out var useBom)) return false;
                 config.OppNameUseBom = useBom;
+                return true;
+            case "oppprotectionlevel" or "oppprotection":
+                if (value is not ("auto" or "plain" or "encrypt")) return false;
+                config.OppProtectionLevel = value;
                 return true;
             default:
                 return false;
@@ -810,9 +834,11 @@ public static class Commands
                          stats.recvCount == 1 && csvOk && jsonOk;
             storage.DeleteRecord(records[0].Id);
             crudOk &= storage.GetRecords().Count == 1;
+            var cleared = storage.ClearRecords();
+            crudOk &= cleared == 1 && storage.GetRecords().Count == 0 && storage.GetStats().totalCount == 0;
 
             return ("存储 / 导出", crudOk,
-                crudOk ? "写入/查询/统计/CSV/JSON/删除全部通过" : "存储链路校验失败");
+                crudOk ? "写入/查询/统计/CSV/JSON/删除/清空全部通过" : "存储链路校验失败");
         }
         catch (Exception ex)
         {

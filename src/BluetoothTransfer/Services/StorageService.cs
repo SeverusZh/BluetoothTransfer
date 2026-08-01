@@ -174,6 +174,16 @@ public class StorageService
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>清空全部传输记录（保留设备表与配置），返回删除条数。</summary>
+    public int ClearRecords()
+    {
+        using var conn = new SqliteConnection(_connStr);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM transfer_records";
+        return cmd.ExecuteNonQuery();
+    }
+
     public void UpsertDevice(DeviceInfo device)
     {
         using var conn = new SqliteConnection(_connStr);

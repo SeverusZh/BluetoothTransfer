@@ -47,6 +47,10 @@ public class MainViewModel : ViewModelBase
     public bool CanConnect => SelectedDevice != null && !IsConnected;
     public double TransferProgress { get => _transferProgress; set => SetProperty(ref _transferProgress, value); }
 
+    /// <summary>供代码后台等非命令路径发布日志事件（经 EventBus 汇入 UI 线程）。</summary>
+    public void PublishLog(string level, string message)
+        => _eventBus.Publish(new LogEvent(level, message));
+
     public RelayCommand ScanCommand { get; }
     public RelayCommand AdvertiseCommand { get; }
     public RelayCommand ConnectCommand { get; }
@@ -57,6 +61,7 @@ public class MainViewModel : ViewModelBase
     public RelayCommand RefreshRecordsCommand { get; }
     public RelayCommand ExportCsvCommand { get; }
     public RelayCommand ExportJsonCommand { get; }
+    public RelayCommand ClearRecordsCommand { get; }
 
     public MainViewModel()
     {
@@ -92,6 +97,7 @@ public class MainViewModel : ViewModelBase
         RefreshRecordsCommand = new RelayCommand(() => SafeAsync(LoadRecordsAsync));
         ExportCsvCommand = new RelayCommand(ExportCsv);
         ExportJsonCommand = new RelayCommand(ExportJson);
+        ClearRecordsCommand = new RelayCommand(ClearRecords);
 
         SubscribeEvents();
         _ = LoadRecordsAsync();
@@ -334,6 +340,34 @@ public class MainViewModel : ViewModelBase
             // 同步命令无 SafeAsync 兜底，异常须就地捕获，否则会逃逸到 WPF 导致应用崩溃。
             _eventBus.Publish(new LogEvent("ERROR", $"导出失败：{ex.Message}"));
             StatusText = $"导出失败：{ex.Message}";
+        }
+    }
+
+    private void ClearRecords()
+    {
+        var total = _storage.GetStats().totalCount;
+        if (total == 0)
+        {
+            StatusText = "没有可清空的记录";
+            return;
+        }
+        var confirm = MessageBox.Show(
+            $"确定要清空全部 {total} 条传输记录吗？该操作不可恢复。",
+            "清空传输记录",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        try
+        {
+            var deleted = _storage.ClearRecords();
+            Records.Clear();
+            StatusText = $"已清空 {deleted} 条传输记录";
+        }
+        catch (Exception ex)
+        {
+            _eventBus.Publish(new LogEvent("ERROR", $"清空传输记录失败：{ex.Message}"));
+            StatusText = $"清空失败：{ex.Message}";
         }
     }
 

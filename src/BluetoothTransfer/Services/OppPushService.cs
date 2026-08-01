@@ -1,7 +1,9 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Rfcomm;
+using Windows.Storage.Streams;
 using BluetoothTransfer.Models;
 
 namespace BluetoothTransfer.Services;
@@ -109,12 +111,102 @@ public class OppPushService
             service = await RfcommDeviceService.FromIdAsync(deviceId).AsTask(ct);
             if (service == null)
                 throw new ObexException("无法获取设备的 OPP 服务，请确认设备已配对");
-            return await SocketObexTransport.ConnectAsync(service, ct);
+            await EnsureOppServiceAsync(service);
+            var transport = await SocketObexTransport.ConnectAsync(service, _config.OppProtectionLevel, ct);
+            _events.Publish(new LogEvent("DEBUG",
+                $"OPP 连接已建立，保护级别 {transport.ProtectionLevel}（配置 {_config.OppProtectionLevel}）"));
+            return transport;
         }
         finally
         {
             service?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// SDP 预检：确认服务声明了 OPP（0x1105）并记录保护级别/服务版本。
+    /// SDP 读取失败或解析不确定时不拒绝（部分蓝牙栈不返回属性，以连接结果为准）。
+    /// </summary>
+    private async Task EnsureOppServiceAsync(RfcommDeviceService service)
+    {
+        try
+        {
+            _events.Publish(new LogEvent("DEBUG",
+                $"OPP 服务保护级别：required={service.ProtectionLevel} max={service.MaxProtectionLevel}"));
+            var attrs = await service.GetSdpRawAttributesAsync(BluetoothCacheMode.Uncached);
+            if (attrs == null || attrs.Count == 0)
+                return;
+
+            if (attrs.TryGetValue(0x0100, out var classList) && classList != null)
+            {
+                var payload = ReadAllBytes(classList);
+                var (foundOpp, sawUuid) = ScanServiceClassList(payload);
+                if (sawUuid && !foundOpp)
+                    throw new ObexException("设备服务 SDP 未声明 OPP（0x1105），不支持蓝牙文件接收");
+            }
+
+            if (attrs.TryGetValue(0x0300, out var version) && version != null)
+            {
+                var v = ReadAllBytes(version);
+                if (v.Length >= 4)
+                    _events.Publish(new LogEvent("DEBUG", $"OPP 服务版本属性：0x{v[^4]:X2}{v[^3]:X2}{v[^2]:X2}{v[^1]:X2}"));
+            }
+        }
+        catch (ObexException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"OPP SDP 预检未完成（继续尝试连接）：{ex.Message}"));
+        }
+    }
+
+    private static byte[] ReadAllBytes(IBuffer buffer)
+    {
+        using var reader = DataReader.FromBuffer(buffer);
+        var data = new byte[reader.UnconsumedBufferLength];
+        reader.ReadBytes(data);
+        return data;
+    }
+
+    /// <summary>
+    /// 扫描 ServiceClassIDList（SDP 属性 0x0100）载荷：
+    /// 元素 0x19 = UUID16、0x1A = UUID32、0x1C = UUID128；OPP UUID 为 0x1105。
+    /// 返回 (是否包含 OPP, 是否识别到任意 UUID 元素)。
+    /// </summary>
+    internal static (bool FoundOpp, bool SawUuid) ScanServiceClassList(byte[] payload)
+    {
+        var uuid128 = new byte[]
+        {
+            0x00, 0x00, 0x11, 0x05, 0x00, 0x00, 0x10, 0x00,
+            0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB
+        };
+        var foundOpp = false;
+        var sawUuid = false;
+        for (var i = 0; i < payload.Length; i++)
+        {
+            switch (payload[i])
+            {
+                case 0x19 when i + 2 < payload.Length:
+                    sawUuid = true;
+                    if (payload[i + 1] == 0x11 && payload[i + 2] == 0x05)
+                        foundOpp = true;
+                    break;
+                case 0x1A when i + 4 < payload.Length:
+                    sawUuid = true;
+                    if (payload[i + 1] == 0x00 && payload[i + 2] == 0x00 &&
+                        payload[i + 3] == 0x11 && payload[i + 4] == 0x05)
+                        foundOpp = true;
+                    break;
+                case 0x1C when i + 16 < payload.Length:
+                    sawUuid = true;
+                    if (payload.AsSpan(i + 1, 16).SequenceEqual(uuid128))
+                        foundOpp = true;
+                    break;
+            }
+        }
+        return (foundOpp, sawUuid);
     }
 
     private async Task<bool> SendSourceAsync(

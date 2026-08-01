@@ -27,6 +27,11 @@ public class AppConfig
     /// 32feet/Windows 原生向导均不发送 BOM；个别老式设备可能需要 BOM，可按需开启。
     /// </summary>
     public bool OppNameUseBom { get; set; } = false;
+    /// <summary>
+    /// OPP 连接保护级别：auto（按服务端要求，默认）/ plain（强制明文）/ encrypt（强制加密认证）。
+    /// Windows 接收端（系统蓝牙文件接收向导）可能要求加密连接；Android 一般接受明文。
+    /// </summary>
+    public string OppProtectionLevel { get; set; } = "auto";
 
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

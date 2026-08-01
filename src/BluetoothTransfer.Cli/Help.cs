@@ -43,9 +43,10 @@ public static class Help
                                     文件夹压缩为 .zip 后推送
 
             记录 / 配置
-              records [--direction send|recv] [--type text|file] [--status ok|failed]
-                      [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]
-              export <csv|json> <输出文件> [--db 路径]
+             records [--direction send|recv] [--type text|file] [--status ok|failed]
+                     [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]
+             records clear [--yes] [--db 路径]
+             export <csv|json> <输出文件> [--db 路径]
               stats [--json] [--db 路径]
               devices [--json] [--db 路径]
               config                                   查看配置
