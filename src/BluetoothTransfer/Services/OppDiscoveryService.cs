@@ -73,6 +73,9 @@ public sealed class OppDiscoveryService
                         IsPaired = isPaired
                     };
                 }
+                // 已配对设备可能未处于"可发现"状态，AEP 服务枚举不会返回它们；
+                // 直接对每个已配对设备做一次 SDP 查询，Windows 自带向导也是这么工作的。
+                await AddPairedOppServicesAsync(found, ct);
                 if (seconds <= 0 || DateTime.UtcNow >= deadline) break;
                 await Task.Delay(500, ct);
             } while (true);
@@ -245,5 +248,64 @@ public sealed class OppDiscoveryService
             System.Diagnostics.Debug.WriteLine($"枚举已配对设备失败：{ex.Message}");
         }
         return map;
+    }
+
+    /// <summary>
+    /// 对已配对经典蓝牙设备逐个做 SDP 查询，把声明了 OBEX Object Push（0x1105）的设备
+    /// 补进结果。AEP 服务枚举只返回"可发现"设备，已配对但未开启可发现的设备（例如
+    /// Windows 对端）即使正在运行接收向导也不会出现在枚举里，因此需要直接查询。
+    /// </summary>
+    private async Task AddPairedOppServicesAsync(Dictionary<string, OppDeviceInfo> found, CancellationToken ct)
+    {
+        try
+        {
+            var paired = await DeviceInformation.FindAllAsync(
+                BluetoothDevice.GetDeviceSelectorFromPairingState(true)).AsTask(ct);
+            foreach (var d in paired)
+            {
+                ct.ThrowIfCancellationRequested();
+                var mac = ParseMacFromId(d.Id);
+                if (string.IsNullOrEmpty(mac)) continue;
+                var key = NormalizeAddr(mac);
+                if (found.ContainsKey(key)) continue;
+
+                BluetoothDevice? dev = null;
+                try
+                {
+                    dev = await BluetoothDevice.FromIdAsync(d.Id).AsTask(ct);
+                    if (dev == null) continue;
+                    var result = await dev.GetRfcommServicesAsync(BluetoothCacheMode.Uncached).AsTask(ct);
+                    foreach (var svc in result.Services)
+                    {
+                        if (svc.ServiceId.Uuid != RfcommServiceId.ObexObjectPush.Uuid) continue;
+                        // 构造服务条目 Id（与 AEP 枚举返回的格式一致），供后续 FromIdAsync 使用
+                        var serviceId = d.Id + "#RFCOMM:00000000:{" + RfcommServiceId.ObexObjectPush.Uuid + "}";
+                        var name = string.IsNullOrEmpty(d.Name) ? key : d.Name;
+                        found[key] = new OppDeviceInfo
+                        {
+                            Id = serviceId,
+                            Addr = mac,
+                            Name = name,
+                            IsPaired = true
+                        };
+                        _events.Publish(new LogEvent("DEBUG", $"已配对设备 SDP 预检：{name} 声明 OPP（0x1105）"));
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 设备不在范围内 / 休眠 / 关闭等均属正常，忽略并继续
+                    _events.Publish(new LogEvent("DEBUG", $"已配对设备 SDP 预检跳过 {mac}：{ex.Message}"));
+                }
+                finally
+                {
+                    dev?.Dispose();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"已配对设备 OPP 预检失败：{ex.Message}"));
+        }
     }
 }

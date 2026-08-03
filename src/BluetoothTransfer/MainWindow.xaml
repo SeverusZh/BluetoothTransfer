@@ -192,7 +192,7 @@
         <Border Grid.Row="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,1,0,0">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Right" Text="v1.2.0" VerticalAlignment="Center"
+                <TextBlock DockPanel.Dock="Right" Text="v1.2.1" VerticalAlignment="Center"
                            Margin="10,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                 <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="10,0" FontSize="12"/>
             </DockPanel>

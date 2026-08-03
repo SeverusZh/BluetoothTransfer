@@ -13,7 +13,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.2.0"}";
+        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.2.1"}";
         Loaded += (_, _) =>
         {
             _trayIcon = (TaskbarIcon)FindResource("TrayIcon");
