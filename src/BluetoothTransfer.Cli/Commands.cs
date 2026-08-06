@@ -15,7 +15,7 @@ public static class Commands
     private static void Error(string message) => Console.Error.WriteLine($"[ERROR] {message}");
 
     private static CliSession NewSession(Args a, bool quiet = false, bool jsonEvents = false)
-        => new(a.Option("db")) { Quiet = quiet, JsonEvents = jsonEvents, Verbose = a.Has("verbose") };
+        => new(a.Option("db")) { Quiet = quiet && !a.Has("verbose"), JsonEvents = jsonEvents, Verbose = a.Has("verbose") };
 
     private static int ParseInt(string? text, int fallback)
         => int.TryParse(text, out var value) ? value : fallback;
