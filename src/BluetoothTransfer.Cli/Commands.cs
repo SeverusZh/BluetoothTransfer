@@ -15,7 +15,7 @@ public static class Commands
     private static void Error(string message) => Console.Error.WriteLine($"[ERROR] {message}");
 
     private static CliSession NewSession(Args a, bool quiet = false, bool jsonEvents = false)
-        => new(a.Option("db")) { Quiet = quiet, JsonEvents = jsonEvents };
+        => new(a.Option("db")) { Quiet = quiet, JsonEvents = jsonEvents, Verbose = a.Has("verbose") };
 
     private static int ParseInt(string? text, int fallback)
         => int.TryParse(text, out var value) ? value : fallback;
@@ -69,7 +69,7 @@ public static class Commands
         var path = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(path))
         {
-            Error("用法：btcli opp-send-file <设备地址> <文件> [--zip] [--mode auto|assistant|opp] [--db 路径]");
+            Error("用法：btcli opp-send-file <设备地址> <文件> [--zip] [--mode auto|assistant|opp] [--verbose] [--db 路径]");
             return 2;
         }
         if (!File.Exists(path))
@@ -95,7 +95,7 @@ public static class Commands
         var text = a.RemainingFrom(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(text))
         {
-            Error("用法：btcli opp-send-text <设备地址> <文本> [--name 文件名] [--mode auto|assistant|opp] [--db 路径]");
+            Error("用法：btcli opp-send-text <设备地址> <文本> [--name 文件名] [--mode auto|assistant|opp] [--verbose] [--db 路径]");
             return 2;
         }
         using var session = NewSession(a, quiet: true);
@@ -118,7 +118,7 @@ public static class Commands
         var folder = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(folder))
         {
-            Error("用法：btcli opp-send-folder <设备地址> <文件夹> [--mode auto|assistant|opp] [--db 路径]");
+            Error("用法：btcli opp-send-folder <设备地址> <文件夹> [--mode auto|assistant|opp] [--verbose] [--db 路径]");
             return 2;
         }
         if (!Directory.Exists(folder))
@@ -150,7 +150,7 @@ public static class Commands
         }
         if (string.IsNullOrWhiteSpace(addr) || paths.Count == 0)
         {
-            Error("用法：btcli opp-send-files <设备地址> <文件1> [文件2 ...] [--zip] [--db 路径]");
+            Error("用法：btcli opp-send-files <设备地址> <文件1> [文件2 ...] [--zip] [--verbose] [--db 路径]");
             return 2;
         }
         var existing = paths.Where(File.Exists).ToList();
