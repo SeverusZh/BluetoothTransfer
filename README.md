@@ -13,6 +13,13 @@
 - **发送队列** — 多文件/文件夹统一排队顺序推送（Android OPP 同时只接受一个传输），支持取消全部、失败任务单点重发
 - **传输体验** — 实时进度条 + 速率（KB/s）与剩余时间（ETA）；系统托盘常驻
 
+### 接收助手（btrecv，v1.3）
+- **断点续传** — 两台 Windows 电脑之间走私有分片协议（自定义 RFCOMM UUID）：中断后从已确认偏移继续，接收端保留半成品（`.btpart` + `.btpart.meta`），重连自动续传，完成时校验 SHA-256，不匹配自动清空重传
+- **真正的传输队列** — 队列任务支持单独**暂停 / 继续 / 移除 / 重试**；接收端忙时自动按指数退避等待；发送端显示通道列（OPP / 助手）
+- **自动探测 + 手动覆盖** — 发送前 SDP 探测对端是否运行助手：在线走私有通道，离线自动回退 OPP 通用推送；可在 GUI/CLI 强制指定通道
+- **极简接收端** — `btrecv` 单 exe：CLI 内核（`btrecv run [--dir 目录] [--ask]`）+ 极简 GUI 壳（状态/进度/完成列表/保存目录/每次询问开关），默认自动接收；引导时先用 OPP 把 `btrecv` 包推过去，解压即用（自包含无需安装 .NET）
+- **明文说明** — 私有通道 v1 为明文，无应用层加密；需要链路加密时可用 Windows 侧配置
+
 ### 设备管理
 - OPP 设备列表展示（名称/地址/配对状态），支持**收藏置顶**、**别名显示**、按最近连接排序
 - 已连接设备自动记录最近连接时间（SQLite）
@@ -41,6 +48,12 @@ btcli opp-send-text 00:11:22:33:44:55 "你好，这是蓝牙推送的文本" --n
 btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 ```
 
+### 接收助手引导（Windows 对 Windows）
+1. 发送端先通过 OPP 把 `btrecv-selfcontained.zip` 推给目标电脑（GUI「发送文件」或 `btcli opp-send-file <地址> <包路径>`）
+2. 对端解压、双击运行 `btrecv`（进入 GUI「监听中」，无需安装 .NET）
+3. 发送端重新扫描，设备出现绿色「助手」徽标即代表探测成功；或运行 `btcli detect <地址>`
+4. 之后默认自动走可续传的私有通道；对端未运行时自动回退 OPP
+
 ## CLI 命令参考
 
 | 分类 | 命令 | 说明 |
@@ -51,6 +64,9 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | 发送 | `btcli opp-send-files <地址> <文件1> [文件2 ...] [--zip]` | 批量推送并汇总成功/失败 |
 | 发送 | `btcli opp-send-text <地址> <文本> [--name 文件名]` | 文本包装为 .txt 后推送 |
 | 发送 | `btcli opp-send-folder <地址> <文件夹>` | 文件夹压缩为 .zip 后推送 |
+| 发送 | `btcli opp-send-file|files|text|folder ... [--mode auto\|assistant\|opp]` | 选择通道（默认 opp；auto 探测助手、assistant 强制助手、opp 强制 OPP） |
+| 设备 | `btcli detect <地址>` | 探测对端是否运行接收助手 |
+| 发布 | `btcli package-receiver [--root 仓库根]` | 一键发布接收助手（自包含 + 框架依赖） |
 | 记录 | `btcli records [--direction send\|recv] [--type text\|file] [--status ok\|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json]` | 查询传输记录 |
 | 记录 | `btcli records clear [--yes]` | 清空全部传输记录（交互确认，--yes 跳过） |
 | 记录 | `btcli export <csv\|json> <输出文件>` | 导出全部记录 |
@@ -75,6 +91,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | `OppProtectionLevel` | auto | 连接保护级别：auto / plain / encrypt |
 | `OppRetryCount` | 3 | 失败自动重试次数（0 表示不重试） |
 | `OppRetryDelaySeconds` | 3 | 重试基础间隔（秒），按 1x/2x/3x 退避 |
+| `TransferMode` | auto | 发送通道：auto（探测助手，否则 OPP）/ assistant / opp |
 
 ## Windows 兼容性说明
 
@@ -87,13 +104,13 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 
 - **iPhone（iOS）不支持蓝牙文件接收协议，无法通过 OPP 推送**
 - OPP 为明文传输：无端到端加密、无接收端校验回传；需要链路层加密时使用 `OppProtectionLevel=encrypt`
-- **无断点续传**：OBEX OPP 无续传语义，接收端失败即丢弃；由自动重试缓解
+- **OPP 通道无断点续传**：OBEX OPP 无续传语义，接收端失败即丢弃，由自动重试缓解；Windows 对 Windows 走接收助手（btrecv）私有通道时支持断点续传与 SHA-256 校验
 - 单文件上限 4GB（OBEX 协议约束），建议不超过 2GB
 - Android 同时只接受一个 OPP 传输：对端已有待确认传输时新推送会被拒绝（0xC3 Forbidden），应用会自动重试
 
 ## 未来开发点（暂不实现）
 
-- **极简接收助手模式**：接收端运行一个最小接收应用，走私有分片协议（Offset 续传），实现真正的断点续传。与 OPP 通用模式并存：接收端未装助手时自动回退 OPP 通用推送。**当前明确不实现**——它会重新引入"接收端需安装应用"的依赖，与通用推送的定位冲突；当"大文件 + 频繁中断"场景出现实际需求时再评估启动。
+- **极简接收助手模式**：已在 v1.3 实现（见「接收助手（btrecv）」）。后续可能的增强：队列跨重启持久化、应用层加密、接收端 Linux/macOS 支持等。
 
 ## 技术栈
 
@@ -101,10 +118,11 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 |---|---|
 | 语言 / 运行时 | C# + .NET 8 |
 | GUI | WPF（MVVM，单页），SVG 矢量图标（`Assets/app.svg` 与 `AppIcons.xaml` 同源，`tools/IconGenerator` 生成 PNG/ICO） |
-| 蓝牙 | WinRT `Windows.Devices.Bluetooth.Rfcomm`（OPP 客户端） |
-| 协议 | 自研 OBEX 客户端（CONNECT/PUT/DISCONNECT，两阶段 PUT，UTF-16BE 无 BOM Name 头） |
+| 蓝牙 | WinRT `Windows.Devices.Bluetooth.Rfcomm`（OPP 客户端 / 助手服务端） |
+| 协议 | 自研 OBEX 客户端（CONNECT/PUT/DISCONNECT，两阶段 PUT，UTF-16BE 无 BOM Name 头）；私有分片续传协议（`BluetoothTransfer.Core`，HELLO/OFFER/DATA/ACK/DONE，SHA-256 校验） |
 | 存储 | Microsoft.Data.Sqlite + System.Text.Json |
 | 系统托盘 | Hardcodet.NotifyIcon.Wpf |
+| 接收端 | `btrecv` 单 exe（CLI 内核 + 极简 WPF 壳），自包含/框架依赖双发布形态 |
 
 ## 开发与测试
 
@@ -114,10 +132,12 @@ dotnet test BluetoothTransfer.sln -c Release
 btcli selftest
 ```
 
-- xUnit 单元测试（89 个）：OBEX 编解码/流程、重试策略、速率跟踪、发送队列、zip 打包、存储/导出/清空、设备收藏/别名、配置迁移
+- xUnit 单元测试（125 个）：OBEX 编解码/流程、重试策略、速率跟踪、发送队列、zip 打包、存储/导出/清空、设备收藏/别名、配置迁移、助手协议帧/消息/内存传输/落盘续传/客户端/服务端/接收端集成
 - 真机验收矩阵：内置/外置适配器 × Android/Windows 接收端；单文件（1KB/1MB/100MB）、文本、文件夹、`--zip`；中文/emoji 文件名；手机忙 0xC3 自动重试；批量队列；拖放与剪贴板；取消与超时
 
 ## 开发状态
+
+**v1.3**：接收助手（btrecv）与断点续传。新增共享协议库 `BluetoothTransfer.Core`（帧/消息/内存传输/落盘续传/SHA-256 校验/客户端/服务端/RFCOMM）；`btrecv` 接收端（CLI 内核 + 极简 GUI 壳，自包含单 exe）；发送端 SDP 自动探测 + `TransferMode` 手动覆盖，助手离线自动回退 OPP；队列暂停/继续/移除与通道列；GUI 列表悬停滚轮与日志自动跟随；CLI 新增 `detect`、`--mode`、`package-receiver`。
 
 **v1.2.1**：修复 Windows 对端识别。设备扫描不再只依赖 AEP"可发现"枚举，而是对每个已配对设备直接做 SDP 查询，命中 OBEX Object Push（0x1105）即识别——Windows 主机打开"通过蓝牙发送或接收文件 → 接收文件"后即可被扫描到并正常推送（此前已配对但未开启可发现的 Windows 对端扫不到）。
 

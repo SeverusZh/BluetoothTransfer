@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 using BluetoothTransfer.Core.Discovery;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
@@ -197,6 +198,32 @@ public static class Commands
         var has = await AssistantDetector.DeviceHasAssistantAsync(device.Id);
         Info(has ? $"设备 {device.Name}（{device.AddrDisplay}）运行中：接收助手在线" : $"设备 {device.Name}（{device.AddrDisplay}）：未发现接收助手");
         return 0;
+    }
+
+    public static int PackageReceiver(Args a)
+    {
+        var root = a.Option("root");
+        if (string.IsNullOrEmpty(root))
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "BluetoothTransfer.sln")))
+                dir = dir.Parent;
+            root = dir?.FullName ?? "";
+        }
+        var script = Path.Combine(root, "tools", "publish-receiver.ps1");
+        if (!File.Exists(script))
+        {
+            Error($"找不到发布脚本：{script}（可用 --root 指定仓库根目录）");
+            return 2;
+        }
+        var psi = new ProcessStartInfo("powershell",
+            $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"")
+        {
+            UseShellExecute = false
+        };
+        using var proc = Process.Start(psi);
+        proc?.WaitForExit();
+        return proc?.ExitCode == 0 ? 0 : 1;
     }
 
     // ------------------------------------------------------------------ 记录 / 配置

@@ -28,6 +28,8 @@ public static class Help
                                     文件夹压缩为 .zip 后推送（同样支持 --mode）
               detect <地址> [--db 路径]
                                     探测对端是否运行接收助手（自定义 UUID）
+              package-receiver [--root 仓库根]
+                                    一键发布接收助手（自包含 + 框架依赖，可选压缩包）
 
             记录 / 配置
               records [--direction send|recv] [--type text|file] [--status ok|failed]
