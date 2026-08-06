@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace BluetoothTransfer.Receiver;
 
 public sealed class ReceiverOptions
