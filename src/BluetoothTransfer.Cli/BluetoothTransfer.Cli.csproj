@@ -15,6 +15,10 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj" />
+  </ItemGroup>
+
   <!--
     与 GUI 共享同一份服务层源码（直接链接文件，不做复制），
     保证 CLI 行为与桌面应用一致；不引入任何 WPF 依赖。
@@ -37,6 +41,7 @@
     <Compile Include="..\BluetoothTransfer\Services\SocketObexTransport.cs" Link="Services\SocketObexTransport.cs" />
     <Compile Include="..\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
     <Compile Include="..\BluetoothTransfer\Services\TransferSpeedTracker.cs" Link="Services\TransferSpeedTracker.cs" />
+    <Compile Include="..\BluetoothTransfer\Services\AssistantPushService.cs" Link="Services\AssistantPushService.cs" />
   </ItemGroup>
 
 </Project>

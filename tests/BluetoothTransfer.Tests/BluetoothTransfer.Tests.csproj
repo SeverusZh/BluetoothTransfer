@@ -44,6 +44,7 @@
     <Compile Include="..\..\src\BluetoothTransfer\Services\SocketObexTransport.cs" Link="Services\SocketObexTransport.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\TransferSpeedTracker.cs" Link="Services\TransferSpeedTracker.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\AssistantPushService.cs" Link="Services\AssistantPushService.cs" />
   </ItemGroup>
 
 </Project>

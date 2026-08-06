@@ -353,7 +353,7 @@ public static class Commands
             }
             if (!SetConfigValue(session.Config, key, value))
             {
-                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel）");
+                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel/TransferMode）");
                 return 2;
             }
             session.Config.Save();
@@ -368,6 +368,7 @@ public static class Commands
         Info($"OPP 认证密码    OppAuthPassword       = {(string.IsNullOrEmpty(session.Config.OppAuthPassword) ? "（未设置）" : "***")}");
         Info($"OPP Name BOM    OppNameUseBom         = {session.Config.OppNameUseBom}");
         Info($"OPP 保护级别    OppProtectionLevel    = {session.Config.OppProtectionLevel}（auto/plain/encrypt）");
+        Info($"发送通道        TransferMode          = {session.Config.TransferMode}（auto/assistant/opp）");
         return 0;
     }
 
@@ -401,6 +402,10 @@ public static class Commands
             case "oppprotectionlevel" or "oppprotection":
                 if (value is not ("auto" or "plain" or "encrypt")) return false;
                 config.OppProtectionLevel = value;
+                return true;
+            case "transfermode":
+                if (value is not ("auto" or "assistant" or "opp")) return false;
+                config.TransferMode = value;
                 return true;
             default:
                 return false;

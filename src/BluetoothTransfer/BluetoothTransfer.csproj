@@ -22,4 +22,8 @@
     <None Include="Assets\app.svg" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj" />
+  </ItemGroup>
+
 </Project>
