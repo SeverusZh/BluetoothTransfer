@@ -1,7 +1,14 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using BluetoothTransfer.Core.Protocol;
 
 namespace BluetoothTransfer.Core.Server;
+
+/// <summary>MetaInfo 的源生成 JSON 上下文（裁剪模式下反射序列化不可用）。</summary>
+[JsonSerializable(typeof(AsstFileSink.MetaInfo))]
+internal sealed partial class AsstFileSinkJsonContext : JsonSerializerContext
+{
+}
 
 /// <summary>
 /// 磁盘落盘：接收中为 <文件名>.btpart + 同名 .btpart.meta（JSON 元数据），
@@ -37,7 +44,7 @@ public sealed class AsstFileSink : IAsstSink
         {
             try
             {
-                var stored = JsonSerializer.Deserialize<MetaInfo>(await File.ReadAllTextAsync(meta, ct));
+                var stored = JsonSerializer.Deserialize(await File.ReadAllTextAsync(meta, ct), AsstFileSinkJsonContext.Default.MetaInfo);
                 if (stored != null && stored.TransferId == hello.TransferId && stored.FileSize == hello.FileSize)
                 {
                     var len = new FileInfo(part).Length;
@@ -58,7 +65,7 @@ public sealed class AsstFileSink : IAsstSink
             FileName = hello.FileName,
             FileSize = hello.FileSize,
             CreatedAt = DateTime.Now.ToString("o")
-        }), ct);
+        }, AsstFileSinkJsonContext.Default.MetaInfo), ct);
         return 0;
     }
 
@@ -153,7 +160,7 @@ public sealed class AsstFileSink : IAsstSink
         try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
-    private sealed class MetaInfo
+    internal sealed class MetaInfo
     {
         public string TransferId { get; set; } = "";
         public string FileName { get; set; } = "";

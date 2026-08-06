@@ -3,6 +3,7 @@ using System.IO;
 using BluetoothTransfer.Receiver;
 
 var command = args.Length == 0 ? "gui" : args[0].ToLowerInvariant();
+#if !CLI_ONLY
 if (command is "gui" or "--gui")
 {
     HideConsoleWindow();
@@ -13,8 +14,10 @@ if (command is "gui" or "--gui")
     app.Run(new ReceiverWindow(saveDir, ask: false));
     return 0;
 }
+#endif
 return await ReceiverCli.RunAsync(args);
 
+#if !CLI_ONLY
 [DllImport("user32.dll")]
 static extern IntPtr GetConsoleWindow();
 
@@ -25,3 +28,4 @@ static void HideConsoleWindow()
 {
     try { ShowWindow(GetConsoleWindow(), 0); } catch { }
 }
+#endif
