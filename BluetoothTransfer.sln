@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BluetoothTransfer.Tests", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BluetoothTransfer.Core", "src\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj", "{9F0DF2AE-7571-4F55-90C1-F2A918ED1710}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BluetoothTransfer.Receiver", "src\BluetoothTransfer.Receiver\BluetoothTransfer.Receiver.csproj", "{492F1AB2-6CFB-4442-8664-B9CC0359393A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -73,6 +75,18 @@ Global
 		{9F0DF2AE-7571-4F55-90C1-F2A918ED1710}.Release|x64.Build.0 = Release|Any CPU
 		{9F0DF2AE-7571-4F55-90C1-F2A918ED1710}.Release|x86.ActiveCfg = Release|Any CPU
 		{9F0DF2AE-7571-4F55-90C1-F2A918ED1710}.Release|x86.Build.0 = Release|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Debug|x64.Build.0 = Debug|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Debug|x86.Build.0 = Debug|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Release|x64.ActiveCfg = Release|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Release|x64.Build.0 = Release|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Release|x86.ActiveCfg = Release|Any CPU
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -82,5 +96,6 @@ Global
 		{27ED86A2-8E60-49DD-BF61-E8F15CCF77D0} = {D305DF60-0333-4E54-ADCD-82F529559B86}
 		{72DD3D82-365B-415E-BF41-EC615FFD144D} = {728692F3-06D9-4664-B29D-CCADF6647C34}
 		{9F0DF2AE-7571-4F55-90C1-F2A918ED1710} = {D305DF60-0333-4E54-ADCD-82F529559B86}
+		{492F1AB2-6CFB-4442-8664-B9CC0359393A} = {D305DF60-0333-4E54-ADCD-82F529559B86}
 	EndGlobalSection
 EndGlobal
