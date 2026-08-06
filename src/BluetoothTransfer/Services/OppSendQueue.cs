@@ -8,6 +8,7 @@ public enum OppJobStatus
 {
     Pending,
     Sending,
+    Paused,
     Ok,
     Failed,
     Cancelled
@@ -21,6 +22,9 @@ public sealed class OppSendJob : INotifyPropertyChanged
     public string SourcePath { get; init; } = "";
     public string DisplayName { get; init; } = "";
     public long Size { get; init; }
+    /// <summary>通道：opp（OPP 通用推送）或 assistant（接收助手私有协议）。</summary>
+    public string Channel { get; set; } = "opp";
+    public string ChannelDisplay => Channel == "assistant" ? "助手" : "OPP";
 
     private OppJobStatus _status = OppJobStatus.Pending;
     public OppJobStatus Status
@@ -52,6 +56,7 @@ public sealed class OppSendJob : INotifyPropertyChanged
     {
         OppJobStatus.Pending => "等待中",
         OppJobStatus.Sending => "发送中",
+        OppJobStatus.Paused => "已暂停",
         OppJobStatus.Ok => "成功",
         OppJobStatus.Failed => "失败",
         OppJobStatus.Cancelled => "已取消",
@@ -74,6 +79,8 @@ public sealed class OppSendQueue
     private readonly List<OppSendJob> _pending = new();
     private bool _running;
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _activeCts;
+    private OppSendJob? _activeJob;
 
     public ObservableCollection<OppSendJob> Jobs { get; } = new();
 
@@ -108,6 +115,47 @@ public sealed class OppSendQueue
         }
     }
 
+    /// <summary>暂停：暂停中的任务标记 Paused；发送中的任务取消当前尝试（接收端保留半成品，继续时续传）。</summary>
+    public void Pause(OppSendJob job)
+    {
+        lock (_lock)
+        {
+            if (ReferenceEquals(job, _activeJob))
+            {
+                job.Status = OppJobStatus.Paused;
+                job.Error = "";
+                _activeCts?.Cancel();
+            }
+            else if (job.Status == OppJobStatus.Pending)
+            {
+                job.Status = OppJobStatus.Paused;
+            }
+        }
+    }
+
+    /// <summary>继续：把 Paused 任务放回待处理。</summary>
+    public void Continue(OppSendJob job)
+    {
+        lock (_lock)
+        {
+            if (job.Status != OppJobStatus.Paused) return;
+            job.Status = OppJobStatus.Pending;
+            job.Error = "";
+        }
+    }
+
+    /// <summary>移除任务：发送中则取消；从队列与待处理列表移除。</summary>
+    public void Remove(OppSendJob job)
+    {
+        lock (_lock)
+        {
+            if (ReferenceEquals(job, _activeJob))
+                _activeCts?.Cancel();
+            Jobs.Remove(job);
+            _pending.Remove(job);
+        }
+    }
+
     /// <summary>开始顺序处理队列；处理函数返回 true 表示成功。</summary>
     public async Task StartAsync(string deviceAddr, Func<OppSendJob, CancellationToken, Task<bool>> process, CancellationToken outerCt = default)
     {
@@ -123,16 +171,15 @@ public sealed class OppSendQueue
             {
                 if (_cts!.IsCancellationRequested)
                 {
-                    // 取消后不再处理剩余任务：标记并移出队列
                     lock (_lock)
                     {
-                        foreach (var j in _pending.Where(j => j.Status == OppJobStatus.Pending))
+                        foreach (var j in _pending.Where(j => j.Status is OppJobStatus.Pending or OppJobStatus.Paused).ToList())
                         {
                             j.Status = OppJobStatus.Cancelled;
                             j.Error = "用户取消";
                             Jobs.Remove(j);
+                            _pending.Remove(j);
                         }
-                        _pending.RemoveAll(j => j.Status == OppJobStatus.Cancelled);
                     }
                     break;
                 }
@@ -144,9 +191,16 @@ public sealed class OppSendQueue
                 if (job == null) break;
 
                 job.Status = OppJobStatus.Sending;
+                CancellationTokenSource? activeCts = null;
                 try
                 {
-                    var ok = await process(job, _cts!.Token);
+                    lock (_lock)
+                    {
+                        _activeJob = job;
+                        activeCts = _activeCts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                    }
+                    var ok = await process(job, activeCts.Token);
+                    if (job.Status == OppJobStatus.Paused) continue;
                     job.Status = ok ? OppJobStatus.Ok : OppJobStatus.Failed;
                     if (!ok && string.IsNullOrEmpty(job.Error))
                         job.Error = "推送失败";
@@ -156,6 +210,15 @@ public sealed class OppSendQueue
                     job.Status = OppJobStatus.Cancelled;
                     job.Error = "用户取消";
                 }
+                catch (OperationCanceledException)
+                {
+                    // 仅 Pause/Remove 触发（非取消全部）：Paused 保留，其余按取消处理
+                    if (job.Status != OppJobStatus.Paused)
+                    {
+                        job.Status = OppJobStatus.Cancelled;
+                        job.Error = "用户取消";
+                    }
+                }
                 catch (Exception ex)
                 {
                     job.Status = OppJobStatus.Failed;
@@ -163,8 +226,16 @@ public sealed class OppSendQueue
                 }
                 finally
                 {
-                    lock (_lock) _pending.Remove(job);
-                    JobCompleted?.Invoke(job, job.Status == OppJobStatus.Ok);
+                    lock (_lock)
+                    {
+                        _activeJob = null;
+                        _activeCts = null;
+                        activeCts?.Dispose();
+                        if (job.Status != OppJobStatus.Paused)
+                            _pending.Remove(job);
+                    }
+                    if (job.Status != OppJobStatus.Paused)
+                        JobCompleted?.Invoke(job, job.Status == OppJobStatus.Ok);
                 }
             }
         }
@@ -185,13 +256,13 @@ public sealed class OppSendQueue
         lock (_lock)
         {
             _cts?.Cancel();
-            foreach (var job in _pending.Where(j => j.Status == OppJobStatus.Pending))
+            foreach (var job in _pending.Where(j => j.Status is OppJobStatus.Pending or OppJobStatus.Paused).ToList())
             {
                 job.Status = OppJobStatus.Cancelled;
                 job.Error = "用户取消";
                 Jobs.Remove(job);
+                _pending.Remove(job);
             }
-            _pending.RemoveAll(j => j.Status == OppJobStatus.Cancelled);
         }
     }
 

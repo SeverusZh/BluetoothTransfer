@@ -81,6 +81,18 @@
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
                                             <TextBlock Text="{Binding PairedDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="8,1,0,0"/>
+                                            <TextBlock Text="助手" FontSize="11" Foreground="#16A34A" Margin="8,1,0,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsAssistant}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
                                         </StackPanel>
                                         <TextBlock Text="{Binding AddrDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                                     </StackPanel>
@@ -108,6 +120,14 @@
 
                 <GroupBox Grid.Row="4" Header="发送">
                     <StackPanel>
+                        <DockPanel Margin="0,0,0,6">
+                            <TextBlock DockPanel.Dock="Left" Text="通道：" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
+                            <ComboBox Width="140" SelectedValue="{Binding SelectedTransferMode}" SelectedValuePath="Tag" HorizontalAlignment="Left">
+                                <ComboBoxItem Content="自动（探测助手，否则 OPP）" Tag="auto"/>
+                                <ComboBoxItem Content="强制接收助手" Tag="assistant"/>
+                                <ComboBoxItem Content="强制 OPP" Tag="opp"/>
+                            </ComboBox>
+                        </DockPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -150,8 +170,23 @@
                               HeadersVisibility="Column">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="名称" Binding="{Binding DisplayName}" Width="*"/>
+                            <DataGridTextColumn Header="通道" Binding="{Binding ChannelDisplay}" Width="56"/>
                             <DataGridTextColumn Header="状态" Binding="{Binding StatusDisplay}" Width="70"/>
                             <DataGridTextColumn Header="失败原因" Binding="{Binding Error}" Width="200"/>
+                            <DataGridTemplateColumn Header="操作" Width="150">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="暂停" Command="{Binding DataContext.PauseJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Padding="6,1" Margin="0,0,4,0" FontSize="11"/>
+                                            <Button Content="继续" Command="{Binding DataContext.ContinueJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Padding="6,1" Margin="0,0,4,0" FontSize="11"/>
+                                            <Button Content="移除" Command="{Binding DataContext.RemoveJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}" Padding="6,1" FontSize="11"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </GroupBox>
@@ -182,7 +217,7 @@
                 </GroupBox>
 
                 <GroupBox Grid.Row="4" Header="日志">
-                    <ListBox ItemsSource="{Binding LogLines}" BorderThickness="0"
+                    <ListBox x:Name="LogListBox" ItemsSource="{Binding LogLines}" BorderThickness="0"
                              FontFamily="Consolas" FontSize="11"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
                 </GroupBox>

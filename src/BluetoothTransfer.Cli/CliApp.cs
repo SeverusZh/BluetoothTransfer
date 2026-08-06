@@ -17,6 +17,7 @@ public static class CliApp
                 "opp-send-files" => await Commands.OppSendFilesAsync(a),
                 "opp-send-text" => await Commands.OppSendTextAsync(a),
                 "opp-send-folder" => await Commands.OppSendFolderAsync(a),
+                "detect" => await Commands.DetectAsync(a),
                 "config" => Commands.Config(a),
                 "records" => Commands.Records(a),
                 "export" => Commands.Export(a),

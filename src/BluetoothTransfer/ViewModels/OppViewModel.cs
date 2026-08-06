@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using BluetoothTransfer.Core.Discovery;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
 
@@ -18,6 +19,7 @@ public class OppDeviceItem : INotifyPropertyChanged
     private bool _favorite;
     private string _alias = "";
     private string _lastConnected = "";
+    private bool _isAssistant;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -65,6 +67,15 @@ public class OppDeviceItem : INotifyPropertyChanged
         set => SetProperty(ref _lastConnected, value);
     }
 
+    public bool IsAssistant
+    {
+        get => _isAssistant;
+        set => SetProperty(ref _isAssistant, value);
+    }
+
+    /// <summary>WinRT 设备条目 Id（用于 SDP 探测助手服务）。</summary>
+    public string DeviceId { get; set; } = "";
+
     /// <summary>展示名：别名优先，其次设备名。</summary>
     public string DisplayName => string.IsNullOrWhiteSpace(Alias) ? Name : Alias;
     public string PairedDisplay => IsPaired ? "已配对" : "未配对";
@@ -94,6 +105,8 @@ public class OppViewModel : ViewModelBase
     private readonly AppConfig _config;
     private readonly OppDiscoveryService _discovery;
     private readonly OppPushService _push;
+    private readonly AssistantPushService _assistantPush;
+    private readonly Dictionary<string, bool> _assistantCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dispatcher _dispatcher;
     private readonly TransferSpeedTracker _speedTracker = new();
     private readonly OppSendQueue _queue = new();
@@ -105,6 +118,7 @@ public class OppViewModel : ViewModelBase
     private double _transferProgress;
     private string _progressText = "";
     private string _lastError = "";
+    private OppDeviceItem? _queueDevice;
 
     public ObservableCollection<OppDeviceItem> Devices { get; } = new();
     public ObservableCollection<TransferRecord> Records { get; } = new();
@@ -128,6 +142,19 @@ public class OppViewModel : ViewModelBase
     public bool CanSend => SelectedDevice != null && !IsScanning;
     public string LastError => _lastError;
 
+    /// <summary>发送通道模式：auto（探测助手，否则 OPP）/ assistant / opp。</summary>
+    public string SelectedTransferMode
+    {
+        get => _config.TransferMode;
+        set
+        {
+            if (_config.TransferMode == value) return;
+            _config.TransferMode = value;
+            _config.Save();
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>供代码后台等非命令路径发布日志事件（经 EventBus 汇入 UI 线程）。</summary>
     public void PublishLog(string level, string message)
         => _events.Publish(new LogEvent(level, message));
@@ -145,6 +172,9 @@ public class OppViewModel : ViewModelBase
     public RelayCommand ExportCsvCommand { get; }
     public RelayCommand ExportJsonCommand { get; }
     public RelayCommand ClearRecordsCommand { get; }
+    public RelayCommand PauseJobCommand { get; }
+    public RelayCommand ContinueJobCommand { get; }
+    public RelayCommand RemoveJobCommand { get; }
 
     public OppViewModel()
     {
@@ -154,6 +184,7 @@ public class OppViewModel : ViewModelBase
         _config = AppConfig.Load();
         _discovery = new OppDiscoveryService(_events);
         _push = new OppPushService(_events, _storage, _config, _discovery);
+        _assistantPush = new AssistantPushService(_events, _storage, _config, _discovery);
 
         ScanCommand = new RelayCommand(() => SafeAsync(ScanAsync));
         PairCommand = new RelayCommand(() => SafeAsync(PairAsync), () => SelectedDevice != null);
@@ -168,6 +199,16 @@ public class OppViewModel : ViewModelBase
         ExportCsvCommand = new RelayCommand(() => ExportRecords("CSV 文件|*.csv", "csv", ExportService.ExportCsv));
         ExportJsonCommand = new RelayCommand(() => ExportRecords("JSON 文件|*.json", "json", ExportService.ExportJson));
         ClearRecordsCommand = new RelayCommand(ClearRecords);
+        PauseJobCommand = new RelayCommand(job => _queue.Pause((OppSendJob)job!));
+        ContinueJobCommand = new RelayCommand(job =>
+        {
+            var target = (OppSendJob)job!;
+            _queue.Continue(target);
+            var device = _queueDevice ?? SelectedDevice;
+            if (device != null && target.Status == OppJobStatus.Pending)
+                StartQueueIfNeeded(device);
+        });
+        RemoveJobCommand = new RelayCommand(job => _queue.Remove((OppSendJob)job!));
 
         _events.Subscribe<LogEvent>(OnLog);
         _events.Subscribe<TransferProgressEvent>(OnProgress);
@@ -195,12 +236,15 @@ public class OppViewModel : ViewModelBase
                     {
                         Name = d.Name,
                         Addr = d.Addr,
+                        DeviceId = d.Id,
                         IsPaired = d.IsPaired,
                         Favorite = info?.Favorite ?? false,
                         Alias = info?.Alias ?? "",
                         LastConnected = info?.LastConnected ?? ""
                     });
                 }
+                foreach (var item in Devices)
+                    _ = ProbeAssistantAsync(item);
             });
             StatusText = Devices.Count > 0
                 ? $"发现 {Devices.Count} 个 OPP 设备"
@@ -267,25 +311,80 @@ public class OppViewModel : ViewModelBase
         _speedTracker.Reset();
         ProgressText = "";
         TransferProgress = 0;
-        if (_queue.IsRunning) return;
         var device = SelectedDevice;
         if (device == null) return;
-        _ = Task.Run(() => _queue.StartAsync(device.Addr, async (job, ct) =>
+        _queueDevice = device;
+        StartQueueIfNeeded(device);
+    }
+
+    private void StartQueueIfNeeded(OppDeviceItem device)
+    {
+        if (_queue.IsRunning) return;
+        _ = Task.Run(() => _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, ct)));
+    }
+
+    private async Task<bool> ProcessJobAsync(OppSendJob job, OppDeviceItem device, CancellationToken ct)
+    {
+        try
         {
-            try
-            {
-                return job.Kind switch
+            var useAssistant = await ResolveAssistantAsync(device.Addr, job, ct);
+            job.Channel = useAssistant ? "assistant" : "opp";
+            return useAssistant
+                ? job.Kind switch
+                {
+                    "folder" => await _assistantPush.SendFolderAsync(device.Addr, job.SourcePath, ct),
+                    "text" => await _assistantPush.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
+                    _ => await _assistantPush.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
+                }
+                : job.Kind switch
                 {
                     "folder" => await _push.SendFolderAsync(device.Addr, job.SourcePath, ct),
                     "text" => await _push.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
                     _ => await _push.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
                 };
-            }
-            finally
-            {
-                _ = LoadRecordsAsync();
-            }
-        }));
+        }
+        finally
+        {
+            _ = LoadRecordsAsync();
+        }
+    }
+
+    private async Task<bool> ResolveAssistantAsync(string addr, OppSendJob job, CancellationToken ct)
+    {
+        switch (_config.TransferMode)
+        {
+            case "assistant":
+                return true;
+            case "opp":
+                return false;
+            default:
+                lock (_assistantCache)
+                {
+                    if (_assistantCache.TryGetValue(addr, out var cached))
+                        return cached;
+                }
+                var item = Devices.FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, addr));
+                if (item == null) return false;
+                var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId), ct);
+                lock (_assistantCache)
+                    _assistantCache[addr] = has;
+                return has;
+        }
+    }
+
+    private async Task ProbeAssistantAsync(OppDeviceItem item)
+    {
+        try
+        {
+            var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId));
+            _dispatcher.Invoke(() => item.IsAssistant = has);
+            lock (_assistantCache)
+                _assistantCache[item.Addr] = has;
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"探测助手失败：{item.DisplayName}（{ex.Message}）"));
+        }
     }
 
     private async Task SendTextAsync()
@@ -508,7 +607,7 @@ public class OppViewModel : ViewModelBase
                 _lastError = e.Message;
             var line = $"[{DateTime.Now:HH:mm:ss}] [{e.Level}] {e.Message}";
             LogLines.Add(line);
-            if (LogLines.Count > 500) LogLines.RemoveAt(0);
+            if (LogLines.Count > 2000) LogLines.RemoveAt(0);
         });
     }
 

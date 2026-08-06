@@ -8,7 +8,7 @@ public sealed class Args
     private static readonly HashSet<string> ValuedOptions = new(StringComparer.OrdinalIgnoreCase)
     {
         "seconds", "timeout", "name", "peer", "chunk", "limit", "direction", "type",
-        "status", "search", "from", "to", "db", "pin"
+        "status", "search", "from", "to", "db", "pin", "mode"
     };
 
     private readonly List<string> _positional = new();
