@@ -1,6 +1,7 @@
 ﻿using System.ComponentModel;
 using System.Windows;
 using Hardcodet.Wpf.TaskbarNotification;
+using System.Windows.Controls;
 
 namespace BluetoothTransfer;
 
@@ -12,6 +13,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AttachLogAutoscroll();
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
         Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.2.1"}";
         Loaded += (_, _) =>
@@ -30,6 +32,32 @@ public partial class MainWindow : Window
                 var vm = (ViewModels.OppViewModel)DataContext;
                 vm.PublishLog("WARN", $"托盘图标加载失败：{ex.Message}");
             }
+        };
+    }
+
+    private ScrollViewer? _logScroller;
+    private bool _followLog = true;
+
+    private void AttachLogAutoscroll()
+    {
+        LogListBox.Loaded += (_, _) =>
+        {
+            _logScroller = Behaviors.HoverScrollBehavior.FindScrollViewer(LogListBox);
+            if (_logScroller == null) return;
+            _logScroller.ScrollChanged += (_, e) =>
+            {
+                var atBottom = e.VerticalOffset >= e.ExtentHeight - e.ViewportHeight - 1;
+                if (atBottom)
+                    _followLog = true;
+                else if (e.VerticalChange < 0)
+                    _followLog = false;
+            };
+        };
+        var vm = (ViewModels.OppViewModel)DataContext;
+        vm.LogLines.CollectionChanged += (_, _) =>
+        {
+            if (_followLog && _logScroller != null)
+                _logScroller.ScrollToEnd();
         };
     }
 
