@@ -230,7 +230,9 @@ public sealed class AssistantPushService
             }
             catch (Exception ex)
             {
-                lastError = ex.Message;
+                lastError = string.IsNullOrWhiteSpace(ex.Message)
+                    ? $"{ex.GetType().Name} (0x{ex.HResult:X8})"
+                    : ex.Message;
             }
             finally
             {
