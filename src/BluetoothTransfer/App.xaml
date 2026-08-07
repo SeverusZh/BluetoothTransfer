@@ -126,13 +126,17 @@
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}"
                                     CornerRadius="6" Padding="{TemplateBinding Padding}">
-                                <StackPanel>
-                                    <TextBlock Text="{TemplateBinding Header}"
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Text="{TemplateBinding Header}"
                                                FontWeight="SemiBold" FontSize="13"
                                                Foreground="{StaticResource HeaderBrush}"
                                                Margin="0,0,0,8"/>
-                                    <ContentPresenter/>
-                                </StackPanel>
+                                    <ContentPresenter Grid.Row="1"/>
+                                </Grid>
                             </Border>
                         </ControlTemplate>
                     </Setter.Value>

@@ -109,4 +109,5 @@ public partial class MainWindow : Window
         _trayIcon?.Dispose();
         Close();
     }
+
 }
