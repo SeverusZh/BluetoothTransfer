@@ -18,6 +18,28 @@ public static class AssistantDetector
     /// <summary>已配对蓝牙设备（不依赖 OPP 广播；接收端只运行助手时也能解析）。</summary>
     public sealed record PairedAssistantDevice(string DeviceId, string Addr, string Name);
 
+    /// <summary>已配对且运行接收助手服务的设备。</summary>
+    public sealed record AssistantDeviceInfo(string DeviceId, string Addr, string Name);
+
+    /// <summary>枚举已配对且声明助手服务（自定义 UUID）的设备，供发送端扫描合并展示。</summary>
+    public static async Task<List<AssistantDeviceInfo>> FindAssistantDevicesAsync(CancellationToken ct = default)
+    {
+        var result = new List<AssistantDeviceInfo>();
+        var devices = await DeviceInformation.FindAllAsync(
+            BluetoothDevice.GetDeviceSelectorFromPairingState(true)).AsTask(ct);
+        foreach (var d in devices)
+        {
+            ct.ThrowIfCancellationRequested();
+            var mac = ParseMacFromId(d.Id);
+            if (string.IsNullOrEmpty(mac)) continue;
+            var service = await GetAssistantServiceAsync(d.Id, ct);
+            if (service == null) continue;
+            service.Dispose();
+            result.Add(new AssistantDeviceInfo(d.Id, mac, string.IsNullOrEmpty(d.Name) ? mac : d.Name));
+        }
+        return result;
+    }
+
     /// <summary>按地址在"已配对设备"列表中查找（助手模式发送端的设备解析回退路径）。</summary>
     public static async Task<PairedAssistantDevice?> FindPairedDeviceAsync(string addr, CancellationToken ct = default)
     {

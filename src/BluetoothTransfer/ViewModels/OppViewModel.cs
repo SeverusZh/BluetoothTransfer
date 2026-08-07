@@ -229,6 +229,7 @@ public class OppViewModel : ViewModelBase
             _dispatcher.Invoke(() =>
             {
                 Devices.Clear();
+                _assistantCache.Clear();
                 foreach (var d in devices.OrderByDescending(x => x.IsPaired))
                 {
                     var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, d.Addr));
@@ -246,6 +247,7 @@ public class OppViewModel : ViewModelBase
                 foreach (var item in Devices)
                     _ = ProbeAssistantAsync(item);
             });
+            await MergeAssistantDevicesAsync(saved);
             StatusText = Devices.Count > 0
                 ? $"发现 {Devices.Count} 个 OPP 设备"
                 : "未发现 OPP 设备（确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对）";
@@ -347,6 +349,52 @@ public class OppViewModel : ViewModelBase
         {
             _ = LoadRecordsAsync();
         }
+    }
+
+    /// <summary>
+    /// 合并"已配对且运行接收助手"的设备：接收端只跑 btrecv（不广播 OPP）时也能在列表中出现。
+    /// </summary>
+    private async Task MergeAssistantDevicesAsync(List<DeviceInfo> saved)
+    {
+        List<AssistantDetector.AssistantDeviceInfo> assistantDevices;
+        try
+        {
+            assistantDevices = await Task.Run(() => AssistantDetector.FindAssistantDevicesAsync());
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"枚举助手设备失败：{ex.Message}"));
+            return;
+        }
+
+        _dispatcher.Invoke(() =>
+        {
+            foreach (var ad in assistantDevices)
+            {
+                var existing = Devices.FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, ad.Addr));
+                if (existing != null)
+                {
+                    existing.IsAssistant = true;
+                }
+                else
+                {
+                    var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, ad.Addr));
+                    Devices.Add(new OppDeviceItem
+                    {
+                        Name = ad.Name,
+                        Addr = ad.Addr,
+                        DeviceId = ad.DeviceId,
+                        IsPaired = true,
+                        IsAssistant = true,
+                        Favorite = info?.Favorite ?? false,
+                        Alias = info?.Alias ?? "",
+                        LastConnected = info?.LastConnected ?? ""
+                    });
+                }
+                lock (_assistantCache)
+                    _assistantCache[ad.Addr] = true;
+            }
+        });
     }
 
     private async Task<bool> ResolveAssistantAsync(string addr, OppSendJob job, CancellationToken ct)
