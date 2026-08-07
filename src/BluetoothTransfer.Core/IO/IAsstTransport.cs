@@ -6,6 +6,9 @@ namespace BluetoothTransfer.Core.IO;
 /// </summary>
 public interface IAsstTransport : IAsyncDisposable
 {
+    /// <summary>对端蓝牙地址（无/未知时为 null，内存传输恒为 null）。</summary>
+    string? RemoteAddress { get; }
+
     /// <summary>写入全部字节；返回时数据已提交到传输层。</summary>
     Task WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default);
 

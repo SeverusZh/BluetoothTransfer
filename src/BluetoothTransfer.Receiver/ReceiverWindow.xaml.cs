@@ -47,7 +47,7 @@ public partial class ReceiverWindow : Window
                     Progress.Value = total > 0 ? sent * 100.0 / total : 0;
                     ProgressText.Text = $"{sent:N0} / {total:N0} 字节";
                 }),
-                onCompleted: hello => _dispatcher.Invoke(() =>
+                onCompleted: (hello, _) => _dispatcher.Invoke(() =>
                 {
                     Completed.Add($"{DateTime.Now:HH:mm:ss} {hello.FileName}");
                     if (string.Equals(_currentName, hello.FileName, StringComparison.OrdinalIgnoreCase))

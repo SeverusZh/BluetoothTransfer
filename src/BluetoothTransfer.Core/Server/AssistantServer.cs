@@ -14,7 +14,7 @@ public sealed class AssistantServer
     private readonly Func<AsstHello, Task<AsstOfferStatus>>? _approval;
     private readonly Action<string, string>? _onLog;
     private readonly Action<AsstHello, long, long>? _onProgress;
-    private readonly Action<AsstHello>? _onCompleted;
+    private readonly Action<AsstHello, string?>? _onCompleted;
     private readonly CancellationTokenSource _cts = new();
     private int _active;
 
@@ -24,7 +24,7 @@ public sealed class AssistantServer
         Func<AsstHello, Task<AsstOfferStatus>>? approval = null,
         Action<string, string>? onLog = null,
         Action<AsstHello, long, long>? onProgress = null,
-        Action<AsstHello>? onCompleted = null)
+        Action<AsstHello, string?>? onCompleted = null)
     {
         _listener = listener ?? throw new ArgumentNullException(nameof(listener));
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
@@ -181,7 +181,7 @@ public sealed class AssistantServer
             done.Ok
                 ? $"接收完成：{hello.FileName}（SHA-256 {done.Hash[..Math.Min(8, done.Hash.Length)]}…）"
                 : $"校验失败：{hello.FileName}（期望 {hello.ExpectedSha256}，实际 {done.Hash}）");
-        if (done.Ok) _onCompleted?.Invoke(hello);
+        if (done.Ok) _onCompleted?.Invoke(hello, transport.RemoteAddress);
     }
 
     private async Task TrySendErrorAsync(IAsstTransport transport, string message)

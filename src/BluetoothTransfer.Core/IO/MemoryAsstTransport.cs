@@ -22,6 +22,9 @@ public sealed class MemoryAsstTransport : IAsstTransport
     /// <summary>置 true 后本端 Read 返回 0（模拟连接断开）。</summary>
     public bool Broken { get; set; }
 
+    /// <summary>测试用：可设置的对端地址（默认 null）。</summary>
+    public string? RemoteAddress { get; set; }
+
     private MemoryAsstTransport()
     {
     }

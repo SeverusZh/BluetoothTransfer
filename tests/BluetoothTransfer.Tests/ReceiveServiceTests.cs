@@ -64,4 +64,38 @@ public class ReceiveServiceTests : IDisposable
 
         await svc.StopAsync();
     }
+
+    [Fact]
+    public async Task Start_RecordsPeerAddressAndName()
+    {
+        _storage.UpsertDevice(new DeviceInfo
+        {
+            Addr = "00:A7:60:50:75:04",
+            Name = "对端电脑"
+        });
+        var listener = new MemoryAsstListener();
+        var svc = new ReceiveService(_storage, new EventBus(), listener);
+        var completed = new TaskCompletionSource<string>();
+        svc.Completed += name => completed.TrySetResult(name);
+        using var cts = new CancellationTokenSource();
+        await svc.StartAsync(_dir, ask: false, cts.Token);
+
+        var source = new byte[10_000];
+        Random.Shared.NextBytes(source);
+        var hello = new AsstHello("r2", "peer.bin", source.Length, 8192, "");
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        serverT.RemoteAddress = "00:A7:60:50:75:04";
+        listener.Enqueue(serverT);
+        await using var client = new AssistantClient(clientT);
+
+        var result = await client.SendAsync(hello, ReadFrom(source));
+
+        Assert.True(result.Ok);
+        Assert.Equal("peer.bin", await completed.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        var record = Assert.Single(_storage.GetRecords());
+        Assert.Equal("00:a7:60:50:75:04", record.PeerAddr);
+        Assert.Equal("对端电脑", record.PeerName);
+
+        await svc.StopAsync();
+    }
 }

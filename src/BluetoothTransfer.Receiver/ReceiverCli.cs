@@ -64,7 +64,7 @@ public static class ReceiverCli
                 var percent = total > 0 ? sent * 100.0 / total : 0.0;
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [PROGRESS] {hello.FileName}：{sent}/{total}（{percent:0.0}%）");
             },
-            onCompleted: hello => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [INFO] 已完成：{hello.FileName}"));
+            onCompleted: (hello, _) => Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [INFO] 已完成：{hello.FileName}"));
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };

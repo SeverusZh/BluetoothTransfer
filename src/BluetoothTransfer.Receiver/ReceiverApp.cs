@@ -15,7 +15,7 @@ public sealed class ReceiverApp
         IAsstListener listener,
         Action<string, string>? onLog = null,
         Action<AsstHello, long, long>? onProgress = null,
-        Action<AsstHello>? onCompleted = null)
+        Action<AsstHello, string?>? onCompleted = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         if (listener == null) throw new ArgumentNullException(nameof(listener));

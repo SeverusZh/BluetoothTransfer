@@ -12,6 +12,9 @@ public sealed class SocketAsstTransport : IAsstTransport
     private readonly DataReader _reader;
     private bool _disposed;
 
+    /// <summary>对端蓝牙地址（RawName，可能为 MAC 字符串）。</summary>
+    public string? RemoteAddress => _socket.Information.RemoteAddress?.RawName;
+
     public SocketAsstTransport(StreamSocket socket)
     {
         _socket = socket ?? throw new ArgumentNullException(nameof(socket));

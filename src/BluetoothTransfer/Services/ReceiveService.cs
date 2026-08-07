@@ -58,9 +58,9 @@ public sealed class ReceiveService
             approval: ask ? AskAsync : null,
             onLog: (level, msg) => Logged?.Invoke(level, msg),
             onProgress: (hello, sent, total) => ProgressChanged?.Invoke(hello.FileName, sent, total),
-            onCompleted: hello =>
+            onCompleted: (hello, peerAddr) =>
             {
-                WriteReceiveRecord(hello);
+                WriteReceiveRecord(hello, peerAddr);
                 Completed?.Invoke(hello.FileName);
             });
         IsListening = true;
@@ -102,18 +102,26 @@ public sealed class ReceiveService
         return ok ? AsstOfferStatus.Accept : AsstOfferStatus.Reject;
     }
 
-    private void WriteReceiveRecord(AsstHello hello)
+    private void WriteReceiveRecord(AsstHello hello, string? peerAddr)
     {
         try
         {
             var isText = string.Equals(Path.GetExtension(hello.FileName), ".txt",
                 StringComparison.OrdinalIgnoreCase);
+            var normalizedAddr = NormalizeAddr(peerAddr);
+            var peerName = "";
+            if (!string.IsNullOrEmpty(normalizedAddr))
+            {
+                var device = _storage.GetDevices()
+                    .FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, normalizedAddr));
+                peerName = device?.Name ?? "";
+            }
             _storage.AddRecord(new TransferRecord
             {
                 Direction = TransferConst.DirRecv,
                 Type = isText ? TransferConst.TypeText : TransferConst.TypeFile,
-                PeerName = "",
-                PeerAddr = "",
+                PeerName = peerName,
+                PeerAddr = normalizedAddr,
                 Name = hello.FileName,
                 Size = hello.FileSize,
                 Status = TransferConst.StatusOk,
@@ -126,5 +134,14 @@ public sealed class ReceiveService
         {
             _events.Publish(new LogEvent("ERROR", $"接收记录写入失败：{ex.Message}"));
         }
+    }
+
+    /// <summary>把对端地址规范化为 aa:bb:cc:dd:ee:ff；无法解析时返回原值。</summary>
+    private static string NormalizeAddr(string? addr)
+    {
+        if (string.IsNullOrWhiteSpace(addr)) return "";
+        var hex = new string(addr.Where(c => Uri.IsHexDigit(c)).ToArray()).ToLowerInvariant();
+        if (hex.Length != 12) return addr;
+        return string.Join(":", Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2)));
     }
 }
