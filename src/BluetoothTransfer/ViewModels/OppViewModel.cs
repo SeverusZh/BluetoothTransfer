@@ -48,7 +48,11 @@ public class OppDeviceItem : INotifyPropertyChanged
     public bool Favorite
     {
         get => _favorite;
-        set => SetProperty(ref _favorite, value);
+        set
+        {
+            if (SetProperty(ref _favorite, value))
+                OnPropertyChanged(nameof(FavoriteDisplay));
+        }
     }
 
     public string Alias
@@ -230,10 +234,10 @@ public class OppViewModel : ViewModelBase
             {
                 Devices.Clear();
                 _assistantCache.Clear();
-                foreach (var d in devices.OrderByDescending(x => x.IsPaired))
+                var items = devices.Select(d =>
                 {
                     var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, d.Addr));
-                    Devices.Add(new OppDeviceItem
+                    return new OppDeviceItem
                     {
                         Name = d.Name,
                         Addr = d.Addr,
@@ -242,8 +246,13 @@ public class OppViewModel : ViewModelBase
                         Favorite = info?.Favorite ?? false,
                         Alias = info?.Alias ?? "",
                         LastConnected = info?.LastConnected ?? ""
-                    });
-                }
+                    };
+                })
+                .OrderByDescending(x => x.Favorite)
+                .ThenByDescending(x => x.IsPaired)
+                .ThenByDescending(x => x.LastConnected)
+                .ToList();
+                foreach (var item in items) Devices.Add(item);
                 foreach (var item in Devices)
                     _ = ProbeAssistantAsync(item);
             });
@@ -302,7 +311,20 @@ public class OppViewModel : ViewModelBase
         var next = !device.Favorite;
         await Task.Run(() => _storage.SetDeviceFavorite(device.Addr, next));
         device.Favorite = next;
+        ResortDevices();
         StatusText = next ? $"已收藏：{device.DisplayName}" : $"已取消收藏：{device.DisplayName}";
+    }
+
+    /// <summary>收藏置顶 → 已配对 → 最近连接 的展示排序。</summary>
+    private void ResortDevices()
+    {
+        var sorted = Devices
+            .OrderByDescending(d => d.Favorite)
+            .ThenByDescending(d => d.IsPaired)
+            .ThenByDescending(d => d.LastConnected)
+            .ToList();
+        for (var i = 0; i < sorted.Count; i++)
+            Devices.Move(Devices.IndexOf(sorted[i]), i);
     }
 
     // ------------------------------------------------------------------ 发送
@@ -394,6 +416,7 @@ public class OppViewModel : ViewModelBase
                 lock (_assistantCache)
                     _assistantCache[ad.Addr] = true;
             }
+            ResortDevices();
         });
     }
 
