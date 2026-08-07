@@ -438,7 +438,11 @@ public class OppViewModel : ViewModelBase
                 if (item == null) return false;
                 var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId), ct);
                 lock (_assistantCache)
-                    _assistantCache[addr] = has;
+                {
+                    // 先写者胜：避免扫描异步探测用过期 false 覆盖已确认的 true
+                    if (!_assistantCache.ContainsKey(addr))
+                        _assistantCache[addr] = has;
+                }
                 return has;
         }
     }
@@ -449,8 +453,6 @@ public class OppViewModel : ViewModelBase
         {
             var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId));
             _dispatcher.Invoke(() => item.IsAssistant = has);
-            lock (_assistantCache)
-                _assistantCache[item.Addr] = has;
         }
         catch (Exception ex)
         {
