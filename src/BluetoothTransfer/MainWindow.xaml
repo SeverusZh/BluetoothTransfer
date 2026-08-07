@@ -46,7 +46,7 @@
             <!-- 顶部说明 -->
             <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource CardBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="12,8">
-                <TextBlock Text="通用推送模式：仅发送端需要本应用，向任意支持“蓝牙文件接收”（OPP）的设备推送文件。接收端无需运行本应用，但需先配对；iPhone 不支持。Android 接收时请保持屏幕点亮并留意通知栏的“接受文件”提示；部分机型（如小米 MIUI）没有独立接收开关，接收默认开启。可将文件或文件夹拖入窗口快速推送。"
+                <TextBlock Text="v1.3 双通道发送：目标电脑运行接收助手（btrecv，可先用 OPP 把引导包推过去）时自动走助手通道——支持断点续传、SHA-256 校验、队列暂停/继续/移除；未检测到助手则回退 OPP 通用推送（任意支持“蓝牙文件接收”的设备，需先配对；iPhone 不支持，Android 接收时保持屏幕点亮并留意“接受文件”提示）。文件/文件夹可直接拖入窗口；收藏设备启动即显示、无需每次扫描。"
                            TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
             </Border>
 
