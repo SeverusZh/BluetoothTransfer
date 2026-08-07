@@ -163,7 +163,8 @@ public sealed class AssistantPushService
             return false;
         }
 
-        var transferId = Guid.NewGuid().ToString("N");
+        // 用内容 SHA-256 作为 transferId：同一文件重发/重试可命中接收端半成品实现断点续传
+        var transferId = checksum;
         var retryPolicy = new OppRetryPolicy(_config.OppRetryCount, _config.OppRetryDelaySeconds);
         var attempt = 1;
         string? lastError = null;
