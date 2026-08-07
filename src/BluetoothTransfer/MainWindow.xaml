@@ -46,7 +46,7 @@
             <!-- 顶部说明 -->
             <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource CardBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="12,8">
-                <TextBlock Text="v1.3 双通道发送：目标电脑运行接收助手（btrecv，可先用 OPP 把引导包推过去）时自动走助手通道——支持断点续传、SHA-256 校验、队列暂停/继续/移除；未检测到助手则回退 OPP 通用推送（任意支持“蓝牙文件接收”的设备，需先配对；iPhone 不支持，Android 接收时保持屏幕点亮并留意“接受文件”提示）。文件/文件夹可直接拖入窗口；收藏设备启动即显示、无需每次扫描。"
+                <TextBlock Text="v1.3 双通道：本机可在「接收助手」面板开始监听，两台主机运行完整 GUI 或 btrecv 即可互传（断点续传 + SHA-256 校验）；发送时目标机运行助手则自动走助手通道，否则回退 OPP 通用推送（需先配对；iPhone 不支持，Android 接收时保持屏幕点亮并留意“接受文件”提示）。文件/文件夹可直接拖入窗口；收藏设备启动即显示、无需每次扫描。"
                            TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
             </Border>
 
@@ -56,6 +56,8 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="8"/>
                     <RowDefinition Height="*"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="8"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
@@ -152,6 +154,24 @@
                         </StackPanel>
                         <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12"
                                    Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Grid.Row="6" Header="接收助手">
+                    <StackPanel>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="目录…" Command="{Binding BrowseReceiveDirCommand}" Padding="10,5" Margin="4,0,0,0"/>
+                            <Button Content="{Binding ReceiveToggleText}" Command="{Binding ToggleReceiveCommand}"
+                                    Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"/>
+                        </DockPanel>
+                        <TextBlock Text="{Binding ReceiveSaveDir}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
+                                   Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding ReceiveCurrentFile}" FontSize="11" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
+                        <ProgressBar Height="8" Value="{Binding ReceiveProgress}" Margin="0,4,0,0"/>
+                        <TextBlock Text="{Binding ReceiveProgressText}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
+                        <ListBox ItemsSource="{Binding ReceiveCompleted}" Height="64" Margin="0,6,0,0" FontSize="11"
+                                 bh:HoverScrollBehavior.Enabled="True"/>
+                        <CheckBox Content="每次接收前询问" IsChecked="{Binding ReceiveAsk}" Margin="0,6,0,0"/>
                     </StackPanel>
                 </GroupBox>
             </Grid>

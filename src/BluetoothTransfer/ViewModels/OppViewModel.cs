@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using BluetoothTransfer.Core.Discovery;
+using BluetoothTransfer.Core.Protocol;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
 
@@ -110,6 +111,7 @@ public class OppViewModel : ViewModelBase
     private readonly OppDiscoveryService _discovery;
     private readonly OppPushService _push;
     private readonly AssistantPushService _assistantPush;
+    private readonly ReceiveService _receive;
     private readonly Dictionary<string, bool> _assistantCache = new(StringComparer.OrdinalIgnoreCase);
     private bool? _queueUseAssistant;
     private readonly Dispatcher _dispatcher;
@@ -180,6 +182,41 @@ public class OppViewModel : ViewModelBase
     public RelayCommand PauseJobCommand { get; }
     public RelayCommand ContinueJobCommand { get; }
     public RelayCommand RemoveJobCommand { get; }
+    public RelayCommand ToggleReceiveCommand { get; }
+    public RelayCommand BrowseReceiveDirCommand { get; }
+
+    /// <summary>接收助手：是否监听中。</summary>
+    public bool IsReceiving => _receive.IsListening;
+    public string ReceiveToggleText => _receive.IsListening ? "停止监听" : "开始监听";
+    public string ReceiveSaveDir
+    {
+        get => _config.ReceiveDirectory;
+        set
+        {
+            if (_config.ReceiveDirectory == value) return;
+            _config.ReceiveDirectory = value;
+            _config.Save();
+            OnPropertyChanged();
+        }
+    }
+    public bool ReceiveAsk
+    {
+        get => _config.ReceiveAsk;
+        set
+        {
+            if (_config.ReceiveAsk == value) return;
+            _config.ReceiveAsk = value;
+            _config.Save();
+            OnPropertyChanged();
+        }
+    }
+    private string _receiveCurrentFile = "";
+    public string ReceiveCurrentFile { get => _receiveCurrentFile; set => SetProperty(ref _receiveCurrentFile, value); }
+    private double _receiveProgress;
+    public double ReceiveProgress { get => _receiveProgress; set => SetProperty(ref _receiveProgress, value); }
+    private string _receiveProgressText = "";
+    public string ReceiveProgressText { get => _receiveProgressText; set => SetProperty(ref _receiveProgressText, value); }
+    public ObservableCollection<string> ReceiveCompleted { get; } = new();
 
     public OppViewModel()
     {
@@ -190,6 +227,24 @@ public class OppViewModel : ViewModelBase
         _discovery = new OppDiscoveryService(_events);
         _push = new OppPushService(_events, _storage, _config, _discovery);
         _assistantPush = new AssistantPushService(_events, _storage, _config, _discovery);
+        _receive = new ReceiveService(_storage, _events)
+        {
+            AskHandler = AskReceiveAsync
+        };
+        _receive.ProgressChanged += (name, sent, total) => _dispatcher.Invoke(() =>
+        {
+            ReceiveCurrentFile = name;
+            ReceiveProgress = total > 0 ? sent * 100.0 / total : 0;
+            ReceiveProgressText = $"{sent:N0} / {total:N0} 字节";
+        });
+        _receive.Completed += name => _dispatcher.Invoke(() =>
+        {
+            ReceiveCompleted.Add($"{DateTime.Now:HH:mm:ss} {name}");
+            ReceiveProgress = 0;
+            ReceiveProgressText = "";
+            _ = LoadRecordsAsync();
+        });
+        _receive.Logged += (level, msg) => _events.Publish(new LogEvent(level, msg));
 
         ScanCommand = new RelayCommand(() => SafeAsync(ScanAsync));
         PairCommand = new RelayCommand(() => SafeAsync(PairAsync), () => SelectedDevice != null);
@@ -214,6 +269,8 @@ public class OppViewModel : ViewModelBase
                 StartQueueIfNeeded(device);
         });
         RemoveJobCommand = new RelayCommand(job => _queue.Remove((OppSendJob)job!));
+        ToggleReceiveCommand = new RelayCommand(() => SafeAsync(ToggleReceiveAsync));
+        BrowseReceiveDirCommand = new RelayCommand(BrowseReceiveDir);
 
         _events.Subscribe<LogEvent>(OnLog);
         _events.Subscribe<TransferProgressEvent>(OnProgress);
@@ -343,6 +400,37 @@ public class OppViewModel : ViewModelBase
             .ToList();
         for (var i = 0; i < sorted.Count; i++)
             Devices.Move(Devices.IndexOf(sorted[i]), i);
+    }
+
+    // ------------------------------------------------------------------ 接收助手
+
+    private async Task ToggleReceiveAsync()
+    {
+        if (_receive.IsListening)
+        {
+            await _receive.StopAsync();
+        }
+        else
+        {
+            await _receive.StartAsync(ReceiveSaveDir, ReceiveAsk);
+        }
+        OnPropertyChanged(nameof(IsReceiving));
+        OnPropertyChanged(nameof(ReceiveToggleText));
+    }
+
+    private void BrowseReceiveDir()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "选择接收保存目录" };
+        if (dialog.ShowDialog() == true)
+            ReceiveSaveDir = dialog.FolderName;
+    }
+
+    private async Task<bool> AskReceiveAsync(AsstHello hello)
+    {
+        var result = await _dispatcher.InvokeAsync(() =>
+            MessageBox.Show($"接收文件 {hello.FileName}（{hello.FileSize:N0} 字节）？",
+                "蓝牙传输", MessageBoxButton.YesNo, MessageBoxImage.Question));
+        return result == MessageBoxResult.Yes;
     }
 
     // ------------------------------------------------------------------ 发送
