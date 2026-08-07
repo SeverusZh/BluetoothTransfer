@@ -28,6 +28,7 @@ bld/
 ## Published outputs
 publish/
 publish-lite/
+artifacts/
 
 ## PLAN
 PLAN.md

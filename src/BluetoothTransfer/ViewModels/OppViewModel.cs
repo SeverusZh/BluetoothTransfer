@@ -4,6 +4,8 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using BluetoothTransfer.Core.Discovery;
+using BluetoothTransfer.Core.Protocol;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
 
@@ -18,6 +20,7 @@ public class OppDeviceItem : INotifyPropertyChanged
     private bool _favorite;
     private string _alias = "";
     private string _lastConnected = "";
+    private bool _isAssistant;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -46,7 +49,11 @@ public class OppDeviceItem : INotifyPropertyChanged
     public bool Favorite
     {
         get => _favorite;
-        set => SetProperty(ref _favorite, value);
+        set
+        {
+            if (SetProperty(ref _favorite, value))
+                OnPropertyChanged(nameof(FavoriteDisplay));
+        }
     }
 
     public string Alias
@@ -64,6 +71,15 @@ public class OppDeviceItem : INotifyPropertyChanged
         get => _lastConnected;
         set => SetProperty(ref _lastConnected, value);
     }
+
+    public bool IsAssistant
+    {
+        get => _isAssistant;
+        set => SetProperty(ref _isAssistant, value);
+    }
+
+    /// <summary>WinRT 设备条目 Id（用于 SDP 探测助手服务）。</summary>
+    public string DeviceId { get; set; } = "";
 
     /// <summary>展示名：别名优先，其次设备名。</summary>
     public string DisplayName => string.IsNullOrWhiteSpace(Alias) ? Name : Alias;
@@ -94,6 +110,10 @@ public class OppViewModel : ViewModelBase
     private readonly AppConfig _config;
     private readonly OppDiscoveryService _discovery;
     private readonly OppPushService _push;
+    private readonly AssistantPushService _assistantPush;
+    private readonly ReceiveService _receive;
+    private readonly Dictionary<string, bool> _assistantCache = new(StringComparer.OrdinalIgnoreCase);
+    private bool? _queueUseAssistant;
     private readonly Dispatcher _dispatcher;
     private readonly TransferSpeedTracker _speedTracker = new();
     private readonly OppSendQueue _queue = new();
@@ -105,6 +125,7 @@ public class OppViewModel : ViewModelBase
     private double _transferProgress;
     private string _progressText = "";
     private string _lastError = "";
+    private OppDeviceItem? _queueDevice;
 
     public ObservableCollection<OppDeviceItem> Devices { get; } = new();
     public ObservableCollection<TransferRecord> Records { get; } = new();
@@ -128,6 +149,19 @@ public class OppViewModel : ViewModelBase
     public bool CanSend => SelectedDevice != null && !IsScanning;
     public string LastError => _lastError;
 
+    /// <summary>发送通道模式：auto（探测助手，否则 OPP）/ assistant / opp。</summary>
+    public string SelectedTransferMode
+    {
+        get => _config.TransferMode;
+        set
+        {
+            if (_config.TransferMode == value) return;
+            _config.TransferMode = value;
+            _config.Save();
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>供代码后台等非命令路径发布日志事件（经 EventBus 汇入 UI 线程）。</summary>
     public void PublishLog(string level, string message)
         => _events.Publish(new LogEvent(level, message));
@@ -145,6 +179,44 @@ public class OppViewModel : ViewModelBase
     public RelayCommand ExportCsvCommand { get; }
     public RelayCommand ExportJsonCommand { get; }
     public RelayCommand ClearRecordsCommand { get; }
+    public RelayCommand PauseJobCommand { get; }
+    public RelayCommand ContinueJobCommand { get; }
+    public RelayCommand RemoveJobCommand { get; }
+    public RelayCommand ToggleReceiveCommand { get; }
+    public RelayCommand BrowseReceiveDirCommand { get; }
+
+    /// <summary>接收助手：是否监听中。</summary>
+    public bool IsReceiving => _receive.IsListening;
+    public string ReceiveToggleText => _receive.IsListening ? "停止监听" : "开始监听";
+    public string ReceiveSaveDir
+    {
+        get => _config.ReceiveDirectory;
+        set
+        {
+            if (_config.ReceiveDirectory == value) return;
+            _config.ReceiveDirectory = value;
+            _config.Save();
+            OnPropertyChanged();
+        }
+    }
+    public bool ReceiveAsk
+    {
+        get => _config.ReceiveAsk;
+        set
+        {
+            if (_config.ReceiveAsk == value) return;
+            _config.ReceiveAsk = value;
+            _config.Save();
+            OnPropertyChanged();
+        }
+    }
+    private string _receiveCurrentFile = "";
+    public string ReceiveCurrentFile { get => _receiveCurrentFile; set => SetProperty(ref _receiveCurrentFile, value); }
+    private double _receiveProgress;
+    public double ReceiveProgress { get => _receiveProgress; set => SetProperty(ref _receiveProgress, value); }
+    private string _receiveProgressText = "";
+    public string ReceiveProgressText { get => _receiveProgressText; set => SetProperty(ref _receiveProgressText, value); }
+    public ObservableCollection<string> ReceiveCompleted { get; } = new();
 
     public OppViewModel()
     {
@@ -154,6 +226,25 @@ public class OppViewModel : ViewModelBase
         _config = AppConfig.Load();
         _discovery = new OppDiscoveryService(_events);
         _push = new OppPushService(_events, _storage, _config, _discovery);
+        _assistantPush = new AssistantPushService(_events, _storage, _config, _discovery);
+        _receive = new ReceiveService(_storage, _events)
+        {
+            AskHandler = AskReceiveAsync
+        };
+        _receive.ProgressChanged += (name, sent, total) => _dispatcher.Invoke(() =>
+        {
+            ReceiveCurrentFile = name;
+            ReceiveProgress = total > 0 ? sent * 100.0 / total : 0;
+            ReceiveProgressText = $"{sent:N0} / {total:N0} 字节";
+        });
+        _receive.Completed += name => _dispatcher.Invoke(() =>
+        {
+            ReceiveCompleted.Add($"{DateTime.Now:HH:mm:ss} {name}");
+            ReceiveProgress = 0;
+            ReceiveProgressText = "";
+            _ = LoadRecordsAsync();
+        });
+        _receive.Logged += (level, msg) => _events.Publish(new LogEvent(level, msg));
 
         ScanCommand = new RelayCommand(() => SafeAsync(ScanAsync));
         PairCommand = new RelayCommand(() => SafeAsync(PairAsync), () => SelectedDevice != null);
@@ -168,10 +259,23 @@ public class OppViewModel : ViewModelBase
         ExportCsvCommand = new RelayCommand(() => ExportRecords("CSV 文件|*.csv", "csv", ExportService.ExportCsv));
         ExportJsonCommand = new RelayCommand(() => ExportRecords("JSON 文件|*.json", "json", ExportService.ExportJson));
         ClearRecordsCommand = new RelayCommand(ClearRecords);
+        PauseJobCommand = new RelayCommand(job => _queue.Pause((OppSendJob)job!));
+        ContinueJobCommand = new RelayCommand(job =>
+        {
+            var target = (OppSendJob)job!;
+            _queue.Continue(target);
+            var device = _queueDevice ?? SelectedDevice;
+            if (device != null && target.Status == OppJobStatus.Pending)
+                StartQueueIfNeeded(device);
+        });
+        RemoveJobCommand = new RelayCommand(job => _queue.Remove((OppSendJob)job!));
+        ToggleReceiveCommand = new RelayCommand(() => SafeAsync(ToggleReceiveAsync));
+        BrowseReceiveDirCommand = new RelayCommand(BrowseReceiveDir);
 
         _events.Subscribe<LogEvent>(OnLog);
         _events.Subscribe<TransferProgressEvent>(OnProgress);
         _ = LoadRecordsAsync();
+        _ = LoadFavoriteDevicesAsync();
     }
 
     // ------------------------------------------------------------------ 设备
@@ -188,20 +292,31 @@ public class OppViewModel : ViewModelBase
             _dispatcher.Invoke(() =>
             {
                 Devices.Clear();
-                foreach (var d in devices.OrderByDescending(x => x.IsPaired))
+                _assistantCache.Clear();
+                var items = devices.Select(d =>
                 {
                     var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, d.Addr));
-                    Devices.Add(new OppDeviceItem
+                    return new OppDeviceItem
                     {
                         Name = d.Name,
                         Addr = d.Addr,
+                        DeviceId = d.Id,
                         IsPaired = d.IsPaired,
                         Favorite = info?.Favorite ?? false,
                         Alias = info?.Alias ?? "",
                         LastConnected = info?.LastConnected ?? ""
-                    });
-                }
+                    };
+                })
+                .OrderByDescending(x => x.Favorite)
+                .ThenByDescending(x => x.IsPaired)
+                .ThenByDescending(x => x.LastConnected)
+                .ToList();
+                foreach (var item in items) Devices.Add(item);
+                foreach (var item in Devices)
+                    _ = ProbeAssistantAsync(item);
             });
+            await MergeAssistantDevicesAsync(saved);
+            await LoadFavoriteDevicesAsync();
             StatusText = Devices.Count > 0
                 ? $"发现 {Devices.Count} 个 OPP 设备"
                 : "未发现 OPP 设备（确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对）";
@@ -254,9 +369,68 @@ public class OppViewModel : ViewModelBase
         var device = SelectedDevice;
         if (device == null) return;
         var next = !device.Favorite;
-        await Task.Run(() => _storage.SetDeviceFavorite(device.Addr, next));
+        if (next)
+        {
+            // 收藏：插入或更新记录（对从未发送过的设备也能持久化）
+            await Task.Run(() => _storage.UpsertDevice(new DeviceInfo
+            {
+                Addr = device.Addr,
+                Name = device.Name,
+                Alias = device.Alias,
+                Favorite = true,
+                LastSeen = DateTime.Now.ToString("o")
+            }));
+        }
+        else
+        {
+            await Task.Run(() => _storage.SetDeviceFavorite(device.Addr, false));
+        }
         device.Favorite = next;
+        ResortDevices();
         StatusText = next ? $"已收藏：{device.DisplayName}" : $"已取消收藏：{device.DisplayName}";
+    }
+
+    /// <summary>收藏置顶 → 已配对 → 最近连接 的展示排序。</summary>
+    private void ResortDevices()
+    {
+        var sorted = Devices
+            .OrderByDescending(d => d.Favorite)
+            .ThenByDescending(d => d.IsPaired)
+            .ThenByDescending(d => d.LastConnected)
+            .ToList();
+        for (var i = 0; i < sorted.Count; i++)
+            Devices.Move(Devices.IndexOf(sorted[i]), i);
+    }
+
+    // ------------------------------------------------------------------ 接收助手
+
+    private async Task ToggleReceiveAsync()
+    {
+        if (_receive.IsListening)
+        {
+            await _receive.StopAsync();
+        }
+        else
+        {
+            await _receive.StartAsync(ReceiveSaveDir, ReceiveAsk);
+        }
+        OnPropertyChanged(nameof(IsReceiving));
+        OnPropertyChanged(nameof(ReceiveToggleText));
+    }
+
+    private void BrowseReceiveDir()
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "选择接收保存目录" };
+        if (dialog.ShowDialog() == true)
+            ReceiveSaveDir = dialog.FolderName;
+    }
+
+    private async Task<bool> AskReceiveAsync(AsstHello hello)
+    {
+        var result = await _dispatcher.InvokeAsync(() =>
+            MessageBox.Show($"接收文件 {hello.FileName}（{hello.FileSize:N0} 字节）？",
+                "蓝牙传输", MessageBoxButton.YesNo, MessageBoxImage.Question));
+        return result == MessageBoxResult.Yes;
     }
 
     // ------------------------------------------------------------------ 发送
@@ -264,28 +438,186 @@ public class OppViewModel : ViewModelBase
     private void EnqueueAndStart(IEnumerable<OppSendJob> jobs)
     {
         _queue.Enqueue(jobs);
+        // 队列运行中追加的新任务：按最近一次解析的通道立即标注，避免等待期显示 OPP
+        if (_queueUseAssistant is { } ua)
+        {
+            foreach (var j in jobs)
+                j.Channel = ua ? "assistant" : "opp";
+        }
         _speedTracker.Reset();
         ProgressText = "";
         TransferProgress = 0;
-        if (_queue.IsRunning) return;
         var device = SelectedDevice;
         if (device == null) return;
-        _ = Task.Run(() => _queue.StartAsync(device.Addr, async (job, ct) =>
+        _queueDevice = device;
+        StartQueueIfNeeded(device);
+    }
+
+    private void StartQueueIfNeeded(OppDeviceItem device)
+    {
+        if (_queue.IsRunning) return;
+        // 每次队列运行只解析一次通道（确定性），避免逐任务探测/缓存竞态导致同一批文件走不同通道
+        _ = Task.Run(async () =>
         {
-            try
-            {
-                return job.Kind switch
+            var useAssistant = await ResolveAssistantOnceAsync(device);
+            _queueUseAssistant = useAssistant;
+            foreach (var job in _queue.Jobs.Where(j => j.Status == OppJobStatus.Pending).ToList())
+                job.Channel = useAssistant ? "assistant" : "opp";
+            await _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, useAssistant, ct));
+        });
+    }
+
+    private async Task<bool> ProcessJobAsync(OppSendJob job, OppDeviceItem device, bool useAssistant, CancellationToken ct)
+    {
+        try
+        {
+            job.Channel = useAssistant ? "assistant" : "opp";
+            return useAssistant
+                ? job.Kind switch
+                {
+                    "folder" => await _assistantPush.SendFolderAsync(device.Addr, job.SourcePath, ct),
+                    "text" => await _assistantPush.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
+                    _ => await _assistantPush.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
+                }
+                : job.Kind switch
                 {
                     "folder" => await _push.SendFolderAsync(device.Addr, job.SourcePath, ct),
                     "text" => await _push.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
                     _ => await _push.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
                 };
-            }
-            finally
+        }
+        finally
+        {
+            _ = LoadRecordsAsync();
+        }
+    }
+
+    /// <summary>
+    /// 合并"已配对且运行接收助手"的设备：接收端只跑 btrecv（不广播 OPP）时也能在列表中出现。
+    /// </summary>
+    private async Task MergeAssistantDevicesAsync(List<DeviceInfo> saved)
+    {
+        List<AssistantDetector.AssistantDeviceInfo> assistantDevices;
+        try
+        {
+            assistantDevices = await Task.Run(() => AssistantDetector.FindAssistantDevicesAsync());
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"枚举助手设备失败：{ex.Message}"));
+            return;
+        }
+
+        _dispatcher.Invoke(() =>
+        {
+            foreach (var ad in assistantDevices)
             {
-                _ = LoadRecordsAsync();
+                var existing = Devices.FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, ad.Addr));
+                if (existing != null)
+                {
+                    existing.IsAssistant = true;
+                }
+                else
+                {
+                    var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, ad.Addr));
+                    Devices.Add(new OppDeviceItem
+                    {
+                        Name = ad.Name,
+                        Addr = ad.Addr,
+                        DeviceId = ad.DeviceId,
+                        IsPaired = true,
+                        IsAssistant = true,
+                        Favorite = info?.Favorite ?? false,
+                        Alias = info?.Alias ?? "",
+                        LastConnected = info?.LastConnected ?? ""
+                    });
+                }
+                lock (_assistantCache)
+                    _assistantCache[ad.Addr] = true;
             }
-        }));
+            ResortDevices();
+        });
+    }
+
+    /// <summary>
+    /// 收藏夹：把本地保存的收藏设备合并进列表，无需每次扫描即可选中发送。
+    /// 地址经已配对列表解析 DeviceId（用于助手探测），未配对时发送会给出明确错误。
+    /// </summary>
+    private async Task LoadFavoriteDevicesAsync()
+    {
+        try
+        {
+            var favorites = await Task.Run(() => _storage.GetDevices().Where(d => d.Favorite).ToList());
+            var items = new List<OppDeviceItem>();
+            foreach (var f in favorites)
+            {
+                var paired = await AssistantDetector.FindPairedDeviceAsync(f.Addr);
+                items.Add(new OppDeviceItem
+                {
+                    Name = f.Name,
+                    Addr = f.Addr,
+                    DeviceId = paired?.DeviceId ?? "",
+                    IsPaired = paired != null,
+                    Favorite = true,
+                    Alias = f.Alias ?? "",
+                    LastConnected = f.LastConnected ?? ""
+                });
+            }
+            _dispatcher.Invoke(() =>
+            {
+                foreach (var item in items)
+                {
+                    if (Devices.Any(d => OppDiscoveryService.AddrEquals(d.Addr, item.Addr))) continue;
+                    Devices.Add(item);
+                    _ = ProbeAssistantAsync(item);
+                }
+                ResortDevices();
+            });
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"加载收藏设备失败：{ex.Message}"));
+        }
+    }
+
+    private async Task<bool> ResolveAssistantOnceAsync(OppDeviceItem device)
+    {
+        switch (_config.TransferMode)
+        {
+            case "assistant":
+                return true;
+            case "opp":
+                return false;
+            default:
+                lock (_assistantCache)
+                {
+                    if (_assistantCache.TryGetValue(device.Addr, out var cached))
+                        return cached;
+                }
+                var has = string.IsNullOrEmpty(device.DeviceId)
+                    ? false
+                    : await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(device.DeviceId));
+                lock (_assistantCache)
+                {
+                    // 先写者胜：避免扫描异步探测用过期 false 覆盖已确认的 true
+                    if (!_assistantCache.ContainsKey(device.Addr))
+                        _assistantCache[device.Addr] = has;
+                }
+                return has;
+        }
+    }
+
+    private async Task ProbeAssistantAsync(OppDeviceItem item)
+    {
+        try
+        {
+            var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId));
+            _dispatcher.Invoke(() => item.IsAssistant = has);
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"探测助手失败：{item.DisplayName}（{ex.Message}）"));
+        }
     }
 
     private async Task SendTextAsync()
@@ -508,7 +840,7 @@ public class OppViewModel : ViewModelBase
                 _lastError = e.Message;
             var line = $"[{DateTime.Now:HH:mm:ss}] [{e.Level}] {e.Message}";
             LogLines.Add(line);
-            if (LogLines.Count > 500) LogLines.RemoveAt(0);
+            if (LogLines.Count > 2000) LogLines.RemoveAt(0);
         });
     }
 

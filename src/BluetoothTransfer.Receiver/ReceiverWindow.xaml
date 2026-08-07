@@ -1,0 +1,33 @@
+<Window x:Class="BluetoothTransfer.Receiver.ReceiverWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="蓝牙接收助手" Height="440" Width="560"
+        WindowStartupLocation="CenterScreen" Loaded="OnLoaded">
+    <StackPanel Margin="14">
+        <TextBlock x:Name="StatusText" FontSize="14" FontWeight="SemiBold" Text="正在启动…"/>
+        <TextBlock x:Name="SaveDirText" FontSize="11" Foreground="Gray" Margin="0,4,0,0"/>
+
+        <GroupBox Header="当前传输" Margin="0,12,0,0">
+            <StackPanel>
+                <TextBlock x:Name="CurrentName" Text="（无）"/>
+                <ProgressBar x:Name="Progress" Height="12" Margin="0,6,0,0" Minimum="0" Maximum="100"/>
+                <TextBlock x:Name="ProgressText" FontSize="11" Foreground="Gray" Margin="0,4,0,0"/>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Header="本会话完成" Margin="0,12,0,0">
+            <ListBox x:Name="CompletedList" Height="90"/>
+        </GroupBox>
+
+        <GroupBox Header="设置" Margin="0,12,0,0">
+            <StackPanel>
+                <TextBlock Text="保存目录（修改后需重启接收助手生效）" FontSize="11" Foreground="Gray"/>
+                <DockPanel Margin="0,4,0,0">
+                    <Button x:Name="BrowseButton" DockPanel.Dock="Right" Content="浏览…" Padding="10,3" Click="OnBrowse"/>
+                    <TextBox x:Name="SaveDirBox"/>
+                </DockPanel>
+                <CheckBox x:Name="AskCheck" Content="每次接收前询问" Margin="0,8,0,0" Checked="OnAskChanged" Unchecked="OnAskChanged"/>
+            </StackPanel>
+        </GroupBox>
+    </StackPanel>
+</Window>

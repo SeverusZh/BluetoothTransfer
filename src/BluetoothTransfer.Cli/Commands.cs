@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
+using BluetoothTransfer.Core.Discovery;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
 
@@ -13,7 +15,7 @@ public static class Commands
     private static void Error(string message) => Console.Error.WriteLine($"[ERROR] {message}");
 
     private static CliSession NewSession(Args a, bool quiet = false, bool jsonEvents = false)
-        => new(a.Option("db")) { Quiet = quiet, JsonEvents = jsonEvents };
+        => new(a.Option("db")) { Quiet = quiet && !a.Has("verbose"), JsonEvents = jsonEvents, Verbose = a.Has("verbose") };
 
     private static int ParseInt(string? text, int fallback)
         => int.TryParse(text, out var value) ? value : fallback;
@@ -67,7 +69,7 @@ public static class Commands
         var path = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(path))
         {
-            Error("用法：btcli opp-send-file <设备地址> <文件> [--zip] [--db 路径]");
+            Error("用法：btcli opp-send-file <设备地址> <文件> [--zip] [--mode auto|assistant|opp] [--verbose] [--db 路径]");
             return 2;
         }
         if (!File.Exists(path))
@@ -76,8 +78,14 @@ public static class Commands
             return 2;
         }
         using var session = NewSession(a, quiet: true);
-        var ok = await session.OppPush.SendFileAsync(addr, path, zip: a.Has("zip"));
-        Info(ok ? $"文件已通过 OPP 推送：{Path.GetFileName(path)}" : $"OPP 推送失败：{Path.GetFileName(path)}");
+        var mode = (a.Option("mode") ?? "opp").ToLowerInvariant();
+        var ok = mode switch
+        {
+            "assistant" => await session.AssistantPush.SendFileAsync(addr, path, zip: a.Has("zip")),
+            "auto" => await session.AssistantPush.SendFileAsync(addr, path, zip: a.Has("zip")),
+            _ => await session.OppPush.SendFileAsync(addr, path, zip: a.Has("zip"))
+        };
+        Info(ok ? $"文件已推送（{(mode == "opp" ? "OPP" : "助手")}）：{Path.GetFileName(path)}" : $"推送失败：{Path.GetFileName(path)}");
         return ok ? 0 : 1;
     }
 
@@ -87,14 +95,20 @@ public static class Commands
         var text = a.RemainingFrom(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(text))
         {
-            Error("用法：btcli opp-send-text <设备地址> <文本> [--name 文件名] [--db 路径]");
+            Error("用法：btcli opp-send-text <设备地址> <文本> [--name 文件名] [--mode auto|assistant|opp] [--verbose] [--db 路径]");
             return 2;
         }
         using var session = NewSession(a, quiet: true);
-        var ok = await session.OppPush.SendTextAsync(addr, text, a.Option("name"));
+        var mode = (a.Option("mode") ?? "opp").ToLowerInvariant();
+        var ok = mode switch
+        {
+            "assistant" => await session.AssistantPush.SendTextAsync(addr, text, a.Option("name")),
+            "auto" => await session.AssistantPush.SendTextAsync(addr, text, a.Option("name")),
+            _ => await session.OppPush.SendTextAsync(addr, text, a.Option("name"))
+        };
         Info(ok
-            ? $"文本已通过 OPP 推送（{Encoding.UTF8.GetByteCount(text)} 字节）"
-            : "OPP 文本推送失败");
+            ? $"文本已推送（{(mode == "opp" ? "OPP" : "助手")}，{Encoding.UTF8.GetByteCount(text)} 字节）"
+            : "文本推送失败");
         return ok ? 0 : 1;
     }
 
@@ -104,7 +118,7 @@ public static class Commands
         var folder = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(folder))
         {
-            Error("用法：btcli opp-send-folder <设备地址> <文件夹> [--db 路径]");
+            Error("用法：btcli opp-send-folder <设备地址> <文件夹> [--mode auto|assistant|opp] [--verbose] [--db 路径]");
             return 2;
         }
         if (!Directory.Exists(folder))
@@ -113,8 +127,14 @@ public static class Commands
             return 2;
         }
         using var session = NewSession(a, quiet: true);
-        var ok = await session.OppPush.SendFolderAsync(addr, folder);
-        Info(ok ? $"文件夹已压缩并通过 OPP 推送：{folder}" : "OPP 文件夹推送失败");
+        var mode = (a.Option("mode") ?? "opp").ToLowerInvariant();
+        var ok = mode switch
+        {
+            "assistant" => await session.AssistantPush.SendFolderAsync(addr, folder),
+            "auto" => await session.AssistantPush.SendFolderAsync(addr, folder),
+            _ => await session.OppPush.SendFolderAsync(addr, folder)
+        };
+        Info(ok ? $"文件夹已压缩并推送（{(mode == "opp" ? "OPP" : "助手")}）：{folder}" : "文件夹推送失败");
         return ok ? 0 : 1;
     }
 
@@ -130,7 +150,7 @@ public static class Commands
         }
         if (string.IsNullOrWhiteSpace(addr) || paths.Count == 0)
         {
-            Error("用法：btcli opp-send-files <设备地址> <文件1> [文件2 ...] [--zip] [--db 路径]");
+            Error("用法：btcli opp-send-files <设备地址> <文件1> [文件2 ...] [--zip] [--verbose] [--db 路径]");
             return 2;
         }
         var existing = paths.Where(File.Exists).ToList();
@@ -140,11 +160,17 @@ public static class Commands
             return 2;
         }
         using var session = NewSession(a, quiet: true);
+        var mode = (a.Option("mode") ?? "opp").ToLowerInvariant();
         var okCount = 0;
         var failed = new List<string>();
         foreach (var path in existing)
         {
-            var ok = await session.OppPush.SendFileAsync(addr, path, zip: a.Has("zip"));
+            var ok = mode switch
+            {
+                "assistant" => await session.AssistantPush.SendFileAsync(addr, path, zip: a.Has("zip")),
+                "auto" => await session.AssistantPush.SendFileAsync(addr, path, zip: a.Has("zip")),
+                _ => await session.OppPush.SendFileAsync(addr, path, zip: a.Has("zip"))
+            };
             if (ok) okCount++;
             else failed.Add(Path.GetFileName(path));
         }
@@ -152,6 +178,52 @@ public static class Commands
             ? $"已推送 {okCount} 个文件"
             : $"推送完成：成功 {okCount}/{existing.Count}；失败：{string.Join("、", failed)}");
         return okCount == existing.Count ? 0 : 1;
+    }
+
+    public static async Task<int> DetectAsync(Args a)
+    {
+        var addr = a.Get(1);
+        if (string.IsNullOrWhiteSpace(addr))
+        {
+            Error("用法：btcli detect <设备地址> [--db 路径]");
+            return 2;
+        }
+        using var session = NewSession(a, quiet: true);
+        var device = await session.OppDiscovery.FindByAddressAsync(addr);
+        if (device == null)
+        {
+            Error($"未找到设备：{addr}（请先扫描）");
+            return 1;
+        }
+        var has = await AssistantDetector.DeviceHasAssistantAsync(device.Id);
+        Info(has ? $"设备 {device.Name}（{device.AddrDisplay}）运行中：接收助手在线" : $"设备 {device.Name}（{device.AddrDisplay}）：未发现接收助手");
+        return 0;
+    }
+
+    public static int PackageReceiver(Args a)
+    {
+        var root = a.Option("root");
+        if (string.IsNullOrEmpty(root))
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null && !File.Exists(Path.Combine(dir.FullName, "BluetoothTransfer.sln")))
+                dir = dir.Parent;
+            root = dir?.FullName ?? "";
+        }
+        var script = Path.Combine(root, "tools", "publish-receiver.ps1");
+        if (!File.Exists(script))
+        {
+            Error($"找不到发布脚本：{script}（可用 --root 指定仓库根目录）");
+            return 2;
+        }
+        var psi = new ProcessStartInfo("powershell",
+            $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"")
+        {
+            UseShellExecute = false
+        };
+        using var proc = Process.Start(psi);
+        proc?.WaitForExit();
+        return proc?.ExitCode == 0 ? 0 : 1;
     }
 
     // ------------------------------------------------------------------ 记录 / 配置
@@ -278,9 +350,26 @@ public static class Commands
                 Error("用法：btcli devices favorite <设备地址> [--unset]");
                 return 2;
             }
-            var ok = session.Storage.SetDeviceFavorite(addr, !a.Has("unset"));
-            Info(ok ? $"已更新收藏状态：{addr}" : $"设备不存在：{addr}");
-            return ok ? 0 : 1;
+            if (a.Has("unset"))
+            {
+                var ok = session.Storage.SetDeviceFavorite(addr, false);
+                Info(ok ? $"已取消收藏：{addr}" : $"设备不存在：{addr}");
+                return ok ? 0 : 1;
+            }
+            // 收藏：插入或更新记录（设备未在库中也能持久化）
+            var existing = session.Storage.GetDevices()
+                .FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, addr));
+            session.Storage.UpsertDevice(new DeviceInfo
+            {
+                Addr = addr,
+                Name = existing?.Name ?? addr,
+                Alias = existing?.Alias ?? "",
+                Favorite = true,
+                LastSeen = existing?.LastSeen ?? DateTime.Now.ToString("o"),
+                LastConnected = existing?.LastConnected ?? ""
+            });
+            Info($"已收藏：{addr}");
+            return 0;
         }
         if (sub == "alias")
         {
@@ -353,7 +442,7 @@ public static class Commands
             }
             if (!SetConfigValue(session.Config, key, value))
             {
-                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel）");
+                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel/TransferMode）");
                 return 2;
             }
             session.Config.Save();
@@ -368,6 +457,7 @@ public static class Commands
         Info($"OPP 认证密码    OppAuthPassword       = {(string.IsNullOrEmpty(session.Config.OppAuthPassword) ? "（未设置）" : "***")}");
         Info($"OPP Name BOM    OppNameUseBom         = {session.Config.OppNameUseBom}");
         Info($"OPP 保护级别    OppProtectionLevel    = {session.Config.OppProtectionLevel}（auto/plain/encrypt）");
+        Info($"发送通道        TransferMode          = {session.Config.TransferMode}（auto/assistant/opp）");
         return 0;
     }
 
@@ -401,6 +491,10 @@ public static class Commands
             case "oppprotectionlevel" or "oppprotection":
                 if (value is not ("auto" or "plain" or "encrypt")) return false;
                 config.OppProtectionLevel = value;
+                return true;
+            case "transfermode":
+                if (value is not ("auto" or "assistant" or "opp")) return false;
+                config.TransferMode = value;
                 return true;
             default:
                 return false;

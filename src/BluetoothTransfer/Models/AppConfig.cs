@@ -30,6 +30,19 @@ public class AppConfig
     /// <summary>OPP 重试基础间隔（秒），按 1x/2x/3x 指数退避。</summary>
     public int OppRetryDelaySeconds { get; set; } = 3;
 
+    /// <summary>内置接收助手的保存目录。</summary>
+    public string ReceiveDirectory { get; set; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Downloads", "BluetoothReceive");
+
+    /// <summary>内置接收助手是否每次接收前询问。</summary>
+    public bool ReceiveAsk { get; set; }
+    /// <summary>
+    /// 发送通道模式：auto（SDP 探测，助手可用走私有协议，否则回退 OPP）/
+    /// assistant（强制助手）/ opp（强制 OPP）。
+    /// </summary>
+    public string TransferMode { get; set; } = "auto";
+
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BluetoothTransfer");

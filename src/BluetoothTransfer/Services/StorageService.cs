@@ -195,7 +195,7 @@ public class StorageService
             ON CONFLICT(addr) DO UPDATE SET
                 name = @name,
                 alias = CASE WHEN @alias != '' THEN @alias ELSE alias END,
-                favorite = @favorite,
+                favorite = CASE WHEN @favorite != 0 THEN @favorite ELSE favorite END,
                 last_seen = @last_seen,
                 last_connected = CASE WHEN @last_connected != '' THEN @last_connected ELSE last_connected END
             """;

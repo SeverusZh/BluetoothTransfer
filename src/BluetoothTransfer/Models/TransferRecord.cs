@@ -13,6 +13,7 @@ public static class TransferConst
     public const string ChannelBle = "ble";
     public const string ChannelRfcomm = "rfcomm";
     public const string ChannelOpp = "opp";
+    public const string ChannelAssistant = "assistant";
 }
 
 public class TransferRecord
@@ -54,5 +55,6 @@ public class TransferRecord
         : Status == TransferConst.StatusFailed ? "失败" : Status;
     public string ChannelDisplay => Channel == TransferConst.ChannelBle ? "BLE"
         : Channel == TransferConst.ChannelRfcomm ? "RFCOMM"
-        : Channel == TransferConst.ChannelOpp ? "OPP" : Channel;
+        : Channel == TransferConst.ChannelOpp ? "OPP"
+        : Channel == TransferConst.ChannelAssistant ? "助手" : Channel;
 }

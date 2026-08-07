@@ -104,4 +104,57 @@ public class OppSendQueueTests
         await queue.StartAsync("00:11", (_, _) => Task.FromResult(true));
         Assert.Equal(OppJobStatus.Ok, job.Status);
     }
+
+    [Fact]
+    public async Task Pause_Continue_ResumesJobInQueue()
+    {
+        var queue = new OppSendQueue();
+        var job = new OppSendJob { Kind = "file", SourcePath = "a", DisplayName = "a", Size = 1 };
+        queue.Enqueue(new[] { job });
+        var started = new TaskCompletionSource();
+        var processStarted = new TaskCompletionSource();
+        var runTask = queue.StartAsync("AA:BB:CC:DD:EE:FF", async (j, ct) =>
+        {
+            processStarted.TrySetResult();
+            await started.Task;
+            await Task.Delay(Timeout.Infinite, ct);
+            return true;
+        });
+
+        await processStarted.Task;
+        queue.Pause(job);
+        await Task.Delay(100);
+        Assert.Equal(OppJobStatus.Paused, job.Status);
+
+        queue.Continue(job);
+        started.TrySetResult();
+        queue.CancelAll();
+        await runTask;
+    }
+
+    [Fact]
+    public void Remove_RemovesPendingJob()
+    {
+        var queue = new OppSendQueue();
+        var job = new OppSendJob { Kind = "file", SourcePath = "a", DisplayName = "a", Size = 1 };
+        queue.Enqueue(new[] { job });
+
+        queue.Remove(job);
+
+        Assert.DoesNotContain(job, queue.Jobs);
+    }
+
+    [Fact]
+    public void PausePendingJob_MarksPaused_AndContinueMarksPending()
+    {
+        var queue = new OppSendQueue();
+        var job = new OppSendJob { Kind = "file", SourcePath = "a", DisplayName = "a", Size = 1 };
+        queue.Enqueue(new[] { job });
+
+        queue.Pause(job);
+        Assert.Equal(OppJobStatus.Paused, job.Status);
+
+        queue.Continue(job);
+        Assert.Equal(OppJobStatus.Pending, job.Status);
+    }
 }

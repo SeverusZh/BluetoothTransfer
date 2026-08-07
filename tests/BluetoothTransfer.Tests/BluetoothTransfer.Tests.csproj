@@ -18,6 +18,11 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj" />
+    <ProjectReference Include="..\..\src\BluetoothTransfer.Receiver\BluetoothTransfer.Receiver.csproj" />
+  </ItemGroup>
+
   <!--
     与 CLI 相同的做法：直接链接主工程的模型与服务源码，保证被测代码与产品一致，
     同时把 OBEX 相关实现（不依赖 WPF）纳入离线单测。
@@ -39,6 +44,8 @@
     <Compile Include="..\..\src\BluetoothTransfer\Services\SocketObexTransport.cs" Link="Services\SocketObexTransport.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\TransferSpeedTracker.cs" Link="Services\TransferSpeedTracker.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\AssistantPushService.cs" Link="Services\AssistantPushService.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\ReceiveService.cs" Link="Services\ReceiveService.cs" />
   </ItemGroup>
 
 </Project>

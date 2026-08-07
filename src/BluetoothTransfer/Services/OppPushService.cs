@@ -180,9 +180,15 @@ public class OppPushService
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("WARN", $"OPP SDP 预检未完成（继续尝试连接）：{ex.Message}"));
+            _events.Publish(new LogEvent("WARN", $"OPP SDP 预检未完成（继续尝试连接）：{FormatError(ex)}"));
         }
     }
+
+    /// <summary>异常消息为空时回退到类型名 + HRESULT，便于定位 WinRT 错误。</summary>
+    internal static string FormatError(Exception ex)
+        => string.IsNullOrWhiteSpace(ex.Message)
+            ? $"{ex.GetType().Name} (0x{ex.HResult:X8})"
+            : ex.Message;
 
     private static byte[] ReadAllBytes(IBuffer buffer)
     {
@@ -292,7 +298,7 @@ public class OppPushService
             }
             catch (Exception ex)
             {
-                lastError = ex.Message;
+                lastError = FormatError(ex);
             }
 
             if (retryPolicy.ShouldRetry(attempt, lastError))

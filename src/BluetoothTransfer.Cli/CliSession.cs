@@ -15,6 +15,7 @@ public sealed class CliSession : IDisposable
     public AppConfig Config { get; }
     public OppDiscoveryService OppDiscovery { get; }
     public OppPushService OppPush { get; }
+    public AssistantPushService AssistantPush { get; }
 
     /// <summary>只输出关键结果，不打印 INFO/DEBUG 日志与进度条。</summary>
     public bool Quiet { get; init; }
@@ -31,6 +32,7 @@ public sealed class CliSession : IDisposable
         Config = AppConfig.Load();
         OppDiscovery = new OppDiscoveryService(Events);
         OppPush = new OppPushService(Events, Storage, Config, OppDiscovery);
+        AssistantPush = new AssistantPushService(Events, Storage, Config, OppDiscovery);
         SubscribeEvents();
     }
 
