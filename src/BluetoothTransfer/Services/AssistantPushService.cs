@@ -228,9 +228,10 @@ public sealed class AssistantPushService
                     LastSeen = DateTime.Now.ToString("o"),
                     LastConnected = DateTime.Now.ToString("o")
                 });
+                var resumeNote = result.ResumeOffset > 0 ? $"（从偏移 {result.ResumeOffset} 续传）" : "";
                 _events.Publish(new LogEvent("INFO",
-                    $"助手推送成功：{displayName} -> {device.Name}（{device.AddrDisplay}，{result.BytesSent} 字节）"));
-                WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, result.BytesSent);
+                    $"助手推送成功：{displayName} -> {device.Name}（{device.AddrDisplay}，{result.BytesSent} 字节{resumeNote}）"));
+                WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, result.BytesSent, resumeNote);
                 return true;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -276,7 +277,7 @@ public sealed class AssistantPushService
         }
     }
 
-    private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent)
+    private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent, string resumeNote = "")
     {
         _storage.AddRecord(new TransferRecord
         {
@@ -290,7 +291,7 @@ public sealed class AssistantPushService
             Checksum = checksum,
             Channel = TransferConst.ChannelAssistant,
             LocalPath = localPath,
-            Note = $"已发送 {bytesSent} 字节"
+            Note = $"已发送 {bytesSent} 字节{resumeNote}"
         });
     }
 
