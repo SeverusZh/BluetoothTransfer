@@ -23,7 +23,18 @@ public sealed class OppSendJob : INotifyPropertyChanged
     public string DisplayName { get; init; } = "";
     public long Size { get; init; }
     /// <summary>通道：opp（OPP 通用推送）或 assistant（接收助手私有协议）。</summary>
-    public string Channel { get; set; } = "opp";
+    private string _channel = "opp";
+    public string Channel
+    {
+        get => _channel;
+        set
+        {
+            if (_channel == value) return;
+            _channel = value;
+            OnPropertyChanged(nameof(Channel));
+            OnPropertyChanged(nameof(ChannelDisplay));
+        }
+    }
     public string ChannelDisplay => Channel == "assistant" ? "助手" : "OPP";
 
     private OppJobStatus _status = OppJobStatus.Pending;

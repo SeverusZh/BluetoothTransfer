@@ -217,6 +217,7 @@ public class OppViewModel : ViewModelBase
         _events.Subscribe<LogEvent>(OnLog);
         _events.Subscribe<TransferProgressEvent>(OnProgress);
         _ = LoadRecordsAsync();
+        _ = LoadFavoriteDevicesAsync();
     }
 
     // ------------------------------------------------------------------ 设备
@@ -257,6 +258,7 @@ public class OppViewModel : ViewModelBase
                     _ = ProbeAssistantAsync(item);
             });
             await MergeAssistantDevicesAsync(saved);
+            await LoadFavoriteDevicesAsync();
             StatusText = Devices.Count > 0
                 ? $"发现 {Devices.Count} 个 OPP 设备"
                 : "未发现 OPP 设备（确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对）";
@@ -344,14 +346,18 @@ public class OppViewModel : ViewModelBase
     private void StartQueueIfNeeded(OppDeviceItem device)
     {
         if (_queue.IsRunning) return;
-        _ = Task.Run(() => _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, ct)));
+        // 每次队列运行只解析一次通道（确定性），避免逐任务探测/缓存竞态导致同一批文件走不同通道
+        _ = Task.Run(async () =>
+        {
+            var useAssistant = await ResolveAssistantOnceAsync(device);
+            await _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, useAssistant, ct));
+        });
     }
 
-    private async Task<bool> ProcessJobAsync(OppSendJob job, OppDeviceItem device, CancellationToken ct)
+    private async Task<bool> ProcessJobAsync(OppSendJob job, OppDeviceItem device, bool useAssistant, CancellationToken ct)
     {
         try
         {
-            var useAssistant = await ResolveAssistantAsync(device.Addr, job, ct);
             job.Channel = useAssistant ? "assistant" : "opp";
             return useAssistant
                 ? job.Kind switch
@@ -420,7 +426,48 @@ public class OppViewModel : ViewModelBase
         });
     }
 
-    private async Task<bool> ResolveAssistantAsync(string addr, OppSendJob job, CancellationToken ct)
+    /// <summary>
+    /// 收藏夹：把本地保存的收藏设备合并进列表，无需每次扫描即可选中发送。
+    /// 地址经已配对列表解析 DeviceId（用于助手探测），未配对时发送会给出明确错误。
+    /// </summary>
+    private async Task LoadFavoriteDevicesAsync()
+    {
+        try
+        {
+            var favorites = await Task.Run(() => _storage.GetDevices().Where(d => d.Favorite).ToList());
+            var items = new List<OppDeviceItem>();
+            foreach (var f in favorites)
+            {
+                var paired = await AssistantDetector.FindPairedDeviceAsync(f.Addr);
+                items.Add(new OppDeviceItem
+                {
+                    Name = f.Name,
+                    Addr = f.Addr,
+                    DeviceId = paired?.DeviceId ?? "",
+                    IsPaired = paired != null,
+                    Favorite = true,
+                    Alias = f.Alias ?? "",
+                    LastConnected = f.LastConnected ?? ""
+                });
+            }
+            _dispatcher.Invoke(() =>
+            {
+                foreach (var item in items)
+                {
+                    if (Devices.Any(d => OppDiscoveryService.AddrEquals(d.Addr, item.Addr))) continue;
+                    Devices.Add(item);
+                    _ = ProbeAssistantAsync(item);
+                }
+                ResortDevices();
+            });
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent("WARN", $"加载收藏设备失败：{ex.Message}"));
+        }
+    }
+
+    private async Task<bool> ResolveAssistantOnceAsync(OppDeviceItem device)
     {
         switch (_config.TransferMode)
         {
@@ -431,17 +478,17 @@ public class OppViewModel : ViewModelBase
             default:
                 lock (_assistantCache)
                 {
-                    if (_assistantCache.TryGetValue(addr, out var cached))
+                    if (_assistantCache.TryGetValue(device.Addr, out var cached))
                         return cached;
                 }
-                var item = Devices.FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, addr));
-                if (item == null) return false;
-                var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId), ct);
+                var has = string.IsNullOrEmpty(device.DeviceId)
+                    ? false
+                    : await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(device.DeviceId));
                 lock (_assistantCache)
                 {
                     // 先写者胜：避免扫描异步探测用过期 false 覆盖已确认的 true
-                    if (!_assistantCache.ContainsKey(addr))
-                        _assistantCache[addr] = has;
+                    if (!_assistantCache.ContainsKey(device.Addr))
+                        _assistantCache[device.Addr] = has;
                 }
                 return has;
         }
