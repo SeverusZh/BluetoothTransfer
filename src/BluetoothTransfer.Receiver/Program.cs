@@ -3,6 +3,10 @@ using System.IO;
 using BluetoothTransfer.Receiver;
 
 var command = args.Length == 0 ? "gui" : args[0].ToLowerInvariant();
+#if CLI_ONLY
+// 纯 CLI 形态没有 GUI 壳：无参数/双击直接进入 run（接收监听）
+if (command is "gui" or "--gui") command = "run";
+#endif
 #if !CLI_ONLY
 if (command is "gui" or "--gui")
 {
