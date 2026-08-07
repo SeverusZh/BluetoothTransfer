@@ -111,6 +111,7 @@ public class OppViewModel : ViewModelBase
     private readonly OppPushService _push;
     private readonly AssistantPushService _assistantPush;
     private readonly Dictionary<string, bool> _assistantCache = new(StringComparer.OrdinalIgnoreCase);
+    private bool? _queueUseAssistant;
     private readonly Dispatcher _dispatcher;
     private readonly TransferSpeedTracker _speedTracker = new();
     private readonly OppSendQueue _queue = new();
@@ -334,6 +335,12 @@ public class OppViewModel : ViewModelBase
     private void EnqueueAndStart(IEnumerable<OppSendJob> jobs)
     {
         _queue.Enqueue(jobs);
+        // 队列运行中追加的新任务：按最近一次解析的通道立即标注，避免等待期显示 OPP
+        if (_queueUseAssistant is { } ua)
+        {
+            foreach (var j in jobs)
+                j.Channel = ua ? "assistant" : "opp";
+        }
         _speedTracker.Reset();
         ProgressText = "";
         TransferProgress = 0;
@@ -350,6 +357,9 @@ public class OppViewModel : ViewModelBase
         _ = Task.Run(async () =>
         {
             var useAssistant = await ResolveAssistantOnceAsync(device);
+            _queueUseAssistant = useAssistant;
+            foreach (var job in _queue.Jobs.Where(j => j.Status == OppJobStatus.Pending).ToList())
+                job.Channel = useAssistant ? "assistant" : "opp";
             await _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, useAssistant, ct));
         });
     }
