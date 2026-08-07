@@ -312,7 +312,22 @@ public class OppViewModel : ViewModelBase
         var device = SelectedDevice;
         if (device == null) return;
         var next = !device.Favorite;
-        await Task.Run(() => _storage.SetDeviceFavorite(device.Addr, next));
+        if (next)
+        {
+            // 收藏：插入或更新记录（对从未发送过的设备也能持久化）
+            await Task.Run(() => _storage.UpsertDevice(new DeviceInfo
+            {
+                Addr = device.Addr,
+                Name = device.Name,
+                Alias = device.Alias,
+                Favorite = true,
+                LastSeen = DateTime.Now.ToString("o")
+            }));
+        }
+        else
+        {
+            await Task.Run(() => _storage.SetDeviceFavorite(device.Addr, false));
+        }
         device.Favorite = next;
         ResortDevices();
         StatusText = next ? $"已收藏：{device.DisplayName}" : $"已取消收藏：{device.DisplayName}";

@@ -350,9 +350,26 @@ public static class Commands
                 Error("用法：btcli devices favorite <设备地址> [--unset]");
                 return 2;
             }
-            var ok = session.Storage.SetDeviceFavorite(addr, !a.Has("unset"));
-            Info(ok ? $"已更新收藏状态：{addr}" : $"设备不存在：{addr}");
-            return ok ? 0 : 1;
+            if (a.Has("unset"))
+            {
+                var ok = session.Storage.SetDeviceFavorite(addr, false);
+                Info(ok ? $"已取消收藏：{addr}" : $"设备不存在：{addr}");
+                return ok ? 0 : 1;
+            }
+            // 收藏：插入或更新记录（设备未在库中也能持久化）
+            var existing = session.Storage.GetDevices()
+                .FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, addr));
+            session.Storage.UpsertDevice(new DeviceInfo
+            {
+                Addr = addr,
+                Name = existing?.Name ?? addr,
+                Alias = existing?.Alias ?? "",
+                Favorite = true,
+                LastSeen = existing?.LastSeen ?? DateTime.Now.ToString("o"),
+                LastConnected = existing?.LastConnected ?? ""
+            });
+            Info($"已收藏：{addr}");
+            return 0;
         }
         if (sub == "alias")
         {
