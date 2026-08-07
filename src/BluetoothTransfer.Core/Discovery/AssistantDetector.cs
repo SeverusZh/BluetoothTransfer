@@ -1,6 +1,8 @@
 using BluetoothTransfer.Core.Protocol;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.Rfcomm;
+using System.Text.RegularExpressions;
+using Windows.Devices.Enumeration;
 
 namespace BluetoothTransfer.Core.Discovery;
 
@@ -10,6 +12,43 @@ namespace BluetoothTransfer.Core.Discovery;
 /// </summary>
 public static class AssistantDetector
 {
+    private static readonly Regex RemoteMacRegex = new(
+        @"-([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})(?:#|$)", RegexOptions.Compiled);
+
+    /// <summary>已配对蓝牙设备（不依赖 OPP 广播；接收端只运行助手时也能解析）。</summary>
+    public sealed record PairedAssistantDevice(string DeviceId, string Addr, string Name);
+
+    /// <summary>按地址在"已配对设备"列表中查找（助手模式发送端的设备解析回退路径）。</summary>
+    public static async Task<PairedAssistantDevice?> FindPairedDeviceAsync(string addr, CancellationToken ct = default)
+    {
+        var target = NormalizeAddr(addr);
+        if (string.IsNullOrEmpty(target)) return null;
+        var devices = await DeviceInformation.FindAllAsync(
+            BluetoothDevice.GetDeviceSelectorFromPairingState(true)).AsTask(ct);
+        foreach (var d in devices)
+        {
+            var mac = ParseMacFromId(d.Id);
+            if (string.Equals(NormalizeAddr(mac), target, StringComparison.OrdinalIgnoreCase))
+                return new PairedAssistantDevice(d.Id, mac, string.IsNullOrEmpty(d.Name) ? mac : d.Name);
+        }
+        return null;
+    }
+
+    internal static string NormalizeAddr(string addr)
+    {
+        if (string.IsNullOrEmpty(addr)) return "";
+        var clean = addr.Replace(":", "").Replace("-", "").Trim();
+        if (clean.Length != 12) return addr;
+        return string.Join(":", Enumerable.Range(0, 6).Select(i => clean.Substring(i * 2, 2))).ToLowerInvariant();
+    }
+
+    internal static string ParseMacFromId(string id)
+    {
+        if (string.IsNullOrEmpty(id)) return "";
+        var match = RemoteMacRegex.Match(id);
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
     public static async Task<RfcommDeviceService?> GetAssistantServiceAsync(
         string deviceId, CancellationToken ct = default)
     {

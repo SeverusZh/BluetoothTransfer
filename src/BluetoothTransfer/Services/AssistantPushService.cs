@@ -113,23 +113,33 @@ public sealed class AssistantPushService
     private async Task<bool> SendSourceAsync(
         string deviceAddr, string sourcePath, string displayName, string localPathForRecord, CancellationToken ct)
     {
-        OppDeviceInfo? device;
+        OppDeviceInfo? device = null;
         try
         {
             device = await _discovery.FindByAddressAsync(deviceAddr, ct);
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", ex.Message));
-            WriteFailedRecord("", deviceAddr, displayName, 0, ex.Message);
-            return false;
+            _events.Publish(new LogEvent("WARN", $"OPP 设备发现失败（尝试按已配对设备解析）：{ex.Message}"));
         }
         if (device == null)
         {
-            var message = $"未找到蓝牙设备：{deviceAddr}（请先扫描并确认设备已配对）";
-            _events.Publish(new LogEvent("ERROR", message));
-            WriteFailedRecord("", deviceAddr, displayName, 0, message);
-            return false;
+            // 接收端只运行助手（不广播 OPP）时，OPP 发现找不到设备，回退到已配对设备列表
+            var paired = await AssistantDetector.FindPairedDeviceAsync(deviceAddr, ct);
+            if (paired == null)
+            {
+                var message = $"未找到蓝牙设备：{deviceAddr}（请先扫描并确认设备已配对）";
+                _events.Publish(new LogEvent("ERROR", message));
+                WriteFailedRecord("", deviceAddr, displayName, 0, message);
+                return false;
+            }
+            device = new OppDeviceInfo
+            {
+                Id = paired.DeviceId,
+                Addr = paired.Addr,
+                Name = paired.Name,
+                IsPaired = true
+            };
         }
         if (!device.IsPaired)
         {
