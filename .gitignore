@@ -36,3 +36,7 @@ CODE_REVIEW.md
 CODE_REVIEW_R2.md
 CODE_REVIEW_R3.md
 FIX_PROGRESS.md
+
+## Code review working artifacts
+.code-review-part*.md
+.dotnet-cli/
