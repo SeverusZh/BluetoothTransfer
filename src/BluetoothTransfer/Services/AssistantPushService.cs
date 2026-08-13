@@ -176,7 +176,8 @@ public sealed class AssistantPushService
                 service = await AssistantDetector.GetAssistantServiceAsync(device.Id, ct);
                 if (service == null)
                     throw new AsstProtocolException("对端未运行接收助手（探测不到助手服务）");
-                var transport = await SocketAsstTransport.ConnectAsync(service, SocketProtectionLevel.PlainSocket, ct);
+                var level = ResolveProtectionLevel(service, _config.OppProtectionLevel);
+                var transport = await SocketAsstTransport.ConnectAsync(service, level, ct);
                 await using var client = new AssistantClient(transport);
                 using var fs = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
                 var hello = new AsstHello(transferId, displayName, totalLength, _config.OppChunkSize, checksum);
@@ -309,6 +310,26 @@ public sealed class AssistantPushService
             Channel = TransferConst.ChannelAssistant,
             Note = note
         });
+    }
+
+    /// <summary>
+    /// 解析助手通道的连接保护级别，与 OPP 通道共用 <see cref="AppConfig.OppProtectionLevel"/> 配置。
+    /// auto：按服务端 SDP 要求的保护级别连接（服务未要求加密则保持明文，与 OPP 路径一致）；
+    /// plain：强制明文；encrypt：强制加密认证。
+    /// </summary>
+    private static SocketProtectionLevel ResolveProtectionLevel(RfcommDeviceService service, string config)
+    {
+        switch (config?.Trim().ToLowerInvariant())
+        {
+            case "plain":
+                return SocketProtectionLevel.PlainSocket;
+            case "encrypt":
+                return SocketProtectionLevel.BluetoothEncryptionWithAuthentication;
+            default: // auto
+                return service.ProtectionLevel != SocketProtectionLevel.PlainSocket
+                    ? service.ProtectionLevel
+                    : SocketProtectionLevel.PlainSocket;
+        }
     }
 
     private static void TryDelete(string path)

@@ -21,7 +21,7 @@
 - **真正的传输队列** — 队列任务支持单独**暂停 / 继续 / 移除 / 重试**；接收端忙时自动按指数退避等待；发送端显示通道列（OPP / 助手）
 - **自动探测 + 手动覆盖** — 发送前 SDP 探测对端是否运行助手：在线走私有通道，离线自动回退 OPP 通用推送；可在 GUI/CLI 强制指定通道
 - **极简接收端** — `btrecv` 单 exe：CLI 内核（`btrecv run [--dir 目录] [--ask]`）+ 极简 GUI 壳（状态/进度/完成列表/保存目录/每次询问开关），默认自动接收；引导时先用 OPP 把 `btrecv` 包推过去，解压即用（自包含无需安装 .NET）
-- **明文说明** — 私有通道 v1 为明文，无应用层加密；需要链路加密时可用 Windows 侧配置
+- **明文说明** — 私有通道 v1 默认明文，无应用层加密；助手通道与 OPP 通道共用 `OppProtectionLevel` 配置，`encrypt` 可启用链路加密（RFCOMM 加密由发送端请求、系统协商），但应用层仍无端到端加密
 
 ### 完整 GUI 内置接收（v1.3）
 - 主窗口「接收助手」面板：开始/停止监听、当前传输进度、本会话完成列表、保存目录（默认 下载\BluetoothReceive）、每次接收前询问
@@ -103,7 +103,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | `PushTextFileName` | bt-note.txt | 文本推送默认文件名 |
 | `OppAuthPassword` | （空） | 设备要求 OBEX 认证时的密码 |
 | `OppNameUseBom` | false | Name 头是否带 UTF-16 BOM（默认无 BOM，兼容 Android/Windows） |
-| `OppProtectionLevel` | auto | 连接保护级别：auto / plain / encrypt |
+| `OppProtectionLevel` | auto | 连接保护级别：auto / plain / encrypt；助手通道与 OPP 通道共用此配置，encrypt 可启用链路加密，应用层仍无端到端加密 |
 | `OppRetryCount` | 3 | 失败自动重试次数（0 表示不重试） |
 | `OppRetryDelaySeconds` | 3 | 重试基础间隔（秒），按 1x/2x/3x 退避 |
 | `TransferMode` | auto | 发送通道：auto（探测助手，否则 OPP）/ assistant / opp |
@@ -114,7 +114,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 
 - Windows 作为发送端：实现路径与微软官方文档 *RFCOMM Scenario: Send File as a Client* 一致（`RfcommServiceId.ObexObjectPush` + `StreamSocket`），并与 32feet.NET 的 `ObexWebRequest` 逐字节对齐，Windows 10 2004+ / Windows 11 可行，内置/外置 USB 蓝牙适配器均可。
 - Windows 作为接收端：由系统"蓝牙文件传输向导"（fsquirt）承载；若 Win11 找不到入口，运行 `fsquirt` 或检查注册表 `DisableFsquirt`。
-- 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；连接默认明文（PlainSocket，与 Android 真机验证一致），接收端要求加密时可 `config set OppProtectionLevel encrypt`。
+- 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；连接默认明文（PlainSocket，与 Android 真机验证一致），主机推送（OPP 与助手通道共用 `OppProtectionLevel`）要求加密时可 `config set OppProtectionLevel encrypt`。
 - 连接前进行 SDP 预检：确认服务声明 OPP（0x1105），不满足时给出明确错误并写入失败记录。
 
 ## 协议限制（需知悉）
