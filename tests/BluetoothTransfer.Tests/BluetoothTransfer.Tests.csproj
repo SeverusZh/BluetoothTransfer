@@ -32,6 +32,7 @@
     <Compile Include="..\..\src\BluetoothTransfer\Models\DeviceInfo.cs" Link="Models\DeviceInfo.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Models\TransferRecord.cs" Link="Models\TransferRecord.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\EventBus.cs" Link="Services\EventBus.cs" />
+    <Compile Include="..\..\src\BluetoothTransfer\Services\ExportService.cs" Link="Services\ExportService.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\FileChecksum.cs" Link="Services\FileChecksum.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\IObexTransport.cs" Link="Services\IObexTransport.cs" />
     <Compile Include="..\..\src\BluetoothTransfer\Services\MemoryObexTransport.cs" Link="Services\MemoryObexTransport.cs" />

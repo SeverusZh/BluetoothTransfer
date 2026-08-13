@@ -41,10 +41,16 @@ public class ExportService
         return filePath;
     }
 
+    // 对端设备名/文件名等字段可来自外部，开头的 = + - @ \t \r 在 Excel 打开时可能触发公式注入，
+    // 需统一加前缀单引号 ' 将其转成纯文本；\r 同时纳入需要引号包裹的判断。
     private static string EscapeCsv(string value)
     {
         if (string.IsNullOrEmpty(value)) return "";
-        if (value.Contains(',') || value.Contains('"') || value.Contains('\n'))
+        // 以 =+-\t\r 开头的字段可能被 Excel 当作公式执行，统一加前缀单引号转纯文本（含 \r）。
+        if (value[0] == '=' || value[0] == '+' || value[0] == '-' || value[0] == '@'
+            || value[0] == '\t' || value[0] == '\r')
+            return "'" + value;
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
             return $"\"{value.Replace("\"", "\"\"")}\"";
         return value;
     }
