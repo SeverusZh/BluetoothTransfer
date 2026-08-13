@@ -21,8 +21,8 @@ namespace BluetoothTransfer.ViewModels;
 /// </summary>
 internal sealed class DevicePaneController
 {
-    private readonly OppDiscoveryService _discovery;
-    private readonly StorageService _storage;
+    private readonly IOppDiscoveryService _discovery;
+    private readonly IStorageService _storage;
     private readonly Dispatcher _dispatcher;
     private readonly ObservableCollection<OppDeviceItem> _devices;
     private readonly Dictionary<string, bool> _assistantCache;
@@ -33,8 +33,8 @@ internal sealed class DevicePaneController
     private readonly Action<string, string> _publishLog;
 
     public DevicePaneController(
-        OppDiscoveryService discovery,
-        StorageService storage,
+        IOppDiscoveryService discovery,
+        IStorageService storage,
         Dispatcher dispatcher,
         ObservableCollection<OppDeviceItem> devices,
         Dictionary<string, bool> assistantCache,

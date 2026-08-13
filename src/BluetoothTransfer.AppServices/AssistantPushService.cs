@@ -14,7 +14,7 @@ namespace BluetoothTransfer.Services;
 /// 但走自定义 UUID 的私有分片协议，支持断点续传与 SHA-256 校验。
 /// 记录写入 SQLite（channel=assistant）。
 /// </summary>
-public sealed class AssistantPushService
+public sealed class AssistantPushService : IAssistantPushService
 {
     private readonly EventBus _events;
     private readonly StorageService _storage;

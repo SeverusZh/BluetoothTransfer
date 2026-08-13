@@ -4,7 +4,7 @@ using BluetoothTransfer.Models;
 
 namespace BluetoothTransfer.Services;
 
-public class StorageService
+public class StorageService : IStorageService
 {
     private readonly string _dbPath;
     private readonly string _connStr;

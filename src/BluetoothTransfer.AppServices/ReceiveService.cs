@@ -11,7 +11,7 @@ namespace BluetoothTransfer.Services;
 /// 接收完成写入 SQLite（direction=recv, channel=assistant）。
 /// 测试可注入 MemoryAsstListener。
 /// </summary>
-public sealed class ReceiveService
+public sealed class ReceiveService : IReceiveService
 {
     private readonly StorageService _storage;
     private readonly EventBus _events;

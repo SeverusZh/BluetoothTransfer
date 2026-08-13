@@ -20,7 +20,7 @@ namespace BluetoothTransfer.ViewModels;
 /// </summary>
 internal sealed class RecordsPaneController
 {
-    private readonly StorageService _storage;
+    private readonly IStorageService _storage;
     private readonly Dispatcher _dispatcher;
     private readonly ObservableCollection<TransferRecord> _records;
     private readonly Action<string> _setStatus;
@@ -34,7 +34,7 @@ internal sealed class RecordsPaneController
     private bool _reloadRequested;
 
     public RecordsPaneController(
-        StorageService storage,
+        IStorageService storage,
         Dispatcher dispatcher,
         ObservableCollection<TransferRecord> records,
         Action<string> setStatus,

@@ -106,13 +106,13 @@ public class OppDeviceItem : INotifyPropertyChanged
 /// </summary>
 public class OppViewModel : ViewModelBase, IDisposable
 {
-    private readonly EventBus _events;
-    private readonly StorageService _storage;
+    private readonly IEventBus _events;
+    private readonly IStorageService _storage;
     private readonly AppConfig _config;
-    private readonly OppDiscoveryService _discovery;
-    private readonly OppPushService _push;
-    private readonly AssistantPushService _assistantPush;
-    private readonly ReceiveService _receive;
+    private readonly IOppDiscoveryService _discovery;
+    private readonly IOppPushService _push;
+    private readonly IAssistantPushService _assistantPush;
+    private readonly IReceiveService _receive;
     // EventBus/接收服务的事件 handler 引用：保存引用以便 Dispose 时退订（-=/Unsubscribe 必须引用同一委托实例）
     private readonly Action<LogEvent> _logHandler;
     private readonly Action<TransferProgressEvent> _progressHandler;
@@ -202,24 +202,24 @@ public class OppViewModel : ViewModelBase, IDisposable
     public void PublishLog(string level, string message)
         => _events.Publish(new LogEvent(level, message));
 
-    public RelayCommand ScanCommand { get; }
-    public RelayCommand PairCommand { get; }
-    public RelayCommand OpenSettingsCommand { get; }
-    public RelayCommand ToggleFavoriteCommand { get; }
-    public RelayCommand SendTextCommand { get; }
-    public RelayCommand SendFileCommand { get; }
-    public RelayCommand SendFolderCommand { get; }
-    public RelayCommand SendClipboardCommand { get; }
-    public RelayCommand CancelAllCommand { get; }
-    public RelayCommand RefreshRecordsCommand { get; }
-    public RelayCommand ExportCsvCommand { get; }
-    public RelayCommand ExportJsonCommand { get; }
-    public RelayCommand ClearRecordsCommand { get; }
-    public RelayCommand PauseJobCommand { get; }
-    public RelayCommand ContinueJobCommand { get; }
-    public RelayCommand RemoveJobCommand { get; }
-    public RelayCommand ToggleReceiveCommand { get; }
-    public RelayCommand BrowseReceiveDirCommand { get; }
+    public RelayCommand ScanCommand { get; private set; } = null!;
+    public RelayCommand PairCommand { get; private set; } = null!;
+    public RelayCommand OpenSettingsCommand { get; private set; } = null!;
+    public RelayCommand ToggleFavoriteCommand { get; private set; } = null!;
+    public RelayCommand SendTextCommand { get; private set; } = null!;
+    public RelayCommand SendFileCommand { get; private set; } = null!;
+    public RelayCommand SendFolderCommand { get; private set; } = null!;
+    public RelayCommand SendClipboardCommand { get; private set; } = null!;
+    public RelayCommand CancelAllCommand { get; private set; } = null!;
+    public RelayCommand RefreshRecordsCommand { get; private set; } = null!;
+    public RelayCommand ExportCsvCommand { get; private set; } = null!;
+    public RelayCommand ExportJsonCommand { get; private set; } = null!;
+    public RelayCommand ClearRecordsCommand { get; private set; } = null!;
+    public RelayCommand PauseJobCommand { get; private set; } = null!;
+    public RelayCommand ContinueJobCommand { get; private set; } = null!;
+    public RelayCommand RemoveJobCommand { get; private set; } = null!;
+    public RelayCommand ToggleReceiveCommand { get; private set; } = null!;
+    public RelayCommand BrowseReceiveDirCommand { get; private set; } = null!;
 
     /// <summary>接收助手：是否监听中。</summary>
     public bool IsReceiving => _receive.IsListening;
@@ -260,36 +260,82 @@ public class OppViewModel : ViewModelBase, IDisposable
     public string ReceiveProgressText { get => _receiveProgressText; set => SetProperty(ref _receiveProgressText, value); }
     public ObservableCollection<string> ReceiveCompleted { get; } = new();
 
+    /// <summary>
+    /// 无参构造（组合根）：XAML <c>&lt;vm:OppViewModel/&gt;</c> 依赖它创建实例。
+    /// 在此构造具体服务并注入 Initialize，供界面正常运行。
+    /// </summary>
     public OppViewModel()
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
-        _events = new EventBus();
-        _storage = new StorageService();
+        var events = new EventBus();
+        var storage = new StorageService();
+        var config = AppConfig.Load();
+        var discovery = new OppDiscoveryService(events);
+        // readonly 字段只能在构造函数体内赋值，故先就地赋值，再交给 Initialize 做其余初始化。
+        _events = events;
+        _storage = storage;
+        _config = config;
+        _discovery = discovery;
+        _push = new OppPushService(events, storage, config, discovery);
+        _assistantPush = new AssistantPushService(events, storage, config, discovery);
+        _receive = new ReceiveService(storage, events);
+        _logHandler = new Action<LogEvent>(OnLog);
+        _progressHandler = new Action<TransferProgressEvent>(OnProgress);
+        _devicePane = CreateDevicePane();
+        _recordsPane = CreateRecordsPane();
+        Initialize();
+    }
+
+    /// <summary>
+    /// 接口注入构造：接收六项服务接口（顺序自定），供单元测试注入 fake 铺路。
+    /// 与无参构造共享 <see cref="Initialize"/> 的后续初始化逻辑。
+    /// </summary>
+    public OppViewModel(
+        IEventBus events, IStorageService storage,
+        IOppDiscoveryService discovery, IOppPushService push,
+        IAssistantPushService assistantPush, IReceiveService receive)
+    {
+        _dispatcher = Dispatcher.CurrentDispatcher;
+        _events = events;
+        _storage = storage;
+        // AppConfig 为静态 Load，不注入：此处经 AppConfig.Load() 取得。
         _config = AppConfig.Load();
-        // 读取配置失败时经日志上报（_events 已在上面初始化，可安全发布）
+        _discovery = discovery;
+        _push = push;
+        _assistantPush = assistantPush;
+        _receive = receive;
+        _logHandler = new Action<LogEvent>(OnLog);
+        _progressHandler = new Action<TransferProgressEvent>(OnProgress);
+        _devicePane = CreateDevicePane();
+        _recordsPane = CreateRecordsPane();
+        Initialize();
+    }
+
+    private DevicePaneController CreateDevicePane() => new(
+        _discovery, _storage, _dispatcher, Devices, _assistantCache,
+        () => IsScanning, v => IsScanning = v,
+        v => StatusText = v, v => _lastError = v,
+        (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
+
+    private RecordsPaneController CreateRecordsPane() => new(
+        _storage, _dispatcher, Records,
+        v => StatusText = v,
+        (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
+
+    /// <summary>
+    /// 两个构造共享的后续初始化（readonly 字段已由各构造赋值完毕）：
+    /// 上报配置加载错误、订阅接收事件与 EventBus、注册命令、启动初始加载。
+    /// </summary>
+    private void Initialize()
+    {
+        // 读取配置失败时经日志上报（_events 已在构造中赋值，可安全发布）
         if (_config.LastError is { } loadErr)
             _events.Publish(new LogEvent(TransferConst.LogWarn, loadErr));
-        _discovery = new OppDiscoveryService(_events);
-        _push = new OppPushService(_events, _storage, _config, _discovery);
-        _assistantPush = new AssistantPushService(_events, _storage, _config, _discovery);
-        _receive = new ReceiveService(_storage, _events)
-        {
-            AskHandler = AskReceiveAsync
-        };
+
+        _receive.AskHandler = AskReceiveAsync;
         _receive.ProgressChanged += OnReceiveProgress;
         _receive.Completed += OnReceiveCompleted;
         _receive.Logged += OnReceiveLogged;
-
-        // 设备域 / 记录域控制器：注入服务、调度器与 VM 状态回写回调（见对应组件类说明）。
-        _devicePane = new DevicePaneController(
-            _discovery, _storage, _dispatcher, Devices, _assistantCache,
-            () => IsScanning, v => IsScanning = v,
-            v => StatusText = v, v => _lastError = v,
-            (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
-        _recordsPane = new RecordsPaneController(
-            _storage, _dispatcher, Records,
-            v => StatusText = v,
-            (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
 
         ScanCommand = new RelayCommand(() => SafeAsync(ScanAsync));
         PairCommand = new RelayCommand(() => SafeAsync(PairAsync), () => SelectedDevice != null);
@@ -319,8 +365,8 @@ public class OppViewModel : ViewModelBase, IDisposable
         ToggleReceiveCommand = new RelayCommand(() => SafeAsync(ToggleReceiveAsync));
         BrowseReceiveDirCommand = new RelayCommand(BrowseReceiveDir);
 
-        _events.Subscribe(_logHandler = new Action<LogEvent>(OnLog));
-        _events.Subscribe(_progressHandler = new Action<TransferProgressEvent>(OnProgress));
+        _events.Subscribe(_logHandler);
+        _events.Subscribe(_progressHandler);
         _ = LoadRecordsAsync();
         _ = _devicePane.LoadFavoriteDevicesAsync();
     }

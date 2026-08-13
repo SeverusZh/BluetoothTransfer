@@ -1,6 +1,6 @@
 namespace BluetoothTransfer.Services;
 
-public class EventBus
+public class EventBus : IEventBus
 {
     private readonly Dictionary<Type, List<Delegate>> _handlers = new();
     private readonly object _lock = new();

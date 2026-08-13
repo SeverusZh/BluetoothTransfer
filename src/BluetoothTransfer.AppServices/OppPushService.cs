@@ -12,7 +12,7 @@ namespace BluetoothTransfer.Services;
 /// OPP 通用推送服务：仅发送端运行本应用，向支持"蓝牙文件接收"的任意设备推送文件。
 /// 支持单文件、文本（转 .txt）、文件夹（转 .zip），记录写入 SQLite（channel=opp）。
 /// </summary>
-public class OppPushService
+public class OppPushService : IOppPushService
 {
     private readonly EventBus _events;
     private readonly StorageService _storage;

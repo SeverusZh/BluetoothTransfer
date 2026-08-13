@@ -27,7 +27,7 @@ public sealed class OppDeviceInfo
 /// 且 <c>Pairing.IsPaired</c> 并不可靠；因此统一从设备 Id 解析远程 MAC，
 /// 并以"已配对设备列表"（GetDeviceSelectorFromPairingState(true)）作为配对状态依据。
 /// </summary>
-public sealed class OppDiscoveryService
+public sealed class OppDiscoveryService : IOppDiscoveryService
 {
     private static readonly Regex RemoteMacRegex =
         new(@"-([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})(?:#|$)", RegexOptions.Compiled);
@@ -171,7 +171,7 @@ public sealed class OppDiscoveryService
         }
     }
 
-    public static void OpenBluetoothSettings(EventBus events)
+    public static void OpenBluetoothSettings(IEventBus events)
     {
         try
         {
