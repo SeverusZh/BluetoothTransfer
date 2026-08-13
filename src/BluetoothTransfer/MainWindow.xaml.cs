@@ -106,6 +106,8 @@ public partial class MainWindow : Window
     private void OnTrayExit(object sender, RoutedEventArgs e)
     {
         _forceClose = true;
+        // 应用真正退出：先清理 ViewModel（退订事件、停止接收监听），再关闭窗口
+        (DataContext as IDisposable)?.Dispose();
         _trayIcon?.Dispose();
         Close();
     }

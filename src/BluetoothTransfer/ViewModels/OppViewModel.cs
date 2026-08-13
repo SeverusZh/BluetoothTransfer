@@ -102,8 +102,9 @@ public class OppDeviceItem : INotifyPropertyChanged
 /// <summary>
 /// 通用推送（OPP）主界面 ViewModel：设备扫描/配对、发送（文件/文本/文件夹/剪贴板/拖放）、
 /// 任务队列、传输记录、日志。事件经 EventBus 汇集到 UI 线程。
+/// 实现 IDisposable：退出时退订事件并停止接收监听，避免监听进程退出时才被释放。
 /// </summary>
-public class OppViewModel : ViewModelBase
+public class OppViewModel : ViewModelBase, IDisposable
 {
     private readonly EventBus _events;
     private readonly StorageService _storage;
@@ -112,6 +113,9 @@ public class OppViewModel : ViewModelBase
     private readonly OppPushService _push;
     private readonly AssistantPushService _assistantPush;
     private readonly ReceiveService _receive;
+    // EventBus/接收服务的事件 handler 引用：保存引用以便 Dispose 时退订（-=/Unsubscribe 必须引用同一委托实例）
+    private readonly Action<LogEvent> _logHandler;
+    private readonly Action<TransferProgressEvent> _progressHandler;
     private readonly Dictionary<string, bool> _assistantCache = new(StringComparer.OrdinalIgnoreCase);
     private bool? _queueUseAssistant;
     private readonly Dispatcher _dispatcher;
@@ -267,20 +271,9 @@ public class OppViewModel : ViewModelBase
         {
             AskHandler = AskReceiveAsync
         };
-        _receive.ProgressChanged += (name, sent, total) => _dispatcher.Invoke(() =>
-        {
-            ReceiveCurrentFile = name;
-            ReceiveProgress = total > 0 ? sent * 100.0 / total : 0;
-            ReceiveProgressText = $"{sent:N0} / {total:N0} 字节";
-        });
-        _receive.Completed += name => _dispatcher.Invoke(() =>
-        {
-            ReceiveCompleted.Add($"{DateTime.Now:HH:mm:ss} {name}");
-            ReceiveProgress = 0;
-            ReceiveProgressText = "";
-            _ = LoadRecordsAsync();
-        });
-        _receive.Logged += (level, msg) => _events.Publish(new LogEvent(level, msg));
+        _receive.ProgressChanged += OnReceiveProgress;
+        _receive.Completed += OnReceiveCompleted;
+        _receive.Logged += OnReceiveLogged;
 
         ScanCommand = new RelayCommand(() => SafeAsync(ScanAsync));
         PairCommand = new RelayCommand(() => SafeAsync(PairAsync), () => SelectedDevice != null);
@@ -310,8 +303,8 @@ public class OppViewModel : ViewModelBase
         ToggleReceiveCommand = new RelayCommand(() => SafeAsync(ToggleReceiveAsync));
         BrowseReceiveDirCommand = new RelayCommand(BrowseReceiveDir);
 
-        _events.Subscribe<LogEvent>(OnLog);
-        _events.Subscribe<TransferProgressEvent>(OnProgress);
+        _events.Subscribe(_logHandler = new Action<LogEvent>(OnLog));
+        _events.Subscribe(_progressHandler = new Action<TransferProgressEvent>(OnProgress));
         _ = LoadRecordsAsync();
         _ = LoadFavoriteDevicesAsync();
     }
@@ -470,6 +463,32 @@ public class OppViewModel : ViewModelBase
                 "蓝牙传输", MessageBoxButton.YesNo, MessageBoxImage.Question));
         return result == MessageBoxResult.Yes;
     }
+
+    // 下列接收事件订阅为具名方法：Dispose 可经 -= 精确退订同一委托实例（lambda 捕获 this 无法退订）。
+
+    private void OnReceiveProgress(string name, long sent, long total)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            ReceiveCurrentFile = name;
+            ReceiveProgress = total > 0 ? sent * 100.0 / total : 0;
+            ReceiveProgressText = $"{sent:N0} / {total:N0} 字节";
+        });
+    }
+
+    private void OnReceiveCompleted(string name)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            ReceiveCompleted.Add($"{DateTime.Now:HH:mm:ss} {name}");
+            ReceiveProgress = 0;
+            ReceiveProgressText = "";
+            _ = LoadRecordsAsync();
+        });
+    }
+
+    private void OnReceiveLogged(string level, string msg)
+        => _events.Publish(new LogEvent(level, msg));
 
     // ------------------------------------------------------------------ 发送
 
@@ -935,5 +954,41 @@ public class OppViewModel : ViewModelBase
             _events.Publish(new LogEvent(TransferConst.LogError, $"操作失败：{ex.Message}"));
             StatusText = $"错误：{ex.Message}";
         }
+    }
+
+    // ------------------------------------------------------------------ 清理
+
+    /// <summary>
+    /// 释放路径（应用退出前由 MainWindow.OnTrayExit 调用）：
+    /// 1. 退订 EventBus 的日志/进度订阅（避免 handler 连同 this 被长期持有）；
+    /// 2. 退订接收服务的三个事件（ProgressChanged/Completed/Logged）；
+    /// 3. 若正在监听，停止接收监听（同步等待，异常仅记录、不抛出）。
+    /// Dispose 仅做清理，不改变正常运行与退出前的语义。
+    /// </summary>
+    public void Dispose()
+    {
+        // 1. EventBus 退订：Unsubscribe 需要与订阅时同一个委托实例，故用保存的 handler 引用。
+        _events.Unsubscribe(_logHandler);
+        _events.Unsubscribe(_progressHandler);
+
+        // 2. 接收服务事件退订：具名方法生成的委托实例，-= 精确移除捕获 this 的 lambda。
+        _receive.ProgressChanged -= OnReceiveProgress;
+        _receive.Completed -= OnReceiveCompleted;
+        _receive.Logged -= OnReceiveLogged;
+
+        // 3. 停止接收监听（若正在监听）：同步等待结束，异常仅记录、不向调用方抛出。
+        if (_receive.IsListening)
+        {
+            try
+            {
+                _receive.StopAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                _events.Publish(new LogEvent(TransferConst.LogError, $"退出时停止接收监听失败：{ex.Message}"));
+            }
+        }
+        // 本 ViewModel 无自有 _cts 需要释放（接收服务的 _cts 已由 ReceiveService.StopAsync 内部释放）；
+        // 若将来新增后台任务令牌，可在此 _cts?.Dispose() 以尽早释放取消令牌。
     }
 }
