@@ -42,4 +42,8 @@ public class RelayCommand : ICommand
 
     public bool CanExecute(object? parameter) => _canExecute?.Invoke(parameter) ?? true;
     public void Execute(object? parameter) => _execute(parameter);
+
+    /// <summary>通知 WPF 命令系统主动重新评估 CanExecute，使按钮使能状态立即刷新（不依赖鼠标输入事件）。</summary>
+    public void RaiseCanExecuteChanged()
+        => CommandManager.InvalidateRequerySuggested();
 }

@@ -133,14 +133,33 @@ public class OppViewModel : ViewModelBase
     public ObservableCollection<OppSendJob> Jobs => _queue.Jobs;
 
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
-    public bool IsScanning { get => _isScanning; set => SetProperty(ref _isScanning, value); }
+    public bool IsScanning
+    {
+        get => _isScanning;
+        set
+        {
+            if (!SetProperty(ref _isScanning, value)) return;
+            // 扫描状态影响 CanSend，主动刷新发送类命令的使能（避免扫描完成后按钮仍灰着）
+            SendTextCommand.RaiseCanExecuteChanged();
+            SendFileCommand.RaiseCanExecuteChanged();
+            SendFolderCommand.RaiseCanExecuteChanged();
+            SendClipboardCommand.RaiseCanExecuteChanged();
+        }
+    }
     public OppDeviceItem? SelectedDevice
     {
         get => _selectedDevice;
         set
         {
-            SetProperty(ref _selectedDevice, value);
+            if (!SetProperty(ref _selectedDevice, value)) return;
             OnPropertyChanged(nameof(CanSend));
+            // 选中设备影响 CanSend 及相关命令使能，主动刷新（不依赖 CommandManager 的输入事件触发）
+            SendTextCommand.RaiseCanExecuteChanged();
+            SendFileCommand.RaiseCanExecuteChanged();
+            SendFolderCommand.RaiseCanExecuteChanged();
+            SendClipboardCommand.RaiseCanExecuteChanged();
+            PairCommand.RaiseCanExecuteChanged();
+            ToggleFavoriteCommand.RaiseCanExecuteChanged();
         }
     }
     public string SendText { get => _sendText; set => SetProperty(ref _sendText, value); }
@@ -266,7 +285,7 @@ public class OppViewModel : ViewModelBase
             _queue.Continue(target);
             var device = _queueDevice ?? SelectedDevice;
             if (device != null && target.Status == OppJobStatus.Pending)
-                StartQueueIfNeeded(device);
+                SafeAsync(() => StartQueueIfNeeded(device));
         });
         RemoveJobCommand = new RelayCommand(job => _queue.Remove((OppSendJob)job!));
         ToggleReceiveCommand = new RelayCommand(() => SafeAsync(ToggleReceiveAsync));
@@ -450,21 +469,32 @@ public class OppViewModel : ViewModelBase
         var device = SelectedDevice;
         if (device == null) return;
         _queueDevice = device;
-        StartQueueIfNeeded(device);
+        // 经现有 SafeAsync 安全启动（异常经日志上报），等待过程中延续回到 UI 线程
+        SafeAsync(() => StartQueueIfNeeded(device));
     }
 
-    private void StartQueueIfNeeded(OppDeviceItem device)
+    private async Task StartQueueIfNeeded(OppDeviceItem device)
     {
         if (_queue.IsRunning) return;
-        // 每次队列运行只解析一次通道（确定性），避免逐任务探测/缓存竞态导致同一批文件走不同通道
-        _ = Task.Run(async () =>
+        // 每次队列运行只解析一次通道（确定性），避免逐任务探测/缓存竞态导致同一批文件走不同通道。
+        // 不在线程池线程启动：OppSendQueue.StartAsync 会直接增删绑定 DataGrid 的
+        // ObservableCollection<OppSendJob>，且其循环体内 await 均未 ConfigureAwait(false)，
+        // 因而从 UI 线程启动后，await 的延续会回到 UI 线程，从而保证集合增删发生在 UI 线程，
+        // 避免 WPF CollectionView 对跨线程集合修改抛异常。
+        try
         {
             var useAssistant = await ResolveAssistantOnceAsync(device);
             _queueUseAssistant = useAssistant;
             foreach (var job in _queue.Jobs.Where(j => j.Status == OppJobStatus.Pending).ToList())
                 job.Channel = useAssistant ? "assistant" : "opp";
             await _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, useAssistant, ct));
-        });
+        }
+        catch (Exception ex)
+        {
+            // 队列启动失败：原实现丢弃 Task 导致静默失败用户无感知，现主动经日志上报
+            _queueUseAssistant = null;
+            PublishLog("ERROR", $"启动发送队列失败：{ex.Message}");
+        }
     }
 
     private async Task<bool> ProcessJobAsync(OppSendJob job, OppDeviceItem device, bool useAssistant, CancellationToken ct)
