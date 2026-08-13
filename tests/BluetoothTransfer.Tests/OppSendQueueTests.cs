@@ -157,4 +157,81 @@ public class OppSendQueueTests
         queue.Continue(job);
         Assert.Equal(OppJobStatus.Pending, job.Status);
     }
+
+    /// <summary>
+    /// 回归：Pause 触发的取消尚未被 worker 结算时立即 Continue（把任务改回 Pending），
+    /// 任务不得被误判为取消或移出待处理队列，而应由后续循环继续处理直至成功。
+    /// 通过让 process 委托在取消时延后抛出的方式控制时序，不依赖固定 Sleep。
+    /// </summary>
+    [Fact]
+    public async Task Pause_ThenImmediateContinue_JobNotLost()
+    {
+        var queue = new OppSendQueue();
+        var job = new OppSendJob { Kind = "file", SourcePath = "a", DisplayName = "a", Size = 1 };
+        queue.Enqueue(new[] { job });
+
+        var processStarted = new TaskCompletionSource();
+        var releaseProcess = new TaskCompletionSource();
+        int processCalls = 0;
+        int completed = 0;
+        bool sawCancelled = false;
+
+        queue.JobCompleted += (j, ok) =>
+        {
+            if (ReferenceEquals(j, job)) System.Threading.Interlocked.Increment(ref completed);
+        };
+
+        // 监听状态变化，以便显式断言任务从未被标为 Cancelled。
+        System.ComponentModel.PropertyChangedEventHandler watcher = (s, e) =>
+        {
+            if (ReferenceEquals(s, job) && e.PropertyName == nameof(OppSendJob.Status)
+                && job.Status == OppJobStatus.Cancelled)
+                sawCancelled = true;
+        };
+        job.PropertyChanged += watcher;
+
+        var runTask = queue.StartAsync("AA:BB:CC:DD:EE:FF", (j, ct) =>
+        {
+            // 第一次进入发送：受控阻塞，待测试放行后在已取消状态下抛出 OCE，模拟暂停取消；
+            // 续传后的第二次调用直接成功。
+            if (System.Threading.Interlocked.Increment(ref processCalls) == 1)
+            {
+                processStarted.TrySetResult();
+                return AwaitThenThrow(releaseProcess.Task, ct);
+            }
+            return Task.FromResult(true);
+        });
+
+        try
+        {
+            await processStarted.Task;
+
+            // 在 worker 尚未结算时：先暂停（取消当前尝试），随即立即继续（改回 Pending）。
+            queue.Pause(job);
+            queue.Continue(job);
+
+            // 放行第一次调用：其观察到取消后抛出 OperationCanceledException。
+            // 此时任务已是 Pending，旧实现的第二 catch 会误判为取消并从 _pending 移除，
+            // 从而触发 finally 的 JobCompleted 导致任务丢失；本测试断言该竞态已被修复。
+            releaseProcess.TrySetResult();
+
+            await runTask;
+
+            Assert.Equal(OppJobStatus.Ok, job.Status);  // 最终被处理为成功
+            Assert.Equal(1, completed);                 // JobCompleted 恰好触发一次
+            Assert.False(sawCancelled);                 // 任务从未被标为 Cancelled
+        }
+        finally
+        {
+            job.PropertyChanged -= watcher;
+        }
+    }
+
+    /// <summary>受控等待：先等待测试放行的门控，再检查取消令牌并抛出（若已取消）。</summary>
+    private static async Task<bool> AwaitThenThrow(Task gate, CancellationToken ct)
+    {
+        await gate;                 // 不在此处感知取消，避免提前抛出而无法控制时序
+        ct.ThrowIfCancellationRequested();
+        return true;
+    }
 }

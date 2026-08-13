@@ -223,11 +223,16 @@ public sealed class OppSendQueue
                 }
                 catch (OperationCanceledException)
                 {
-                    // 仅 Pause/Remove 触发（非取消全部）：Paused 保留，其余按取消处理
-                    if (job.Status != OppJobStatus.Paused)
+                    // 仅 Pause/Remove 触发（非取消全部）。
+                    // 仍在待处理队列中的任务（Pause 后未 Continue、或已 Continue 改回 Pending）
+                    // 一律保留，由后续处理继续；已被 Remove 出队的任务才判为取消。
+                    lock (_lock)
                     {
-                        job.Status = OppJobStatus.Cancelled;
-                        job.Error = "用户取消";
+                        if (!_pending.Contains(job))
+                        {
+                            job.Status = OppJobStatus.Cancelled;
+                            job.Error = "用户取消";
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -237,15 +242,19 @@ public sealed class OppSendQueue
                 }
                 finally
                 {
+                    // 仅对终态（Ok/Failed/Cancelled）触发完成与出队；
+                    // Paused 或已通过 Continue 改回 Pending 的任务保留在 _pending，
+                    // 由下一轮循环继续处理，避免暂停/继续竞态导致任务丢失。
+                    bool isTerminal = job.Status is OppJobStatus.Ok or OppJobStatus.Failed or OppJobStatus.Cancelled;
                     lock (_lock)
                     {
                         _activeJob = null;
                         _activeCts = null;
                         activeCts?.Dispose();
-                        if (job.Status != OppJobStatus.Paused)
+                        if (isTerminal)
                             _pending.Remove(job);
                     }
-                    if (job.Status != OppJobStatus.Paused)
+                    if (isTerminal)
                         JobCompleted?.Invoke(job, job.Status == OppJobStatus.Ok);
                 }
             }
