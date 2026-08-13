@@ -42,74 +42,25 @@ public class OppPushService
         }
         if (zip)
         {
-            var zipPath = Path.Combine(Path.GetTempPath(), $"bt_opp_zip_{Guid.NewGuid():N}.zip");
-            try
-            {
-                await Task.Run(() =>
-                {
-                    using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
-                    archive.CreateEntryFromFile(filePath, info.Name, CompressionLevel.Optimal);
-                }, ct);
-                return await SendSourceAsync(deviceAddr, zipPath, info.Name + ".zip", "application/zip", filePath, ct);
-            }
-            catch (Exception ex)
-            {
-                _events.Publish(new LogEvent("ERROR", $"文件打包失败：{ex.Message}"));
-                return false;
-            }
-            finally
-            {
-                TryDelete(zipPath);
-            }
+            // 打包 → 发送 → 清理临时 zip 的流程与助手通道共用，见 PushSendHelper。
+            return await PushSendHelper.SendFileZipAsync(_events, filePath, "bt_opp",
+                (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "application/zip", lp, token), ct);
         }
         return await SendSourceAsync(deviceAddr, filePath, info.Name, MimeForName(info.Name), filePath, ct);
     }
 
     public async Task<bool> SendTextAsync(string deviceAddr, string text, string? name = null, CancellationToken ct = default)
     {
-        var fileName = string.IsNullOrWhiteSpace(name) ? _config.PushTextFileName : name;
-        var tempPath = Path.Combine(Path.GetTempPath(), $"bt_opp_text_{Guid.NewGuid():N}.txt");
-        try
-        {
-            await File.WriteAllBytesAsync(tempPath, Encoding.UTF8.GetBytes(text ?? ""), ct);
-            return await SendSourceAsync(deviceAddr, tempPath, fileName, "text/plain", tempPath, ct);
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent("ERROR", $"文本临时文件写入失败：{ex.Message}"));
-            return false;
-        }
-        finally
-        {
-            TryDelete(tempPath);
-        }
+        // 写临时 .txt → 发送 → 清理临时文件的流程与助手通道共用，见 PushSendHelper。
+        return await PushSendHelper.SendTextAsync(_events, _config, text, name, "bt_opp",
+            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "text/plain", lp, token), ct);
     }
 
     public async Task<bool> SendFolderAsync(string deviceAddr, string folderPath, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
-        {
-            _events.Publish(new LogEvent("ERROR", $"文件夹不存在：{folderPath}"));
-            return false;
-        }
-        var folderName = Path.GetFileName(folderPath.TrimEnd('\\', '/'));
-        if (string.IsNullOrEmpty(folderName)) folderName = "folder";
-        var zipPath = Path.Combine(Path.GetTempPath(), $"bt_opp_folder_{Guid.NewGuid():N}.zip");
-        try
-        {
-            await Task.Run(() => ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false), ct);
-            var zipName = folderName + ".zip";
-            return await SendSourceAsync(deviceAddr, zipPath, zipName, "application/zip", zipPath, ct);
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent("ERROR", $"文件夹打包失败：{ex.Message}"));
-            return false;
-        }
-        finally
-        {
-            TryDelete(zipPath);
-        }
+        // 打包 → 发送 → 清理临时 zip 的流程与助手通道共用，见 PushSendHelper。
+        return await PushSendHelper.SendFolderZipAsync(_events, folderPath, "bt_opp",
+            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "application/zip", lp, token), ct);
     }
 
     /// <summary>按地址解析设备（测试可通过子类覆写注入假设备）。</summary>
@@ -377,36 +328,13 @@ public class OppPushService
 
     private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent)
     {
-        _storage.AddRecord(new TransferRecord
-        {
-            Direction = TransferConst.DirSend,
-            Type = TransferConst.TypeFile,
-            PeerName = device.Name,
-            PeerAddr = device.Addr,
-            Name = displayName,
-            Size = size,
-            Status = TransferConst.StatusOk,
-            Checksum = checksum,
-            Channel = TransferConst.ChannelOpp,
-            LocalPath = localPath,
-            Note = $"已发送 {bytesSent} 字节"
-        });
+        PushSendHelper.WriteOkRecord(_storage, TransferConst.ChannelOpp,
+            device.Name, device.Addr, displayName, size, checksum, localPath, bytesSent);
     }
 
     private void WriteFailedRecord(string peerName, string peerAddr, string displayName, long size, string note)
     {
-        _storage.AddRecord(new TransferRecord
-        {
-            Direction = TransferConst.DirSend,
-            Type = TransferConst.TypeFile,
-            PeerName = peerName,
-            PeerAddr = peerAddr,
-            Name = displayName,
-            Size = size,
-            Status = TransferConst.StatusFailed,
-            Channel = TransferConst.ChannelOpp,
-            Note = note
-        });
+        PushSendHelper.WriteFailedRecord(_storage, TransferConst.ChannelOpp, peerName, peerAddr, displayName, size, note);
     }
 
     private static string MimeForName(string fileName)
@@ -426,8 +354,20 @@ public class OppPushService
             _ => "application/octet-stream"
         };
     }
+}
 
-    private static void TryDelete(string path)
+/// <summary>
+/// 推送共用骨架（静态辅助组合）：把 OPP 与助手两条通道高度重复的
+/// 「打包（zip）/写临时 .txt → 发送 → 计算校验和 → 写记录 → 清理临时文件」流程
+/// 收敛到此，避免改一处漏另一处。
+/// 真正的传输发送由各服务通过 sendAsync 委托注入（闭包携带各自的通道参数、mimeType 与记录本地路径）。
+/// 重试循环因两条通道的传输/错误分类差异较大（OPP 走异常驱动 + 超时，助手处理“忙”与续传偏移），
+/// 故保留在各服务自身的 SendSourceAsync 中，此处只共享与传输无关的骨架。
+/// </summary>
+internal static class PushSendHelper
+{
+    /// <summary>尝试删除临时文件，失败不阻塞流程。OPP 与助手通道共用。</summary>
+    internal static void TryDelete(string path)
     {
         try
         {
@@ -436,6 +376,140 @@ public class OppPushService
         catch
         {
             // 临时文件清理失败不阻塞流程
+        }
+    }
+
+    /// <summary>
+    /// 成功记录写入模板：通道（Channel 字段值）作为参数传入，OOP/助手各自映射到自己的常量。
+    /// resumeNote 仅助手通道用于标记续传偏移，缺省为空以保持 OPP 记录格式不变。
+    /// </summary>
+    internal static void WriteOkRecord(
+        StorageService storage, string channel, string peerName, string peerAddr,
+        string displayName, long size, string checksum, string localPath, long bytesSent, string resumeNote = "")
+    {
+        storage.AddRecord(new TransferRecord
+        {
+            Direction = TransferConst.DirSend,
+            Type = TransferConst.TypeFile,
+            PeerName = peerName,
+            PeerAddr = peerAddr,
+            Name = displayName,
+            Size = size,
+            Status = TransferConst.StatusOk,
+            Checksum = checksum,
+            Channel = channel,
+            LocalPath = localPath,
+            Note = $"已发送 {bytesSent} 字节{resumeNote}"
+        });
+    }
+
+    /// <summary>失败记录写入模板：通道作为参数传入。</summary>
+    internal static void WriteFailedRecord(
+        StorageService storage, string channel, string peerName, string peerAddr,
+        string displayName, long size, string note)
+    {
+        storage.AddRecord(new TransferRecord
+        {
+            Direction = TransferConst.DirSend,
+            Type = TransferConst.TypeFile,
+            PeerName = peerName,
+            PeerAddr = peerAddr,
+            Name = displayName,
+            Size = size,
+            Status = TransferConst.StatusFailed,
+            Channel = channel,
+            Note = note
+        });
+    }
+
+    /// <summary>
+    /// 单文件 zip 推送骨架：把单个文件打入临时 .zip → sendAsync 发送 → 清理临时 zip。
+    /// tempPrefix 为通道前缀（如 bt_opp/bt_asst），保持各通道临时文件命名与清理匹配不变。
+    /// </summary>
+    internal static async Task<bool> SendFileZipAsync(
+        EventBus events, string filePath, string tempPrefix,
+        Func<string, string, string, CancellationToken, Task<bool>> sendAsync,
+        CancellationToken ct)
+    {
+        var entryName = new FileInfo(filePath).Name;
+        var zipPath = Path.Combine(Path.GetTempPath(), $"{tempPrefix}_zip_{Guid.NewGuid():N}.zip");
+        try
+        {
+            await Task.Run(() =>
+            {
+                using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+                archive.CreateEntryFromFile(filePath, entryName, CompressionLevel.Optimal);
+            }, ct);
+            return await sendAsync(zipPath, entryName + ".zip", filePath, ct);
+        }
+        catch (Exception ex)
+        {
+            events.Publish(new LogEvent("ERROR", $"文件打包失败：{ex.Message}"));
+            return false;
+        }
+        finally
+        {
+            TryDelete(zipPath);
+        }
+    }
+
+    /// <summary>
+    /// 文件夹 zip 推送骨架：校验文件夹 → 打包为临时 .zip → sendAsync 发送 → 清理临时 zip。
+    /// 打包错误文案与 OPP/助手两通道原先保持一致。
+    /// </summary>
+    internal static async Task<bool> SendFolderZipAsync(
+        EventBus events, string folderPath, string tempPrefix,
+        Func<string, string, string, CancellationToken, Task<bool>> sendAsync,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        {
+            events.Publish(new LogEvent("ERROR", $"文件夹不存在：{folderPath}"));
+            return false;
+        }
+        var folderName = Path.GetFileName(folderPath.TrimEnd('\\', '/'));
+        if (string.IsNullOrEmpty(folderName)) folderName = "folder";
+        var zipPath = Path.Combine(Path.GetTempPath(), $"{tempPrefix}_folder_{Guid.NewGuid():N}.zip");
+        try
+        {
+            await Task.Run(() => ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false), ct);
+            return await sendAsync(zipPath, folderName + ".zip", zipPath, ct);
+        }
+        catch (Exception ex)
+        {
+            events.Publish(new LogEvent("ERROR", $"文件夹打包失败：{ex.Message}"));
+            return false;
+        }
+        finally
+        {
+            TryDelete(zipPath);
+        }
+    }
+
+    /// <summary>
+    /// 文本推送骨架：写临时 .txt → sendAsync 发送 → 清理临时文件。
+    /// 文件名缺省取配置 PushTextFileName；临时命名与清理匹配 OPP/助手两通道。
+    /// </summary>
+    internal static async Task<bool> SendTextAsync(
+        EventBus events, AppConfig config, string text, string? name, string tempPrefix,
+        Func<string, string, string, CancellationToken, Task<bool>> sendAsync,
+        CancellationToken ct)
+    {
+        var fileName = string.IsNullOrWhiteSpace(name) ? config.PushTextFileName : name;
+        var tempPath = Path.Combine(Path.GetTempPath(), $"{tempPrefix}_text_{Guid.NewGuid():N}.txt");
+        try
+        {
+            await File.WriteAllBytesAsync(tempPath, Encoding.UTF8.GetBytes(text ?? ""), ct);
+            return await sendAsync(tempPath, fileName, tempPath, ct);
+        }
+        catch (Exception ex)
+        {
+            events.Publish(new LogEvent("ERROR", $"文本临时文件写入失败：{ex.Message}"));
+            return false;
+        }
+        finally
+        {
+            TryDelete(tempPath);
         }
     }
 }

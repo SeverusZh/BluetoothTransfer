@@ -1,6 +1,4 @@
 using System.IO;
-using System.IO.Compression;
-using System.Text;
 using Windows.Devices.Bluetooth.Rfcomm;
 using Windows.Networking.Sockets;
 using BluetoothTransfer.Core.Client;
@@ -41,73 +39,25 @@ public sealed class AssistantPushService
         var info = new FileInfo(filePath);
         if (zip)
         {
-            var zipPath = Path.Combine(Path.GetTempPath(), $"bt_asst_zip_{Guid.NewGuid():N}.zip");
-            try
-            {
-                await Task.Run(() =>
-                {
-                    using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
-                    archive.CreateEntryFromFile(filePath, info.Name, CompressionLevel.Optimal);
-                }, ct);
-                return await SendSourceAsync(deviceAddr, zipPath, info.Name + ".zip", filePath, ct);
-            }
-            catch (Exception ex)
-            {
-                _events.Publish(new LogEvent("ERROR", $"文件打包失败：{ex.Message}"));
-                return false;
-            }
-            finally
-            {
-                TryDelete(zipPath);
-            }
+            // 打包 → 发送 → 清理临时 zip 的流程与 OPP 通道共用，见 PushSendHelper。
+            return await PushSendHelper.SendFileZipAsync(_events, filePath, "bt_asst",
+                (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, lp, token), ct);
         }
         return await SendSourceAsync(deviceAddr, filePath, info.Name, filePath, ct);
     }
 
     public async Task<bool> SendTextAsync(string deviceAddr, string text, string? name = null, CancellationToken ct = default)
     {
-        var fileName = string.IsNullOrWhiteSpace(name) ? _config.PushTextFileName : name;
-        var tempPath = Path.Combine(Path.GetTempPath(), $"bt_asst_text_{Guid.NewGuid():N}.txt");
-        try
-        {
-            await File.WriteAllBytesAsync(tempPath, Encoding.UTF8.GetBytes(text ?? ""), ct);
-            return await SendSourceAsync(deviceAddr, tempPath, fileName, tempPath, ct);
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent("ERROR", $"文本临时文件写入失败：{ex.Message}"));
-            return false;
-        }
-        finally
-        {
-            TryDelete(tempPath);
-        }
+        // 写临时 .txt → 发送 → 清理临时文件的流程与 OPP 通道共用，见 PushSendHelper。
+        return await PushSendHelper.SendTextAsync(_events, _config, text, name, "bt_asst",
+            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, lp, token), ct);
     }
 
     public async Task<bool> SendFolderAsync(string deviceAddr, string folderPath, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
-        {
-            _events.Publish(new LogEvent("ERROR", $"文件夹不存在：{folderPath}"));
-            return false;
-        }
-        var folderName = Path.GetFileName(folderPath.TrimEnd('\\', '/'));
-        if (string.IsNullOrEmpty(folderName)) folderName = "folder";
-        var zipPath = Path.Combine(Path.GetTempPath(), $"bt_asst_folder_{Guid.NewGuid():N}.zip");
-        try
-        {
-            await Task.Run(() => ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false), ct);
-            return await SendSourceAsync(deviceAddr, zipPath, folderName + ".zip", zipPath, ct);
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent("ERROR", $"文件夹打包失败：{ex.Message}"));
-            return false;
-        }
-        finally
-        {
-            TryDelete(zipPath);
-        }
+        // 打包 → 发送 → 清理临时 zip 的流程与 OPP 通道共用，见 PushSendHelper。
+        return await PushSendHelper.SendFolderZipAsync(_events, folderPath, "bt_asst",
+            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, lp, token), ct);
     }
 
     private async Task<bool> SendSourceAsync(
@@ -280,36 +230,13 @@ public sealed class AssistantPushService
 
     private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent, string resumeNote = "")
     {
-        _storage.AddRecord(new TransferRecord
-        {
-            Direction = TransferConst.DirSend,
-            Type = TransferConst.TypeFile,
-            PeerName = device.Name,
-            PeerAddr = device.Addr,
-            Name = displayName,
-            Size = size,
-            Status = TransferConst.StatusOk,
-            Checksum = checksum,
-            Channel = TransferConst.ChannelAssistant,
-            LocalPath = localPath,
-            Note = $"已发送 {bytesSent} 字节{resumeNote}"
-        });
+        PushSendHelper.WriteOkRecord(_storage, TransferConst.ChannelAssistant,
+            device.Name, device.Addr, displayName, size, checksum, localPath, bytesSent, resumeNote);
     }
 
     private void WriteFailedRecord(string peerName, string peerAddr, string displayName, long size, string note)
     {
-        _storage.AddRecord(new TransferRecord
-        {
-            Direction = TransferConst.DirSend,
-            Type = TransferConst.TypeFile,
-            PeerName = peerName,
-            PeerAddr = peerAddr,
-            Name = displayName,
-            Size = size,
-            Status = TransferConst.StatusFailed,
-            Channel = TransferConst.ChannelAssistant,
-            Note = note
-        });
+        PushSendHelper.WriteFailedRecord(_storage, TransferConst.ChannelAssistant, peerName, peerAddr, displayName, size, note);
     }
 
     /// <summary>
@@ -329,18 +256,6 @@ public sealed class AssistantPushService
                 return service.ProtectionLevel != SocketProtectionLevel.PlainSocket
                     ? service.ProtectionLevel
                     : SocketProtectionLevel.PlainSocket;
-        }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path)) File.Delete(path);
-        }
-        catch
-        {
-            // 临时文件清理失败不阻塞流程
         }
     }
 }
