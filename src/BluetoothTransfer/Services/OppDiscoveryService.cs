@@ -140,7 +140,15 @@ public sealed class OppDiscoveryService
 
         var custom = info.Pairing.Custom;
         TypedEventHandler<DeviceInformationCustomPairing, DevicePairingRequestedEventArgs> handler =
-            (_, args) => args.Accept();
+            (_, args) =>
+            {
+                // pin 非空时走 ProvidePin 流程并提供 PIN（DevicePairingRequestedEventArgs.Accept(string) 重载），
+                // pin 为空时维持 ConfirmOnly 流程（args.Accept() 无参重载）。
+                if (!string.IsNullOrEmpty(pin))
+                    args.Accept(pin);
+                else
+                    args.Accept();
+            };
         custom.PairingRequested += handler;
         try
         {
