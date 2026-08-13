@@ -23,10 +23,18 @@ public class ReceiverAppTests : IDisposable
     }
 
     [Fact]
+    public void DefaultOptions_AskIsTrue()
+    {
+        // 安全加固：默认每次接收前询问，防止已配对设备直接落盘。
+        Assert.True(new ReceiverOptions { SaveDir = _dir }.Ask);
+    }
+
+    [Fact]
     public async Task Run_ReceivesFile_SavesToDir()
     {
         var listener = new MemoryAsstListener();
-        var app = new ReceiverApp(new ReceiverOptions { SaveDir = _dir }, listener);
+        // 显式关闭询问，避免测试触发控制台 y/N 输入导致挂起。
+        var app = new ReceiverApp(new ReceiverOptions { SaveDir = _dir, Ask = false }, listener);
         using var cts = new CancellationTokenSource();
         var runTask = app.RunAsync(cts.Token);
 

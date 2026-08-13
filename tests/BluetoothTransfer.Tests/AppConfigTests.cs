@@ -17,6 +17,8 @@ public class AppConfigTests
         Assert.Equal(3, config.OppRetryDelaySeconds);
         Assert.Equal("auto", config.OppProtectionLevel);
         Assert.False(config.OppNameUseBom);
+        // 安全加固：默认每次接收前询问，防止已配对设备直接落盘。
+        Assert.True(config.ReceiveAsk);
     }
 
     [Fact]

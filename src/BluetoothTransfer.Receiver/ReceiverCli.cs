@@ -28,7 +28,8 @@ public static class ReceiverCli
     private static async Task<int> RunReceiverAsync(string[] args)
     {
         string? dir = null;
-        var ask = false;
+        // 安全加固：默认每次接收前询问（防止已配对设备未经确认直接落盘），--no-ask 显式关闭。
+        var ask = true;
         for (var i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -38,6 +39,9 @@ public static class ReceiverCli
                     break;
                 case "--ask":
                     ask = true;
+                    break;
+                case "--no-ask":
+                    ask = false;
                     break;
                 case "--help" or "-h":
                     PrintHelp();
@@ -85,12 +89,13 @@ public static class ReceiverCli
             btrecv —— BluetoothTransfer 接收助手（Windows）
 
             用法：
-              btrecv run [--dir 保存目录] [--ask]    启动接收（默认自动接收）
+              btrecv run [--dir 保存目录] [--no-ask]   启动接收（默认每次接收前询问）
               btrecv --help                           显示帮助
               btrecv --version                        显示版本
 
             说明：
               - 接收端与发送端需先配对；
+              - 默认每次接收前询问，--no-ask 关闭询问、直接自动接收；
               - 助手必须保持运行才能接收，关闭即停止监听；
               - 传输为明文，接收完成时校验 SHA-256；
               - 半成品以 .btpart 保留，断线重连自动续传。

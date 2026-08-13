@@ -35,8 +35,8 @@ public class AppConfig
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "Downloads", "BluetoothReceive");
 
-    /// <summary>内置接收助手是否每次接收前询问。</summary>
-    public bool ReceiveAsk { get; set; }
+    /// <summary>内置接收助手是否每次接收前询问（默认开启，防止已配对设备直接落盘）。</summary>
+    public bool ReceiveAsk { get; set; } = true;
     /// <summary>
     /// 发送通道模式：auto（SDP 探测，助手可用走私有协议，否则回退 OPP）/
     /// assistant（强制助手）/ opp（强制 OPP）。

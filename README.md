@@ -20,7 +20,7 @@
 - **断点续传** — 两台 Windows 电脑之间走私有分片协议（自定义 RFCOMM UUID）：中断后从已确认偏移继续，接收端保留半成品（`.btpart` + `.btpart.meta`），重连自动续传，完成时校验 SHA-256，不匹配自动清空重传
 - **真正的传输队列** — 队列任务支持单独**暂停 / 继续 / 移除 / 重试**；接收端忙时自动按指数退避等待；发送端显示通道列（OPP / 助手）
 - **自动探测 + 手动覆盖** — 发送前 SDP 探测对端是否运行助手：在线走私有通道，离线自动回退 OPP 通用推送；可在 GUI/CLI 强制指定通道
-- **极简接收端** — `btrecv` 单 exe：CLI 内核（`btrecv run [--dir 目录] [--ask]`）+ 极简 GUI 壳（状态/进度/完成列表/保存目录/每次询问开关），默认自动接收；引导时先用 OPP 把 `btrecv` 包推过去，解压即用（自包含无需安装 .NET）
+- **极简接收端** — `btrecv` 单 exe：CLI 内核（`btrecv run [--dir 目录] [--ask]`）+ 极简 GUI 壳（状态/进度/完成列表/保存目录/每次询问开关），**默认每次接收前询问**（防止已配对设备直接落盘）；引导时先用 OPP 把 `btrecv` 包推过去，解压即用（自包含无需安装 .NET）
 - **明文说明** — 私有通道 v1 默认明文，无应用层加密；助手通道与 OPP 通道共用 `OppProtectionLevel` 配置，`encrypt` 可启用链路加密（RFCOMM 加密由发送端请求、系统协商），但应用层仍无端到端加密
 
 ### 完整 GUI 内置接收（v1.3）
@@ -67,7 +67,8 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 1. 发送端先通过 OPP 把 `btrecv-selfcontained.zip` 推给目标电脑（GUI「发送文件」或 `btcli opp-send-file <地址> <包路径>`）
 2. 对端解压、双击运行 `btrecv`（进入 GUI「监听中」，无需安装 .NET）
 3. 发送端重新扫描，设备出现绿色「助手」徽标即代表探测成功；或运行 `btcli detect <地址>`
-4. 之后默认自动走可续传的私有通道；对端未运行时自动回退 OPP
+4. 之后默认走可续传的私有通道；对端未运行时自动回退 OPP。
+5. 接收助手**默认每次接收前询问**，需用户在接收端确认后文件才落盘（完整内置接收助手默认 `ReceiveAsk=true`，btrecv 极简 GUI 壳默认询问）；如需免确认自动接收，可配置 `ReceiveAsk=false` 或按接收端显式开关关闭询问。
 
 ## CLI 命令参考
 
@@ -108,7 +109,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | `OppRetryDelaySeconds` | 3 | 重试基础间隔（秒），按 1x/2x/4x 指数退避 |
 | `TransferMode` | auto | 发送通道：auto（探测助手，否则 OPP）/ assistant / opp |
 | `ReceiveDirectory` | 下载\BluetoothReceive | 内置接收助手保存目录 |
-| `ReceiveAsk` | false | 内置接收助手是否每次接收前询问 |
+| `ReceiveAsk` | true | 内置接收助手是否每次接收前询问（默认开启）；设为 false 关闭询问、直接自动接收 |
 
 ## Windows 兼容性说明
 

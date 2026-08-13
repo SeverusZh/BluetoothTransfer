@@ -15,7 +15,7 @@ if (command is "gui" or "--gui")
     var saveDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "Downloads", "BluetoothReceive");
-    app.Run(new ReceiverWindow(saveDir, ask: false));
+    app.Run(new ReceiverWindow(saveDir, ask: true));
     return 0;
 }
 #endif
