@@ -177,6 +177,9 @@ public class OppViewModel : ViewModelBase
             if (_config.TransferMode == value) return;
             _config.TransferMode = value;
             _config.Save();
+            // 保存失败不再静默：经日志上报（_events 仅在构造后可达，无空引用风险）
+            if (_config.LastError is { } saveErr)
+                PublishLog("WARN", saveErr);
             OnPropertyChanged();
         }
     }
@@ -215,6 +218,9 @@ public class OppViewModel : ViewModelBase
             if (_config.ReceiveDirectory == value) return;
             _config.ReceiveDirectory = value;
             _config.Save();
+            // 保存失败不再静默：经日志上报
+            if (_config.LastError is { } saveErr)
+                PublishLog("WARN", saveErr);
             OnPropertyChanged();
         }
     }
@@ -226,6 +232,9 @@ public class OppViewModel : ViewModelBase
             if (_config.ReceiveAsk == value) return;
             _config.ReceiveAsk = value;
             _config.Save();
+            // 保存失败不再静默：经日志上报
+            if (_config.LastError is { } saveErr)
+                PublishLog("WARN", saveErr);
             OnPropertyChanged();
         }
     }
@@ -243,6 +252,9 @@ public class OppViewModel : ViewModelBase
         _events = new EventBus();
         _storage = new StorageService();
         _config = AppConfig.Load();
+        // 读取配置失败时经日志上报（_events 已在上面初始化，可安全发布）
+        if (_config.LastError is { } loadErr)
+            _events.Publish(new LogEvent("WARN", loadErr));
         _discovery = new OppDiscoveryService(_events);
         _push = new OppPushService(_events, _storage, _config, _discovery);
         _assistantPush = new AssistantPushService(_events, _storage, _config, _discovery);

@@ -43,6 +43,10 @@ public class AppConfig
     /// </summary>
     public string TransferMode { get; set; } = "auto";
 
+    /// <summary>最近一次配置读写错误摘要；成功时为空，失败时记录中文错误信息（便于 GUI 上报）。不参与 JSON 序列化。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? LastError { get; private set; }
+
     private static readonly string ConfigDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "BluetoothTransfer");
@@ -50,16 +54,23 @@ public class AppConfig
 
     public static AppConfig Load()
     {
+        var cfg = new AppConfig();
         try
         {
             if (File.Exists(ConfigPath))
             {
                 var json = File.ReadAllText(ConfigPath);
-                return JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
+                cfg = JsonSerializer.Deserialize<AppConfig>(json) ?? new AppConfig();
             }
+            cfg.LastError = null;
         }
-        catch { }
-        return new AppConfig();
+        catch (Exception ex)
+        {
+            // 磁盘/权限/JSON 损坏异常不再静默吞掉，记录错误摘要供 GUI 上报；
+            // 即便失败仍返回默认配置对象，保证解析方拿到可用的实例。
+            cfg.LastError = $"读取配置文件失败：{ex.Message}";
+        }
+        return cfg;
     }
 
     public void Save()
@@ -69,7 +80,12 @@ public class AppConfig
             Directory.CreateDirectory(ConfigDir);
             var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ConfigPath, json);
+            LastError = null;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // 磁盘满/权限问题不再静默吞掉，记录错误摘要供 GUI 上报。
+            LastError = $"保存配置文件失败：{ex.Message}";
+        }
     }
 }
