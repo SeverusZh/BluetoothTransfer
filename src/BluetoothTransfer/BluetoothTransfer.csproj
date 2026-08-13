@@ -27,4 +27,8 @@
     <ProjectReference Include="..\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="BluetoothTransfer.Tests" />
+  </ItemGroup>
+
 </Project>
