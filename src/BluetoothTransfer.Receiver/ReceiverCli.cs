@@ -14,7 +14,7 @@ public static class ReceiverCli
                 PrintHelp();
                 return 0;
             case "version" or "--version" or "-v":
-                Console.WriteLine(typeof(ReceiverCli).Assembly.GetName().Version?.ToString(3) ?? "1.3.0");
+                Console.WriteLine(typeof(ReceiverCli).Assembly.GetName().Version?.ToString(3) ?? "1.4.0");
                 return 0;
             case "run":
                 return await RunReceiverAsync(args[1..]);
