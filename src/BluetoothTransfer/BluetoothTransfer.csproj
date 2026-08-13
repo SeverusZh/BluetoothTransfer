@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\BluetoothTransfer.AppServices\BluetoothTransfer.AppServices.csproj" />
     <ProjectReference Include="..\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj" />
   </ItemGroup>
 

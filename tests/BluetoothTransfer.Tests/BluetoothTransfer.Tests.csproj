@@ -19,34 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\BluetoothTransfer.AppServices\BluetoothTransfer.AppServices.csproj" />
     <ProjectReference Include="..\..\src\BluetoothTransfer.Core\BluetoothTransfer.Core.csproj" />
     <ProjectReference Include="..\..\src\BluetoothTransfer.Receiver\BluetoothTransfer.Receiver.csproj" />
-  </ItemGroup>
-
-  <!--
-    与 CLI 相同的做法：直接链接主工程的模型与服务源码，保证被测代码与产品一致，
-    同时把 OBEX 相关实现（不依赖 WPF）纳入离线单测。
-  -->
-  <ItemGroup>
-    <Compile Include="..\..\src\BluetoothTransfer\Models\AppConfig.cs" Link="Models\AppConfig.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Models\DeviceInfo.cs" Link="Models\DeviceInfo.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Models\TransferRecord.cs" Link="Models\TransferRecord.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\EventBus.cs" Link="Services\EventBus.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\ExportService.cs" Link="Services\ExportService.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\FileChecksum.cs" Link="Services\FileChecksum.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\IObexTransport.cs" Link="Services\IObexTransport.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\MemoryObexTransport.cs" Link="Services\MemoryObexTransport.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\ObexClient.cs" Link="Services\ObexClient.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\ObexPacket.cs" Link="Services\ObexPacket.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\OppDiscoveryService.cs" Link="Services\OppDiscoveryService.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\OppPushService.cs" Link="Services\OppPushService.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\OppRetryPolicy.cs" Link="Services\OppRetryPolicy.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\OppSendQueue.cs" Link="Services\OppSendQueue.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\SocketObexTransport.cs" Link="Services\SocketObexTransport.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\StorageService.cs" Link="Services\StorageService.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\TransferSpeedTracker.cs" Link="Services\TransferSpeedTracker.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\AssistantPushService.cs" Link="Services\AssistantPushService.cs" />
-    <Compile Include="..\..\src\BluetoothTransfer\Services\ReceiveService.cs" Link="Services\ReceiveService.cs" />
   </ItemGroup>
 
 </Project>
