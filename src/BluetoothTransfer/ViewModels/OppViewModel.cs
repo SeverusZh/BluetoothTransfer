@@ -121,6 +121,11 @@ public class OppViewModel : ViewModelBase, IDisposable
     private readonly Dispatcher _dispatcher;
     private readonly TransferSpeedTracker _speedTracker = new();
     private readonly OppSendQueue _queue = new();
+    // 组合式拆分：设备域与记录域的纯内部逻辑分别下沉到 DevicePaneController / RecordsPaneController，
+    // 本 VM 保持对外门面，公开 API 不变。`_assistantCache` 与发送队列（ResolveAssistantOnceAsync）共用，
+    // 因此把它传给 DevicePaneController 同一实例引用，保证缓存写入语义跨两域一致。
+    private readonly DevicePaneController _devicePane;
+    private readonly RecordsPaneController _recordsPane;
 
     private bool _isScanning;
     private OppDeviceItem? _selectedDevice;
@@ -275,6 +280,17 @@ public class OppViewModel : ViewModelBase, IDisposable
         _receive.Completed += OnReceiveCompleted;
         _receive.Logged += OnReceiveLogged;
 
+        // 设备域 / 记录域控制器：注入服务、调度器与 VM 状态回写回调（见对应组件类说明）。
+        _devicePane = new DevicePaneController(
+            _discovery, _storage, _dispatcher, Devices, _assistantCache,
+            () => IsScanning, v => IsScanning = v,
+            v => StatusText = v, v => _lastError = v,
+            (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
+        _recordsPane = new RecordsPaneController(
+            _storage, _dispatcher, Records,
+            v => StatusText = v,
+            (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
+
         ScanCommand = new RelayCommand(() => SafeAsync(ScanAsync));
         PairCommand = new RelayCommand(() => SafeAsync(PairAsync), () => SelectedDevice != null);
         OpenSettingsCommand = new RelayCommand(() => OppDiscoveryService.OpenBluetoothSettings(_events));
@@ -306,131 +322,25 @@ public class OppViewModel : ViewModelBase, IDisposable
         _events.Subscribe(_logHandler = new Action<LogEvent>(OnLog));
         _events.Subscribe(_progressHandler = new Action<TransferProgressEvent>(OnProgress));
         _ = LoadRecordsAsync();
-        _ = LoadFavoriteDevicesAsync();
+        _ = _devicePane.LoadFavoriteDevicesAsync();
     }
 
     // ------------------------------------------------------------------ 设备
+    // 设备域的纯内部逻辑（扫描/配对/收藏/助手探测与合并）已下沉到 DevicePaneController，
+    // 以下方法仅作门面委托，保持命令与 SelectedDevice/IsScanning/StatusText/LastError 语义不变。
 
-    private async Task ScanAsync()
-    {
-        if (IsScanning) return;
-        IsScanning = true;
-        try
-        {
-            StatusText = "正在扫描支持 OPP 的设备（5 秒）...";
-            var devices = await Task.Run(() => _discovery.DiscoverAsync(seconds: 5));
-            var saved = _storage.GetDevices();
-            _dispatcher.Invoke(() =>
-            {
-                Devices.Clear();
-                _assistantCache.Clear();
-                var items = devices.Select(d =>
-                {
-                    var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, d.Addr));
-                    return new OppDeviceItem
-                    {
-                        Name = d.Name,
-                        Addr = d.Addr,
-                        DeviceId = d.Id,
-                        IsPaired = d.IsPaired,
-                        Favorite = info?.Favorite ?? false,
-                        Alias = info?.Alias ?? "",
-                        LastConnected = info?.LastConnected ?? ""
-                    };
-                })
-                .OrderByDescending(x => x.Favorite)
-                .ThenByDescending(x => x.IsPaired)
-                .ThenByDescending(x => x.LastConnected)
-                .ToList();
-                foreach (var item in items) Devices.Add(item);
-                foreach (var item in Devices)
-                    _ = ProbeAssistantAsync(item);
-            });
-            await MergeAssistantDevicesAsync(saved);
-            await LoadFavoriteDevicesAsync();
-            StatusText = Devices.Count > 0
-                ? $"发现 {Devices.Count} 个 OPP 设备"
-                : "未发现 OPP 设备（确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对）";
-        }
-        catch (Exception ex)
-        {
-            _lastError = ex.Message;
-            StatusText = $"扫描失败：{ex.Message}";
-        }
-        finally
-        {
-            IsScanning = false;
-        }
-    }
+    private Task ScanAsync() => _devicePane.ScanAsync();
 
     private async Task PairAsync()
     {
         var device = SelectedDevice;
-        if (device == null) return;
-        StatusText = $"正在配对 {device.DisplayName}...";
-        var ok = await _discovery.PairAsync(device.Addr);
-        StatusText = ok
-            ? $"配对成功：{device.DisplayName}"
-            : $"配对失败：{device.DisplayName}（可尝试在系统设置中手动配对）";
-        await RefreshPairedStatusAsync();
-    }
-
-    private async Task RefreshPairedStatusAsync()
-    {
-        try
-        {
-            var devices = await Task.Run(() => _discovery.DiscoverAsync(seconds: 0));
-            _dispatcher.Invoke(() =>
-            {
-                foreach (var item in Devices)
-                {
-                    var match = devices.FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, item.Addr));
-                    if (match != null) item.IsPaired = match.IsPaired;
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogError, $"刷新配对状态失败：{ex.Message}"));
-        }
+        await _devicePane.PairAsync(device);
     }
 
     private async Task ToggleFavoriteAsync()
     {
         var device = SelectedDevice;
-        if (device == null) return;
-        var next = !device.Favorite;
-        if (next)
-        {
-            // 收藏：插入或更新记录（对从未发送过的设备也能持久化）
-            await Task.Run(() => _storage.UpsertDevice(new DeviceInfo
-            {
-                Addr = device.Addr,
-                Name = device.Name,
-                Alias = device.Alias,
-                Favorite = true,
-                LastSeen = DateTime.Now.ToString("o")
-            }));
-        }
-        else
-        {
-            await Task.Run(() => _storage.SetDeviceFavorite(device.Addr, false));
-        }
-        device.Favorite = next;
-        ResortDevices();
-        StatusText = next ? $"已收藏：{device.DisplayName}" : $"已取消收藏：{device.DisplayName}";
-    }
-
-    /// <summary>收藏置顶 → 已配对 → 最近连接 的展示排序。</summary>
-    private void ResortDevices()
-    {
-        var sorted = Devices
-            .OrderByDescending(d => d.Favorite)
-            .ThenByDescending(d => d.IsPaired)
-            .ThenByDescending(d => d.LastConnected)
-            .ToList();
-        for (var i = 0; i < sorted.Count; i++)
-            Devices.Move(Devices.IndexOf(sorted[i]), i);
+        await _devicePane.ToggleFavoriteAsync(device);
     }
 
     // ------------------------------------------------------------------ 接收助手
@@ -490,7 +400,13 @@ public class OppViewModel : ViewModelBase, IDisposable
     private void OnReceiveLogged(string level, string msg)
         => _events.Publish(new LogEvent(level, msg));
 
+    // 说明：接收助手本域与 UI 线程（Dispatcher 回调、MessageBox 确认、Receive* 绑定属性）耦合较深，
+    // 且窗口期/退回路径相互交叠，拆分风险高，故本次拆分不涉及此部分，保持原状。
+
     // ------------------------------------------------------------------ 发送
+    // 说明：发送队列/通道解析（ResolveAssistantOnceAsync）/进度回调与 UI 线程及 ObservableCollection
+    // 增删严格耦合，拆分风险大，本次拆分不涉及；仅设备域的助手探测缓存（_assistantCache）与发送共用，
+    // 已保证两端读写同一字典实例、语义不变。
 
     private void EnqueueAndStart(IEnumerable<OppSendJob> jobs)
     {
@@ -561,93 +477,9 @@ public class OppViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 合并"已配对且运行接收助手"的设备：接收端只跑 btrecv（不广播 OPP）时也能在列表中出现。
+    /// 发送通道的助手探测缓存判等重要逻辑：与设备域共用 _assistantCache（同一字典实例由
+    /// DevicePaneController 与这里的 ResolveAssistantOnceAsync 共同读写），"先写者胜"语义保持。
     /// </summary>
-    private async Task MergeAssistantDevicesAsync(List<DeviceInfo> saved)
-    {
-        List<AssistantDetector.AssistantDeviceInfo> assistantDevices;
-        try
-        {
-            assistantDevices = await Task.Run(() => AssistantDetector.FindAssistantDevicesAsync());
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogWarn, $"枚举助手设备失败：{ex.Message}"));
-            return;
-        }
-
-        _dispatcher.Invoke(() =>
-        {
-            foreach (var ad in assistantDevices)
-            {
-                var existing = Devices.FirstOrDefault(d => OppDiscoveryService.AddrEquals(d.Addr, ad.Addr));
-                if (existing != null)
-                {
-                    existing.IsAssistant = true;
-                }
-                else
-                {
-                    var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, ad.Addr));
-                    Devices.Add(new OppDeviceItem
-                    {
-                        Name = ad.Name,
-                        Addr = ad.Addr,
-                        DeviceId = ad.DeviceId,
-                        IsPaired = true,
-                        IsAssistant = true,
-                        Favorite = info?.Favorite ?? false,
-                        Alias = info?.Alias ?? "",
-                        LastConnected = info?.LastConnected ?? ""
-                    });
-                }
-                lock (_assistantCache)
-                    _assistantCache[ad.Addr] = true;
-            }
-            ResortDevices();
-        });
-    }
-
-    /// <summary>
-    /// 收藏夹：把本地保存的收藏设备合并进列表，无需每次扫描即可选中发送。
-    /// 地址经已配对列表解析 DeviceId（用于助手探测），未配对时发送会给出明确错误。
-    /// </summary>
-    private async Task LoadFavoriteDevicesAsync()
-    {
-        try
-        {
-            var favorites = await Task.Run(() => _storage.GetDevices().Where(d => d.Favorite).ToList());
-            var items = new List<OppDeviceItem>();
-            foreach (var f in favorites)
-            {
-                var paired = await AssistantDetector.FindPairedDeviceAsync(f.Addr);
-                items.Add(new OppDeviceItem
-                {
-                    Name = f.Name,
-                    Addr = f.Addr,
-                    DeviceId = paired?.DeviceId ?? "",
-                    IsPaired = paired != null,
-                    Favorite = true,
-                    Alias = f.Alias ?? "",
-                    LastConnected = f.LastConnected ?? ""
-                });
-            }
-            _dispatcher.Invoke(() =>
-            {
-                foreach (var item in items)
-                {
-                    if (Devices.Any(d => OppDiscoveryService.AddrEquals(d.Addr, item.Addr))) continue;
-                    Devices.Add(item);
-                    _ = ProbeAssistantAsync(item);
-                }
-                ResortDevices();
-            });
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogWarn, $"加载收藏设备失败：{ex.Message}"));
-        }
-    }
-
     private async Task<bool> ResolveAssistantOnceAsync(OppDeviceItem device)
     {
         switch (_config.TransferMode)
@@ -672,19 +504,6 @@ public class OppViewModel : ViewModelBase, IDisposable
                         _assistantCache[device.Addr] = has;
                 }
                 return has;
-        }
-    }
-
-    private async Task ProbeAssistantAsync(OppDeviceItem item)
-    {
-        try
-        {
-            var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId));
-            _dispatcher.Invoke(() => item.IsAssistant = has);
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogWarn, $"探测助手失败：{item.DisplayName}（{ex.Message}）"));
         }
     }
 
@@ -831,91 +650,19 @@ public class OppViewModel : ViewModelBase, IDisposable
     }
 
     // ------------------------------------------------------------------ 记录
+    // 记录域的纯内部逻辑（加载/导出/清空/统计）已下沉到 RecordsPaneController（含加载并发保护），
+    // 以下方法仅作门面委托，保持命令语义与 Records 集合绑定不变。
 
-    private async Task LoadRecordsAsync()
-    {
-        try
-        {
-            var records = await Task.Run(() => _storage.GetRecords(limit: 200));
-            _dispatcher.Invoke(() =>
-            {
-                Records.Clear();
-                foreach (var r in records) Records.Add(r);
-            });
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogError, $"加载记录失败：{ex.Message}"));
-        }
-    }
+    private Task LoadRecordsAsync() => _recordsPane.LoadRecordsAsync();
 
-    // 导出/清空涉及存储查询与磁盘写入：后台执行，避免阻塞 UI 线程。
-    // 命令经 SafeAsync 启动，方法内 await 未 ConfigureAwait(false)，延续自然回到 UI 线程，
-    // 因此状态栏/日志更新仍发生在 UI 线程。
-    private async Task ExportRecordsAsync(string filter, string ext, Func<List<TransferRecord>, string, string> export)
-    {
-        try
-        {
-            var dialog = new Microsoft.Win32.SaveFileDialog
-            {
-                Filter = filter,
-                FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}"
-            };
-            if (dialog.ShowDialog() != true) return;
-            var count = await Task.Run(() =>
-            {
-                var records = _storage.GetRecords(limit: 10000);
-                export(records, dialog.FileName);
-                return records.Count;
-            });
-            StatusText = $"已导出 {count} 条记录到 {ext.ToUpperInvariant()}";
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogError, $"导出失败：{ex.Message}"));
-            StatusText = $"导出失败：{ex.Message}";
-        }
-    }
+    private Task ExportRecordsAsync(string filter, string ext, Func<List<TransferRecord>, string, string> export)
+        => _recordsPane.ExportRecordsAsync(filter, ext, export);
 
-    private async Task ClearRecordsAsync()
-    {
-        long total;
-        try
-        {
-            total = await Task.Run(() => _storage.GetStats().totalCount);
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogError, $"清空传输记录失败：{ex.Message}"));
-            StatusText = $"清空失败：{ex.Message}";
-            return;
-        }
-        if (total == 0)
-        {
-            StatusText = "没有可清空的记录";
-            return;
-        }
-        var confirm = MessageBox.Show(
-            $"确定要清空全部 {total} 条传输记录吗？该操作不可恢复。",
-            "清空传输记录",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-        if (confirm != MessageBoxResult.Yes) return;
-
-        try
-        {
-            var deleted = await Task.Run(() => _storage.ClearRecords());
-            Records.Clear();
-            StatusText = $"已清空 {deleted} 条传输记录";
-        }
-        catch (Exception ex)
-        {
-            _events.Publish(new LogEvent(TransferConst.LogError, $"清空传输记录失败：{ex.Message}"));
-            StatusText = $"清空失败：{ex.Message}";
-        }
-    }
+    private Task ClearRecordsAsync() => _recordsPane.ClearRecordsAsync();
 
     // ------------------------------------------------------------------ 事件
+    // 说明：日志/进度事件需经 EventBus 汇集并回写 UI 线程（LogLines/LastError/TransferProgress），
+    // 且与 EventBus 订阅生命周期（Dispose 精确退订）强绑定，拆分风险大，本次拆分不涉及。
 
     private void OnLog(LogEvent e)
     {
