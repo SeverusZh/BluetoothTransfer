@@ -5,15 +5,29 @@ namespace BluetoothTransfer.Cli;
 /// </summary>
 public sealed class Args
 {
+    /// <summary>需要取值的选项集合（形如 --key value 或 --key=value）。</summary>
     private static readonly HashSet<string> ValuedOptions = new(StringComparer.OrdinalIgnoreCase)
     {
         "seconds", "timeout", "name", "peer", "chunk", "limit", "direction", "type",
-        "status", "search", "from", "to", "db", "pin", "mode"
+        "status", "search", "from", "to", "db", "pin", "mode", "root", "sort"
+    };
+
+    /// <summary>仅作开关、不带取值的已知标志集合。</summary>
+    private static readonly HashSet<string> KnownFlags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "json", "paired-only", "zip", "verbose", "yes", "unset"
     };
 
     private readonly List<string> _positional = new();
     private readonly Dictionary<string, string> _options = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _flags = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _unknownOptions = new();
+
+    /// <summary>首次出现的参数校验错误（如带值选项缺值）；无错误为 null。</summary>
+    public string? Error { get; private set; }
+
+    /// <summary>解析时识别出的未知选项（不含值、未匹配已知选项集）。</summary>
+    public IReadOnlyList<string> UnknownOptions => _unknownOptions;
 
     public static Args Parse(IEnumerable<string> args)
     {
@@ -28,15 +42,28 @@ public sealed class Args
                 var eq = body.IndexOf('=');
                 if (eq >= 0)
                 {
-                    parsed._options[body[..eq]] = body[(eq + 1)..];
+                    // --key=value 形式：仅当 key 已知时记录，否则视为未知选项。
+                    var key = body[..eq];
+                    if (ValuedOptions.Contains(key) || KnownFlags.Contains(key))
+                        parsed._options[key] = body[(eq + 1)..];
+                    else
+                        parsed._unknownOptions.Add(key);
                 }
-                else if (ValuedOptions.Contains(body) && i + 1 < tokens.Count)
+                else if (ValuedOptions.Contains(body))
                 {
-                    parsed._options[body] = tokens[++i];
+                    // 带值选项若后面紧跟另一个选项或参数已耗尽，视为缺值错误（避免吞掉下一个参数）。
+                    if (i + 1 < tokens.Count && !tokens[i + 1].StartsWith("--", StringComparison.Ordinal))
+                        parsed._options[body] = tokens[++i];
+                    else
+                        parsed.Error ??= $"选项 --{body} 需要值";
+                }
+                else if (KnownFlags.Contains(body))
+                {
+                    parsed._flags.Add(body);
                 }
                 else
                 {
-                    parsed._flags.Add(body);
+                    parsed._unknownOptions.Add(body);
                 }
             }
             else

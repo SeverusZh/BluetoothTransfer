@@ -20,6 +20,19 @@ public static class Commands
     private static int ParseInt(string? text, int fallback)
         => int.TryParse(text, out var value) ? value : fallback;
 
+    /// <summary>
+    /// 统一选项校验：若 Args 存在缺值或未知选项错误，输出用法提示并返回 true（调用方应返回退出码 2）；
+    /// 否则返回 false 表示可继续执行。
+    /// </summary>
+    private static bool RejectOnOptionError(Args a, string usage)
+    {
+        // 优先报告缺值错误，其次才是首个未知选项。
+        var error = a.Error ?? (a.UnknownOptions.Count > 0 ? $"未知选项：--{a.UnknownOptions[0]}" : null);
+        if (error == null) return false;
+        Error($"用法：{usage}（{error}）");
+        return true;
+    }
+
     // ------------------------------------------------------------------ 发送模式 / 通道选择
 
     /// <summary>
@@ -58,6 +71,8 @@ public static class Commands
 
     public static async Task<int> OppScanAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli opp-scan [--seconds 秒] [--paired-only] [--json] [--db 路径]"))
+            return 2;
         using var session = NewSession(a, quiet: true);
         var seconds = Math.Max(0, ParseInt(a.Option("seconds"), 5));
         var pairedOnly = a.Has("paired-only");
@@ -85,6 +100,8 @@ public static class Commands
 
     public static async Task<int> OppPairAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli opp-pair <设备地址> [--pin 1234] [--db 路径]"))
+            return 2;
         var addr = a.Get(1);
         if (string.IsNullOrWhiteSpace(addr))
         {
@@ -99,6 +116,8 @@ public static class Commands
 
     public static async Task<int> OppSendFileAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli opp-send-file <设备地址> <文件> [--zip] [--mode auto|assistant|opp] [--verbose] [--db 路径]"))
+            return 2;
         var addr = a.Get(1);
         var path = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(path))
@@ -127,6 +146,8 @@ public static class Commands
 
     public static async Task<int> OppSendTextAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli opp-send-text <设备地址> <文本> [--name 文件名] [--mode auto|assistant|opp] [--verbose] [--db 路径]"))
+            return 2;
         var addr = a.Get(1);
         var text = a.RemainingFrom(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(text))
@@ -152,6 +173,8 @@ public static class Commands
 
     public static async Task<int> OppSendFolderAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli opp-send-folder <设备地址> <文件夹> [--mode auto|assistant|opp] [--verbose] [--db 路径]"))
+            return 2;
         var addr = a.Get(1);
         var folder = a.Get(2);
         if (string.IsNullOrWhiteSpace(addr) || string.IsNullOrEmpty(folder))
@@ -180,6 +203,8 @@ public static class Commands
 
     public static async Task<int> OppSendFilesAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli opp-send-files <设备地址> <文件1> [文件2 ...] [--zip] [--mode auto|assistant|opp] [--verbose] [--db 路径]"))
+            return 2;
         var addr = a.Get(1);
         var paths = new List<string>();
         for (var i = 2; ; i++)
@@ -224,6 +249,8 @@ public static class Commands
 
     public static async Task<int> DetectAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli detect <设备地址> [--db 路径]"))
+            return 2;
         var addr = a.Get(1);
         if (string.IsNullOrWhiteSpace(addr))
         {
@@ -244,6 +271,8 @@ public static class Commands
 
     public static int PackageReceiver(Args a)
     {
+        if (RejectOnOptionError(a, "btcli package-receiver [--root 仓库根]"))
+            return 2;
         var root = a.Option("root");
         if (string.IsNullOrEmpty(root))
         {
@@ -272,6 +301,8 @@ public static class Commands
 
     public static int Records(Args a)
     {
+        if (RejectOnOptionError(a, "btcli records [--direction send|recv] [--type text|file] [--status ok|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]"))
+            return 2;
         using var session = NewSession(a, quiet: true);
         var sub = (a.Get(1) ?? "").ToLowerInvariant();
         if (sub == "clear")
@@ -350,6 +381,8 @@ public static class Commands
 
     public static int Export(Args a)
     {
+        if (RejectOnOptionError(a, "btcli export <csv|json> <输出文件>"))
+            return 2;
         var format = (a.Get(1) ?? "").ToLowerInvariant();
         var path = a.Get(2);
         if (format is not ("csv" or "json") || string.IsNullOrEmpty(path))
@@ -369,6 +402,8 @@ public static class Commands
 
     public static int Stats(Args a)
     {
+        if (RejectOnOptionError(a, "btcli stats [--json] [--db 路径]"))
+            return 2;
         using var session = NewSession(a, quiet: true);
         var (totalCount, totalBytes, sendCount, recvCount) = session.Storage.GetStats();
         if (a.Has("json"))
@@ -382,6 +417,8 @@ public static class Commands
 
     public static int Devices(Args a)
     {
+        if (RejectOnOptionError(a, "btcli devices [--json] [--sort last|name|favorite] [--db 路径]"))
+            return 2;
         using var session = NewSession(a, quiet: true);
         var sub = (a.Get(1) ?? "").ToLowerInvariant();
         if (sub == "favorite")
@@ -471,6 +508,8 @@ public static class Commands
 
     public static int Config(Args a)
     {
+        if (RejectOnOptionError(a, "btcli config [set <key> <value>]"))
+            return 2;
         using var session = NewSession(a, quiet: true);
         var sub = (a.Get(1) ?? "").ToLowerInvariant();
         if (sub == "set")
@@ -777,6 +816,8 @@ public static class Commands
 
     public static async Task<int> ReplAsync(Args a)
     {
+        if (RejectOnOptionError(a, "btcli repl"))
+            return 2;
         using var session = NewSession(a);
         var replDb = a.Option("db");
         Info("btcli 交互模式 —— 输入 help 查看命令，quit 退出。");
@@ -788,10 +829,13 @@ public static class Commands
             line = line.Trim();
             if (line.Length == 0) continue;
 
-            var tokens = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var tokens = SplitArgs(line);
             // 会话指定了独立数据库时，让 records/stats/export 等子命令沿用同一数据库。
             if (replDb != null && !tokens.Any(t => t.StartsWith("--db", StringComparison.OrdinalIgnoreCase)))
-                tokens = tokens.Concat(new[] { "--db", replDb }).ToArray();
+            {
+                tokens.Add("--db");
+                tokens.Add(replDb);
+            }
             var parts = Args.Parse(tokens);
             var command = (parts.Get(0) ?? "").ToLowerInvariant();
             try
@@ -847,6 +891,38 @@ public static class Commands
             }
         }
         return 0;
+    }
+
+    /// <summary>
+    /// 最小引号分词：用空白分隔 token，但双引号（"）包裹的内容整体保留为一个 token（内部空格不拆分）。
+    /// 不要求转义嵌套；未闭合的引号按引号后内容整体处理。
+    /// </summary>
+    private static List<string> SplitArgs(string line)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        var inQuote = false;
+        foreach (var ch in line)
+        {
+            if (ch == '"')
+            {
+                inQuote = !inQuote;
+                continue; // 引号本身不进入 token 内容
+            }
+            if (char.IsWhiteSpace(ch) && !inQuote)
+            {
+                if (current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+            current.Append(ch);
+        }
+        if (current.Length > 0)
+            tokens.Add(current.ToString());
+        return tokens;
     }
 
     private static void ReplHelp()
