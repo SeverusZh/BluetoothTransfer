@@ -64,7 +64,10 @@ public sealed class AssistantClient
                     var (ackType, ackPayload) = await AsstFrame.ReadFrameAsync(_transport, ct);
                     if (ackType != (byte)AsstMessageType.Ack)
                         throw new AsstProtocolException($"期望 ACK，收到消息类型 {ackType}");
-                    current = AsstMessages.DecodeAck(ackPayload).Offset;
+                    var ackOffset = AsstMessages.DecodeAck(ackPayload).Offset;
+                    if (ackOffset < current || ackOffset > hello.FileSize)
+                        throw new AsstProtocolException($"非法 ACK 偏移：{ackOffset}（当前发送偏移 {current}，文件大小 {hello.FileSize}）");
+                    current = ackOffset;
                     onProgress?.Invoke(current, hello.FileSize);
                     if (current >= hello.FileSize) break;
                 }

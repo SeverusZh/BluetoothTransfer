@@ -129,6 +129,53 @@ public class AssistantClientTests
         Assert.Contains("校验失败", result.Error);
     }
 
+    [Theory]
+    [InlineData(-1)]  // ACK 偏移小于当前偏移（回退）
+    [InlineData(-100)] // ACK 偏移为负
+    public async Task SendAsync_RegressingOrNegativeAckOffset_Rejected(long ackOffset)
+    {
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        await using var client = new AssistantClient(clientT);
+        var source = new byte[20_000];
+
+        var sendTask = client.SendAsync(Hello(source.Length), ReadFrom(source));
+
+        await AsstFrame.ReadFrameAsync(serverT); // HELLO
+        await serverT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Offer,
+            AsstMessages.EncodeOffer(new AsstOffer(AsstOfferStatus.Accept, 0))));
+
+        var frame = await AsstFrame.ReadFrameAsync(serverT); // DATA
+        Assert.Equal((byte)AsstMessageType.Data, frame.Type);
+        await serverT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Ack,
+            AsstMessages.EncodeAck(new AsstAck(ackOffset))));
+
+        var ex = await Assert.ThrowsAsync<AsstProtocolException>(() => sendTask);
+        Assert.Contains("非法 ACK 偏移", ex.Message);
+    }
+
+    [Fact]
+    public async Task SendAsync_AckOffsetExceedsFileSize_Rejected()
+    {
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        await using var client = new AssistantClient(clientT);
+        var source = new byte[20_000];
+        var ackOffset = source.Length + 1; // 超过文件大小
+
+        var sendTask = client.SendAsync(Hello(source.Length), ReadFrom(source));
+
+        await AsstFrame.ReadFrameAsync(serverT); // HELLO
+        await serverT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Offer,
+            AsstMessages.EncodeOffer(new AsstOffer(AsstOfferStatus.Accept, 0))));
+
+        var frame = await AsstFrame.ReadFrameAsync(serverT); // DATA
+        Assert.Equal((byte)AsstMessageType.Data, frame.Type);
+        await serverT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Ack,
+            AsstMessages.EncodeAck(new AsstAck(ackOffset))));
+
+        var ex = await Assert.ThrowsAsync<AsstProtocolException>(() => sendTask);
+        Assert.Contains("非法 ACK 偏移", ex.Message);
+    }
+
     [Fact]
     public async Task SendAsync_Cancelled_SendsCancelFrame()
     {
