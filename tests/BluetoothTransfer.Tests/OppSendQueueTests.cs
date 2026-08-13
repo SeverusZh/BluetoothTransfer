@@ -105,31 +105,56 @@ public class OppSendQueueTests
         Assert.Equal(OppJobStatus.Ok, job.Status);
     }
 
+    /// <summary>
+    /// 暂停后 Continue 的恢复语义：任务被第一次处理时暂停（取消当前尝试）再立即 Continue（改回 Pending），
+    /// 首次尝试在已被取消的令牌下抛出 OCE，随后同一 StartAsync 循环重新取出该任务继续处理直至成功。
+    /// 不再使用 Thread.Sleep 制造时序，而是通过 TCS 门控在 worker 尚未结算时执行 Pause/Continue。
+    /// </summary>
     [Fact]
     public async Task Pause_Continue_ResumesJobInQueue()
     {
         var queue = new OppSendQueue();
         var job = new OppSendJob { Kind = "file", SourcePath = "a", DisplayName = "a", Size = 1 };
         queue.Enqueue(new[] { job });
-        var started = new TaskCompletionSource();
+
         var processStarted = new TaskCompletionSource();
-        var runTask = queue.StartAsync("AA:BB:CC:DD:EE:FF", async (j, ct) =>
+        var releaseFirst = new TaskCompletionSource();
+        int processCalls = 0;
+        int completed = 0;
+        queue.JobCompleted += (j, ok) =>
         {
-            processStarted.TrySetResult();
-            await started.Task;
-            await Task.Delay(Timeout.Infinite, ct);
-            return true;
+            if (ReferenceEquals(j, job)) System.Threading.Interlocked.Increment(ref completed);
+        };
+
+        var runTask = queue.StartAsync("AA:BB:CC:DD:EE:FF", (j, ct) =>
+        {
+            // 第一次进入发送：受控阻塞，待 Pause 取消令牌后放行并抛 OCE；恢复后的第二次调用直接成功。
+            if (System.Threading.Interlocked.Increment(ref processCalls) == 1)
+            {
+                processStarted.TrySetResult();
+                return AwaitThenThrow(releaseFirst.Task, ct);
+            }
+            return Task.FromResult(true);
         });
 
         await processStarted.Task;
-        queue.Pause(job);
-        await Task.Delay(100);
-        Assert.Equal(OppJobStatus.Paused, job.Status);
 
+        // worker 尚未结算时：先暂停（取消当前尝试），随即立即继续（改回 Pending）。
+        queue.Pause(job);
+        Assert.Equal(OppJobStatus.Paused, job.Status);
         queue.Continue(job);
-        started.TrySetResult();
-        queue.CancelAll();
+        Assert.Equal(OppJobStatus.Pending, job.Status);
+
+        // 放行第一次尝试：其在已取消令牌下抛出 OCE；任务保留在待处理队列，
+        // 由 StartAsync 的下一次循环重新处理直至成功，验证“恢复后任务被重新处理至 Ok”。
+        releaseFirst.TrySetResult();
+
         await runTask;
+
+        Assert.Equal(OppJobStatus.Ok, job.Status);    // 恢复后最终被处理为成功
+        Assert.Equal(2, processCalls);                // 首次尝试失败 + 恢复后重新处理一次
+        Assert.Equal(1, completed);                   // 恰好触发一次 JobCompleted
+        Assert.Equal(0, queue.PendingCount);          // 成功后任务已出队
     }
 
     [Fact]
