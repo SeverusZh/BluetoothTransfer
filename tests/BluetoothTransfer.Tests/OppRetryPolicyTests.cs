@@ -48,12 +48,22 @@ public class OppRetryPolicyTests
     }
 
     [Fact]
-    public void NextDelay_LinearBackoff()
+    public void NextDelay_ExponentialBackoff()
     {
         var policy = new OppRetryPolicy(3, 5);
         Assert.Equal(TimeSpan.FromSeconds(5), policy.NextDelay(1));
         Assert.Equal(TimeSpan.FromSeconds(10), policy.NextDelay(2));
-        Assert.Equal(TimeSpan.FromSeconds(15), policy.NextDelay(3));
+        Assert.Equal(TimeSpan.FromSeconds(20), policy.NextDelay(3));
+        Assert.Equal(TimeSpan.FromSeconds(40), policy.NextDelay(4));
+    }
+
+    [Fact]
+    public void NextDelay_DefaultBase_ThreeSixTwelve()
+    {
+        var policy = new OppRetryPolicy(3, 3);
+        Assert.Equal(TimeSpan.FromSeconds(3), policy.NextDelay(1));
+        Assert.Equal(TimeSpan.FromSeconds(6), policy.NextDelay(2));
+        Assert.Equal(TimeSpan.FromSeconds(12), policy.NextDelay(3));
     }
 
     [Fact]

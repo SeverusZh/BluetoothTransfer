@@ -10,7 +10,7 @@ public sealed class OppRetryPolicy
     /// <summary>总允许尝试次数（1 次初始 + 配置的重试次数）。</summary>
     public int MaxAttempts { get; }
 
-    /// <summary>基础退避间隔（秒），第 N 次重试等待 baseDelay * N。</summary>
+    /// <summary>基础退避间隔（秒），第 N 次重试按指数退避等待 baseDelay * 2^(N-1)。</summary>
     public int BaseDelaySeconds { get; }
 
     public OppRetryPolicy(int retryCount, int baseDelaySeconds)
@@ -26,9 +26,16 @@ public sealed class OppRetryPolicy
     public bool ShouldRetry(int attemptIndex, string? errorMessage)
         => attemptIndex < MaxAttempts && IsRetryableError(errorMessage);
 
-    /// <summary>第 <paramref name="attemptIndex"/> 次失败后的等待时长（1-based）。</summary>
+    /// <summary>
+    /// 第 <paramref name="attemptIndex"/> 次失败后的等待时长（1-based 失败序号），
+    /// 按指数退避：baseDelay * 2^(attemptIndex-1)，默认 base=3 得到 3/6/12s。
+    /// </summary>
     public TimeSpan NextDelay(int attemptIndex)
-        => TimeSpan.FromSeconds(BaseDelaySeconds * Math.Max(1, attemptIndex));
+    {
+        // 指数退避 baseDelay * 2^(n-1)；钳制指数上限 30，避免极端配置（重试次数≥32）下 int 移位溢出为负。
+        var exp = Math.Min(Math.Max(1, attemptIndex) - 1, 30);
+        return TimeSpan.FromSeconds(BaseDelaySeconds * (1 << exp));
+    }
 
     /// <summary>错误是否属于可重试的临时失败。</summary>
     public static bool IsRetryableError(string? message)

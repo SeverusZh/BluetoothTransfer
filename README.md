@@ -105,7 +105,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | `OppNameUseBom` | false | Name 头是否带 UTF-16 BOM（默认无 BOM，兼容 Android/Windows） |
 | `OppProtectionLevel` | auto | 连接保护级别：auto / plain / encrypt；助手通道与 OPP 通道共用此配置，encrypt 可启用链路加密，应用层仍无端到端加密 |
 | `OppRetryCount` | 3 | 失败自动重试次数（0 表示不重试） |
-| `OppRetryDelaySeconds` | 3 | 重试基础间隔（秒），按 1x/2x/3x 退避 |
+| `OppRetryDelaySeconds` | 3 | 重试基础间隔（秒），按 1x/2x/4x 指数退避 |
 | `TransferMode` | auto | 发送通道：auto（探测助手，否则 OPP）/ assistant / opp |
 | `ReceiveDirectory` | 下载\BluetoothReceive | 内置接收助手保存目录 |
 | `ReceiveAsk` | false | 内置接收助手是否每次接收前询问 |
