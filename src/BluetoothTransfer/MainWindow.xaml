@@ -234,7 +234,7 @@
                                 <DataGridTextColumn Header="类型" Binding="{Binding TypeDisplay}" Width="50"/>
                                 <DataGridTextColumn Header="对端" Binding="{Binding PeerName}" Width="110"/>
                                 <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*"/>
-                                <DataGridTextColumn Header="大小" Binding="{Binding Size}" Width="80"/>
+                                <DataGridTextColumn Header="大小" Binding="{Binding SizeDisplay}" Width="80"/>
                                 <DataGridTextColumn Header="状态" Binding="{Binding StatusDisplay}" Width="60"/>
                                 <DataGridTextColumn Header="通道" Binding="{Binding ChannelDisplay}" Width="60"/>
                                 <DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="150"/>
@@ -255,8 +255,8 @@
         <Border Grid.Row="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,1,0,0">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Right" Text="v1.3.0" VerticalAlignment="Center"
-                           Margin="10,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding VersionText}" VerticalAlignment="Center"
+                            Margin="10,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
                 <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="10,0" FontSize="12"/>
             </DockPanel>
         </Border>

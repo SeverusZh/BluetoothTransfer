@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Windows;
 using Hardcodet.Wpf.TaskbarNotification;
 using System.Windows.Controls;
@@ -15,7 +15,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         AttachLogAutoscroll();
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.2.1"}";
+        Title = $"蓝牙传输 v{version?.ToString(3) ?? "1.3.0"}";
         Loaded += (_, _) =>
         {
             _trayIcon = (TaskbarIcon)FindResource("TrayIcon");

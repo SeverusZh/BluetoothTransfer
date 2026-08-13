@@ -133,6 +133,11 @@ public class OppViewModel : ViewModelBase
     public ObservableCollection<OppSendJob> Jobs => _queue.Jobs;
 
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
+
+    /// <summary>版本号单一事实源：取程序集版本（csproj &lt;Version&gt;）的 major.minor.build 拼接显示。</summary>
+    public string VersionText =>
+        "v" + (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "");
+
     public bool IsScanning
     {
         get => _isScanning;
@@ -179,7 +184,7 @@ public class OppViewModel : ViewModelBase
             _config.Save();
             // 保存失败不再静默：经日志上报（_events 仅在构造后可达，无空引用风险）
             if (_config.LastError is { } saveErr)
-                PublishLog("WARN", saveErr);
+                PublishLog(TransferConst.LogWarn, saveErr);
             OnPropertyChanged();
         }
     }
@@ -220,7 +225,7 @@ public class OppViewModel : ViewModelBase
             _config.Save();
             // 保存失败不再静默：经日志上报
             if (_config.LastError is { } saveErr)
-                PublishLog("WARN", saveErr);
+                PublishLog(TransferConst.LogWarn, saveErr);
             OnPropertyChanged();
         }
     }
@@ -234,7 +239,7 @@ public class OppViewModel : ViewModelBase
             _config.Save();
             // 保存失败不再静默：经日志上报
             if (_config.LastError is { } saveErr)
-                PublishLog("WARN", saveErr);
+                PublishLog(TransferConst.LogWarn, saveErr);
             OnPropertyChanged();
         }
     }
@@ -254,7 +259,7 @@ public class OppViewModel : ViewModelBase
         _config = AppConfig.Load();
         // 读取配置失败时经日志上报（_events 已在上面初始化，可安全发布）
         if (_config.LastError is { } loadErr)
-            _events.Publish(new LogEvent("WARN", loadErr));
+            _events.Publish(new LogEvent(TransferConst.LogWarn, loadErr));
         _discovery = new OppDiscoveryService(_events);
         _push = new OppPushService(_events, _storage, _config, _discovery);
         _assistantPush = new AssistantPushService(_events, _storage, _config, _discovery);
@@ -287,9 +292,11 @@ public class OppViewModel : ViewModelBase
         SendClipboardCommand = new RelayCommand(() => SafeAsync(SendClipboardAsync), () => CanSend);
         CancelAllCommand = new RelayCommand(() => _queue.CancelAll());
         RefreshRecordsCommand = new RelayCommand(() => SafeAsync(LoadRecordsAsync));
-        ExportCsvCommand = new RelayCommand(() => ExportRecords("CSV 文件|*.csv", "csv", ExportService.ExportCsv));
-        ExportJsonCommand = new RelayCommand(() => ExportRecords("JSON 文件|*.json", "json", ExportService.ExportJson));
-        ClearRecordsCommand = new RelayCommand(ClearRecords);
+        ExportCsvCommand = new RelayCommand(() => SafeAsync(() =>
+            ExportRecordsAsync("CSV 文件|*.csv", "csv", ExportService.ExportCsv)));
+        ExportJsonCommand = new RelayCommand(() => SafeAsync(() =>
+            ExportRecordsAsync("JSON 文件|*.json", "json", ExportService.ExportJson)));
+        ClearRecordsCommand = new RelayCommand(() => SafeAsync(ClearRecordsAsync));
         PauseJobCommand = new RelayCommand(job => _queue.Pause((OppSendJob)job!));
         ContinueJobCommand = new RelayCommand(job =>
         {
@@ -391,7 +398,7 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"刷新配对状态失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogError, $"刷新配对状态失败：{ex.Message}"));
         }
     }
 
@@ -473,7 +480,7 @@ public class OppViewModel : ViewModelBase
         if (_queueUseAssistant is { } ua)
         {
             foreach (var j in jobs)
-                j.Channel = ua ? "assistant" : "opp";
+                j.Channel = ua ? TransferConst.ChannelAssistant : TransferConst.ChannelOpp;
         }
         _speedTracker.Reset();
         ProgressText = "";
@@ -498,14 +505,14 @@ public class OppViewModel : ViewModelBase
             var useAssistant = await ResolveAssistantOnceAsync(device);
             _queueUseAssistant = useAssistant;
             foreach (var job in _queue.Jobs.Where(j => j.Status == OppJobStatus.Pending).ToList())
-                job.Channel = useAssistant ? "assistant" : "opp";
+                job.Channel = useAssistant ? TransferConst.ChannelAssistant : TransferConst.ChannelOpp;
             await _queue.StartAsync(device.Addr, (job, ct) => ProcessJobAsync(job, device, useAssistant, ct));
         }
         catch (Exception ex)
         {
             // 队列启动失败：原实现丢弃 Task 导致静默失败用户无感知，现主动经日志上报
             _queueUseAssistant = null;
-            PublishLog("ERROR", $"启动发送队列失败：{ex.Message}");
+            PublishLog(TransferConst.LogError, $"启动发送队列失败：{ex.Message}");
         }
     }
 
@@ -513,18 +520,18 @@ public class OppViewModel : ViewModelBase
     {
         try
         {
-            job.Channel = useAssistant ? "assistant" : "opp";
+            job.Channel = useAssistant ? TransferConst.ChannelAssistant : TransferConst.ChannelOpp;
             return useAssistant
                 ? job.Kind switch
                 {
-                    "folder" => await _assistantPush.SendFolderAsync(device.Addr, job.SourcePath, ct),
-                    "text" => await _assistantPush.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
+                    TransferConst.TypeFolder => await _assistantPush.SendFolderAsync(device.Addr, job.SourcePath, ct),
+                    TransferConst.TypeText => await _assistantPush.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
                     _ => await _assistantPush.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
                 }
                 : job.Kind switch
                 {
-                    "folder" => await _push.SendFolderAsync(device.Addr, job.SourcePath, ct),
-                    "text" => await _push.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
+                    TransferConst.TypeFolder => await _push.SendFolderAsync(device.Addr, job.SourcePath, ct),
+                    TransferConst.TypeText => await _push.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
                     _ => await _push.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
                 };
         }
@@ -546,7 +553,7 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("WARN", $"枚举助手设备失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogWarn, $"枚举助手设备失败：{ex.Message}"));
             return;
         }
 
@@ -618,7 +625,7 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("WARN", $"加载收藏设备失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogWarn, $"加载收藏设备失败：{ex.Message}"));
         }
     }
 
@@ -626,9 +633,9 @@ public class OppViewModel : ViewModelBase
     {
         switch (_config.TransferMode)
         {
-            case "assistant":
+            case TransferConst.ChannelAssistant:
                 return true;
-            case "opp":
+            case TransferConst.ChannelOpp:
                 return false;
             default:
                 lock (_assistantCache)
@@ -658,7 +665,7 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("WARN", $"探测助手失败：{item.DisplayName}（{ex.Message}）"));
+            _events.Publish(new LogEvent(TransferConst.LogWarn, $"探测助手失败：{item.DisplayName}（{ex.Message}）"));
         }
     }
 
@@ -688,7 +695,7 @@ public class OppViewModel : ViewModelBase
 
         EnqueueAndStart(dialog.FileNames.Select(f => new OppSendJob
         {
-            Kind = "file",
+            Kind = TransferConst.TypeFile,
             SourcePath = f,
             DisplayName = System.IO.Path.GetFileName(f),
             Size = new System.IO.FileInfo(f).Length
@@ -711,7 +718,7 @@ public class OppViewModel : ViewModelBase
         {
             new OppSendJob
             {
-                Kind = "folder",
+                Kind = TransferConst.TypeFolder,
                 SourcePath = dialog.FolderName,
                 DisplayName = System.IO.Path.GetFileName(dialog.FolderName.TrimEnd('\\', '/')),
                 Size = 0
@@ -734,7 +741,7 @@ public class OppViewModel : ViewModelBase
                 {
                     new OppSendJob
                     {
-                        Kind = "text",
+                        Kind = TransferConst.TypeText,
                         SourcePath = text,
                         DisplayName = _config.PushTextFileName,
                         Size = System.Text.Encoding.UTF8.GetByteCount(text)
@@ -756,7 +763,7 @@ public class OppViewModel : ViewModelBase
                 {
                     new OppSendJob
                     {
-                        Kind = "file",
+                        Kind = TransferConst.TypeFile,
                         SourcePath = tempPath,
                         DisplayName = "clipboard.png",
                         Size = new System.IO.FileInfo(tempPath).Length
@@ -769,7 +776,7 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"读取剪贴板失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogError, $"读取剪贴板失败：{ex.Message}"));
         }
         return Task.CompletedTask;
     }
@@ -787,14 +794,14 @@ public class OppViewModel : ViewModelBase
             System.IO.Directory.Exists(p)
                 ? new OppSendJob
                 {
-                    Kind = "folder",
+                    Kind = TransferConst.TypeFolder,
                     SourcePath = p,
                     DisplayName = System.IO.Path.GetFileName(p.TrimEnd('\\', '/')),
                     Size = 0
                 }
                 : new OppSendJob
                 {
-                    Kind = "file",
+                    Kind = TransferConst.TypeFile,
                     SourcePath = p,
                     DisplayName = System.IO.Path.GetFileName(p),
                     Size = System.IO.File.Exists(p) ? new System.IO.FileInfo(p).Length : 0
@@ -819,11 +826,14 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"加载记录失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogError, $"加载记录失败：{ex.Message}"));
         }
     }
 
-    private void ExportRecords(string filter, string ext, Func<List<TransferRecord>, string, string> export)
+    // 导出/清空涉及存储查询与磁盘写入：后台执行，避免阻塞 UI 线程。
+    // 命令经 SafeAsync 启动，方法内 await 未 ConfigureAwait(false)，延续自然回到 UI 线程，
+    // 因此状态栏/日志更新仍发生在 UI 线程。
+    private async Task ExportRecordsAsync(string filter, string ext, Func<List<TransferRecord>, string, string> export)
     {
         try
         {
@@ -833,20 +843,34 @@ public class OppViewModel : ViewModelBase
                 FileName = $"transfer_records_{DateTime.Now:yyyyMMdd_HHmmss}.{ext}"
             };
             if (dialog.ShowDialog() != true) return;
-            var records = _storage.GetRecords(limit: 10000);
-            export(records, dialog.FileName);
-            StatusText = $"已导出 {records.Count} 条记录到 {ext.ToUpperInvariant()}";
+            var count = await Task.Run(() =>
+            {
+                var records = _storage.GetRecords(limit: 10000);
+                export(records, dialog.FileName);
+                return records.Count;
+            });
+            StatusText = $"已导出 {count} 条记录到 {ext.ToUpperInvariant()}";
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"导出失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogError, $"导出失败：{ex.Message}"));
             StatusText = $"导出失败：{ex.Message}";
         }
     }
 
-    private void ClearRecords()
+    private async Task ClearRecordsAsync()
     {
-        var total = _storage.GetStats().totalCount;
+        long total;
+        try
+        {
+            total = await Task.Run(() => _storage.GetStats().totalCount);
+        }
+        catch (Exception ex)
+        {
+            _events.Publish(new LogEvent(TransferConst.LogError, $"清空传输记录失败：{ex.Message}"));
+            StatusText = $"清空失败：{ex.Message}";
+            return;
+        }
         if (total == 0)
         {
             StatusText = "没有可清空的记录";
@@ -861,13 +885,13 @@ public class OppViewModel : ViewModelBase
 
         try
         {
-            var deleted = _storage.ClearRecords();
+            var deleted = await Task.Run(() => _storage.ClearRecords());
             Records.Clear();
             StatusText = $"已清空 {deleted} 条传输记录";
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"清空传输记录失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogError, $"清空传输记录失败：{ex.Message}"));
             StatusText = $"清空失败：{ex.Message}";
         }
     }
@@ -878,7 +902,7 @@ public class OppViewModel : ViewModelBase
     {
         _dispatcher.Invoke(() =>
         {
-            if (e.Level == "ERROR" || e.Level == "WARN")
+            if (e.Level == TransferConst.LogError || e.Level == TransferConst.LogWarn)
                 _lastError = e.Message;
             var line = $"[{DateTime.Now:HH:mm:ss}] [{e.Level}] {e.Message}";
             LogLines.Add(line);
@@ -908,7 +932,7 @@ public class OppViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _events.Publish(new LogEvent("ERROR", $"操作失败：{ex.Message}"));
+            _events.Publish(new LogEvent(TransferConst.LogError, $"操作失败：{ex.Message}"));
             StatusText = $"错误：{ex.Message}";
         }
     }

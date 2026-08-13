@@ -8,12 +8,19 @@ public static class TransferConst
     public const string DirRecv = "recv";
     public const string TypeText = "text";
     public const string TypeFile = "file";
+    public const string TypeFolder = "folder";
     public const string StatusOk = "ok";
     public const string StatusFailed = "failed";
     public const string ChannelBle = "ble";
     public const string ChannelRfcomm = "rfcomm";
     public const string ChannelOpp = "opp";
     public const string ChannelAssistant = "assistant";
+    public const string ChannelAuto = "auto";
+    // 日志级别常量（EventBus 日志事件）
+    public const string LogInfo = "INFO";
+    public const string LogWarn = "WARN";
+    public const string LogError = "ERROR";
+    public const string LogDebug = "DEBUG";
 }
 
 public class TransferRecord
@@ -44,6 +51,24 @@ public class TransferRecord
             if (DateTime.TryParse(CreatedAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt))
                 return dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
             return CreatedAt;
+        }
+    }
+
+    /// <summary>
+    /// 供 DataGrid 展示的人性化大小（B / KB / MB / GB，保留 1-2 位小数）。
+    /// </summary>
+    public string SizeDisplay
+    {
+        get
+        {
+            const long kb = 1024L;
+            const long mb = 1024L * 1024;
+            const long gb = 1024L * 1024 * 1024;
+            double value = Size;
+            if (Size >= gb) return $"{value / gb:0.##} GB";
+            if (Size >= mb) return $"{value / mb:0.##} MB";
+            if (Size >= kb) return $"{value / kb:0.#} KB";
+            return $"{Size} B";
         }
     }
 
