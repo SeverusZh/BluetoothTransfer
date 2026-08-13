@@ -22,19 +22,29 @@ public class AsstFileSinkTests : IDisposable
     private static AsstHello Hello(string id = "t1", string name = "a.bin", long size = 5, string sha = "")
         => new(id, name, size, 32768, sha);
 
+    /// <summary>计算给定字节内容的 SHA-256（十六进制），供期望哈希与落盘内容匹配。</summary>
+    private static async Task<string> ShaOf(byte[] data)
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "bt_sha_" + Guid.NewGuid().ToString("N"));
+        await File.WriteAllBytesAsync(tmp, data);
+        try { return await AsstHash.ComputeSha256Async(tmp); }
+        finally { try { File.Delete(tmp); } catch { } }
+    }
+
     [Fact]
     public async Task OpenNew_WriteComplete_RenamesAndCleansMeta()
     {
         var sink = new AsstFileSink(_dir);
-        var hello = Hello(size: 5);
+        var content = new byte[] { 1, 2, 3, 4, 5 };
+        var hello = Hello(size: 5, sha: await ShaOf(content));
         Assert.Equal(0, await sink.OpenAsync(hello));
 
-        await sink.WriteAsync(hello, 0, new byte[] { 1, 2, 3, 4, 5 });
+        await sink.WriteAsync(hello, 0, content);
         var done = await sink.CompleteAsync(hello);
 
         Assert.True(done.Ok);
         Assert.Equal(64, done.Hash.Length);
-        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, await File.ReadAllBytesAsync(Path.Combine(_dir, "a.bin")));
+        Assert.Equal(content, await File.ReadAllBytesAsync(Path.Combine(_dir, "a.bin")));
         Assert.False(File.Exists(Path.Combine(_dir, "a.bin.btpart")));
         Assert.False(File.Exists(Path.Combine(_dir, "a.bin.btpart.meta")));
     }
@@ -77,16 +87,33 @@ public class AsstFileSinkTests : IDisposable
     }
 
     [Fact]
+    public async Task Complete_EmptyExpectedSha256_ReturnsFailedDone()
+    {
+        var sink = new AsstFileSink(_dir);
+        var hello = Hello(size: 5, sha: "");
+        await sink.OpenAsync(hello);
+        await sink.WriteAsync(hello, 0, new byte[] { 1, 2, 3, 4, 5 });
+
+        var done = await sink.CompleteAsync(hello);
+
+        Assert.False(done.Ok);
+        Assert.Equal(64, done.Hash.Length);
+        // 纵深防御：空期望哈希不放行，半成品也不应被改名为正式文件
+        Assert.False(File.Exists(Path.Combine(_dir, "a.bin")));
+    }
+
+    [Fact]
     public async Task Complete_NameConflict_AutoRenames()
     {
         var sink = new AsstFileSink(_dir);
         await File.WriteAllBytesAsync(Path.Combine(_dir, "a.bin"), new byte[] { 9 });
-        var hello = Hello(size: 5);
+        var content = new byte[] { 1, 2, 3, 4, 5 };
+        var hello = Hello(size: 5, sha: await ShaOf(content));
         await sink.OpenAsync(hello);
-        await sink.WriteAsync(hello, 0, new byte[] { 1, 2, 3, 4, 5 });
+        await sink.WriteAsync(hello, 0, content);
         await sink.CompleteAsync(hello);
 
-        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, await File.ReadAllBytesAsync(Path.Combine(_dir, "a (1).bin")));
+        Assert.Equal(content, await File.ReadAllBytesAsync(Path.Combine(_dir, "a (1).bin")));
     }
 
     [Fact]

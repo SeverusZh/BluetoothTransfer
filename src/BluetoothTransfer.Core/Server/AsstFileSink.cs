@@ -92,8 +92,11 @@ public sealed class AsstFileSink : IAsstSink
                 throw new AsstProtocolException("半成品文件不存在");
         }
         var actual = await AsstHash.ComputeSha256Async(part, ct);
-        if (string.IsNullOrEmpty(hello.ExpectedSha256) ||
-            string.Equals(actual, hello.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+        // 纵深防御：正常流程已在 HandleAsync 拦截空 ExpectedSha256（视为协议错误），
+        // 这里不再把空 SHA 当作放行依据，缺失期望哈希一律返回校验失败。
+        if (string.IsNullOrEmpty(hello.ExpectedSha256))
+            return new AsstDone(false, actual);
+        if (string.Equals(actual, hello.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
         {
             var final = ResolveFinalName(_receiveDir, hello.FileName);
             File.Move(part, final);

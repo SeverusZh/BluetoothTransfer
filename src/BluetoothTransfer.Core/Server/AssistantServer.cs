@@ -95,6 +95,7 @@ public sealed class AssistantServer
             if (type != (byte)AsstMessageType.Hello)
                 throw new AsstProtocolException("首个消息必须是 HELLO");
             hello = AsstMessages.DecodeHello(payload);
+            ValidateHello(hello);
             _onLog?.Invoke("INFO", $"收到传输请求：{hello.FileName}（{hello.FileSize} 字节）");
 
             var status = _approval == null ? AsstOfferStatus.Accept : await _approval(hello);
@@ -126,6 +127,9 @@ public sealed class AssistantServer
                         var data = AsstMessages.DecodeData(p2);
                         if (data.Offset != current)
                             throw new AsstProtocolException($"数据偏移不一致：期望 {current}，收到 {data.Offset}");
+                        // M5：写数据前断言累计偏移不超 FileSize（用减法比较，防 long 溢出回绕边界）
+                        if (data.Payload.Length > hello.FileSize - data.Offset)
+                            throw new AsstProtocolException($"数据超出文件大小：偏移 {data.Offset}+长度 {data.Payload.Length} 超过 {hello.FileSize}");
                         await _sink.WriteAsync(hello, data.Offset, data.Payload, ct);
                         current += data.Payload.Length;
                         await transport.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Ack,
@@ -180,6 +184,23 @@ public sealed class AssistantServer
         {
             await transport.DisposeAsync();
         }
+    }
+
+    /// <summary>HELLO 字段合法性校验：文件大小非负、期望 SHA-256 为 64 位十六进制。非法视为协议错误。</summary>
+    private static void ValidateHello(AsstHello hello)
+    {
+        if (hello.FileSize < 0)
+            throw new AsstProtocolException($"文件大小非法：{hello.FileSize}");
+        if (string.IsNullOrEmpty(hello.ExpectedSha256) || !IsHexSha256(hello.ExpectedSha256))
+            throw new AsstProtocolException("期望 SHA-256 缺失或格式非法（须为 64 位十六进制）");
+    }
+
+    private static bool IsHexSha256(string s)
+    {
+        if (s.Length != 64) return false;
+        foreach (var c in s)
+            if (!Uri.IsHexDigit(c)) return false;
+        return true;
     }
 
     private async Task FinishAsync(IAsstTransport transport, AsstHello hello, CancellationToken ct)

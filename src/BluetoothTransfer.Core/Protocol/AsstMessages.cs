@@ -58,7 +58,7 @@ public static class AsstMessages
         if (pos + 4 > data.Length) throw new AsstProtocolException("载荷截断");
         var len = BinaryPrimitives.ReadInt32LittleEndian(data[pos..]);
         pos += 4;
-        if (len < 0 || pos + len > data.Length) throw new AsstProtocolException("字符串长度非法");
+        if (len < 0 || len > data.Length - pos) throw new AsstProtocolException("字符串长度非法");
         var result = Encoding.UTF8.GetString(data.Slice(pos, len));
         pos += len;
         return result;
@@ -128,7 +128,7 @@ public static class AsstMessages
         if (payload.Length < 12) throw new AsstProtocolException("DATA 载荷截断");
         var offset = BinaryPrimitives.ReadInt64LittleEndian(payload);
         var len = BinaryPrimitives.ReadInt32LittleEndian(payload.AsSpan(8));
-        if (len < 0 || 12 + len > payload.Length) throw new AsstProtocolException("DATA 长度非法");
+        if (len < 0 || len > payload.Length - 12) throw new AsstProtocolException("DATA 长度非法");
         return new AsstData(offset, payload.AsSpan(12, len).ToArray());
     }
 

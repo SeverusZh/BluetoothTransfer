@@ -8,6 +8,8 @@ namespace BluetoothTransfer.Tests;
 
 public class AssistantServerTests : IDisposable
 {
+    /// <summary>合法 64 位十六进制期望哈希（用于不需通过真实内容校验的场景）。</summary>
+    private const string ShaA = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     private readonly string _dir;
 
     public AssistantServerTests()
@@ -109,7 +111,7 @@ public class AssistantServerTests : IDisposable
         // 第一个连接：只发 HELLO，让服务器进入等待 DATA 状态（活跃传输）
         var (ct1, st1) = MemoryAsstTransport.CreatePair();
         listener.Enqueue(st1);
-        var hello1 = new AsstHello("busy-1", "a.bin", 1000, 4096, "");
+        var hello1 = new AsstHello("busy-1", "a.bin", 1000, 4096, ShaA);
         await ct1.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Hello, AsstMessages.EncodeHello(hello1)));
         var offer1 = await AsstFrame.ReadFrameAsync(ct1); // 服务器回 OFFER(Accept)
         Assert.Equal((byte)AsstMessageType.Offer, offer1.Type);
@@ -118,7 +120,7 @@ public class AssistantServerTests : IDisposable
         var (ct2, st2) = MemoryAsstTransport.CreatePair();
         listener.Enqueue(st2);
         await using var client2 = new AssistantClient(ct2);
-        var hello2 = new AsstHello("busy-2", "b.bin", 1000, 4096, "");
+        var hello2 = new AsstHello("busy-2", "b.bin", 1000, 4096, ShaA);
         var result = await client2.SendAsync(hello2, ReadFrom(new byte[1000]));
 
         Assert.False(result.Ok);
@@ -137,7 +139,7 @@ public class AssistantServerTests : IDisposable
 
         var source = new byte[50_000];
         Random.Shared.NextBytes(source);
-        var hello = new AsstHello("mismatch", "bad.bin", source.Length, 8192, "WRONGHASH");
+        var hello = new AsstHello("mismatch", "bad.bin", source.Length, 8192, new string('0', 64)); // 格式合法但内容不匹配，用于触发哈希校验失败
 
         await using var client = new AssistantClient(clientT);
         var result = await client.SendAsync(hello, ReadFrom(source));
@@ -160,7 +162,7 @@ public class AssistantServerTests : IDisposable
 
         var source = new byte[200_000];
         Random.Shared.NextBytes(source);
-        var hello = new AsstHello("cancel-1", "keep.bin", source.Length, 8192, "");
+        var hello = new AsstHello("cancel-1", "keep.bin", source.Length, 8192, ShaA);
         using var cts = new CancellationTokenSource();
         await using var client = new AssistantClient(clientT);
         var progressSeen = new TaskCompletionSource<long>();
@@ -178,5 +180,131 @@ public class AssistantServerTests : IDisposable
         Assert.True(File.Exists(Path.Combine(_dir, "keep.bin.btpart")));
         Assert.True(File.Exists(Path.Combine(_dir, "keep.bin.btpart.meta")));
         Assert.False(File.Exists(Path.Combine(_dir, "keep.bin")));
+    }
+
+    [Fact]
+    public async Task ConnectionDrop_KeepsPartial_AndResumeFromConfirmedOffset()
+    {
+        var sink = new AsstFileSink(_dir);
+        var source = new byte[500_000];
+        Random.Shared.NextBytes(source);
+        var sourcePath = Path.Combine(_dir, "src.bin");
+        await File.WriteAllBytesAsync(sourcePath, source);
+        var sha = await AsstHash.ComputeSha256Async(sourcePath);
+        var hello = new AsstHello("drop-1", "drop.bin", source.Length, 8192, sha);
+
+        // 会话 1：传输中途模拟连接断开（对端提前关闭），接收端应保留半成品供续传
+        var (ct1, st1) = MemoryAsstTransport.CreatePair();
+        var server1 = new AssistantServer(new MemoryAsstListener(), sink);
+        var handle1 = server1.HandleAsync(st1, CancellationToken.None);
+        await using var client1 = new AssistantClient(ct1);
+        var progressSeen = new TaskCompletionSource<long>();
+        var send1 = client1.SendAsync(hello, ReadFrom(source), (sent, _) =>
+        {
+            if (sent > 0) progressSeen.TrySetResult(sent);
+        }, CancellationToken.None);
+
+        // 等至少一个 ACK（服务端已落盘并确认偏移）后断开连接，触发"对端提前关闭"协议异常
+        await progressSeen.Task;
+        st1.Broken = true; // 服务端后续 ReadAsync 返回 0 → "对端提前关闭连接"
+        await Assert.ThrowsAsync<AsstProtocolException>(() => send1);
+        await handle1;
+
+        var partialPath = Path.Combine(_dir, "drop.bin.btpart");
+        Assert.True(File.Exists(partialPath), "连接中断后半成品应被保留");
+        Assert.True(File.Exists(partialPath + ".meta"));
+        var confirmedOffset = new FileInfo(partialPath).Length;
+        Assert.True(confirmedOffset > 0, "半成品应包含已确认落盘的数据");
+
+        // 会话 2：重新连接，应从上一次已确认的偏移续传并完成
+        var (ct2, st2) = MemoryAsstTransport.CreatePair();
+        var server2 = new AssistantServer(new MemoryAsstListener(), sink);
+        var handle2 = server2.HandleAsync(st2, CancellationToken.None);
+        await using var client2 = new AssistantClient(ct2);
+        var result = await client2.SendAsync(hello, ReadFrom(source));
+
+        await handle2;
+
+        Assert.True(result.Ok);
+        Assert.Equal(confirmedOffset, result.ResumeOffset);
+        Assert.Equal(source, await File.ReadAllBytesAsync(Path.Combine(_dir, "drop.bin")));
+    }
+
+    [Fact]
+    public async Task Hello_EmptyExpectedSha256_Rejected()
+    {
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        var sink = new AsstFileSink(_dir);
+        var server = new AssistantServer(new MemoryAsstListener(), sink);
+        var handleTask = server.HandleAsync(serverT, CancellationToken.None);
+
+        var hello = new AsstHello("empty-sha", "e.bin", 10, 4096, "");
+        await clientT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Hello, AsstMessages.EncodeHello(hello)));
+
+        var reply = await AsstFrame.ReadFrameAsync(clientT);
+        await handleTask;
+
+        Assert.Equal((byte)AsstMessageType.Error, reply.Type);
+        Assert.False(File.Exists(Path.Combine(_dir, "e.bin")));
+    }
+
+    [Fact]
+    public async Task Hello_NonHexSha_Rejected()
+    {
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        var sink = new AsstFileSink(_dir);
+        var server = new AssistantServer(new MemoryAsstListener(), sink);
+        var handleTask = server.HandleAsync(serverT, CancellationToken.None);
+
+        // 长度 64 但含有非十六进制字符
+        var hello = new AsstHello("bad-sha", "h.bin", 10, 4096, new string('G', 64));
+        await clientT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Hello, AsstMessages.EncodeHello(hello)));
+
+        var reply = await AsstFrame.ReadFrameAsync(clientT);
+        await handleTask;
+
+        Assert.Equal((byte)AsstMessageType.Error, reply.Type);
+    }
+
+    [Fact]
+    public async Task Hello_NegativeFileSize_Rejected()
+    {
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        var sink = new AsstFileSink(_dir);
+        var server = new AssistantServer(new MemoryAsstListener(), sink);
+        var handleTask = server.HandleAsync(serverT, CancellationToken.None);
+
+        var hello = new AsstHello("neg-size", "n.bin", -5, 4096, ShaA);
+        await clientT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Hello, AsstMessages.EncodeHello(hello)));
+
+        var reply = await AsstFrame.ReadFrameAsync(clientT);
+        await handleTask;
+
+        Assert.Equal((byte)AsstMessageType.Error, reply.Type);
+        Assert.False(File.Exists(Path.Combine(_dir, "n.bin")));
+    }
+
+    [Fact]
+    public async Task Data_ExceedingFileSize_Rejected()
+    {
+        var (clientT, serverT) = MemoryAsstTransport.CreatePair();
+        var sink = new AsstFileSink(_dir);
+        var server = new AssistantServer(new MemoryAsstListener(), sink);
+        var handleTask = server.HandleAsync(serverT, CancellationToken.None);
+
+        // FileSize=10，偏移 0 处一次写入 20 字节将累计偏移超 FileSize → 写前协议错误
+        var hello = new AsstHello("overflow", "o.bin", 10, 4096, ShaA);
+        await clientT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Hello, AsstMessages.EncodeHello(hello)));
+        var offer = await AsstFrame.ReadFrameAsync(clientT);
+        Assert.Equal((byte)AsstMessageType.Offer, offer.Type);
+
+        await clientT.WriteAsync(AsstFrame.Build((byte)AsstMessageType.Data,
+            AsstMessages.EncodeData(new AsstData(0, new byte[20]))));
+
+        var reply = await AsstFrame.ReadFrameAsync(clientT);
+        await handleTask;
+
+        Assert.Equal((byte)AsstMessageType.Error, reply.Type);
+        Assert.False(File.Exists(Path.Combine(_dir, "o.bin")));
     }
 }

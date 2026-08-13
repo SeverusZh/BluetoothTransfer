@@ -4,6 +4,7 @@ using BluetoothTransfer.Core.Protocol;
 using BluetoothTransfer.Core.Server;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
+using System.Security.Cryptography;
 using Xunit;
 
 namespace BluetoothTransfer.Tests;
@@ -46,7 +47,8 @@ public class ReceiveServiceTests : IDisposable
 
         var source = new byte[40_000];
         Random.Shared.NextBytes(source);
-        var hello = new AsstHello("r1", "recv.bin", source.Length, 8192, "");
+        var sha = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
+        var hello = new AsstHello("r1", "recv.bin", source.Length, 8192, sha);
         var (clientT, serverT) = MemoryAsstTransport.CreatePair();
         listener.Enqueue(serverT);
         await using var client = new AssistantClient(clientT);
@@ -82,7 +84,8 @@ public class ReceiveServiceTests : IDisposable
 
         var source = new byte[10_000];
         Random.Shared.NextBytes(source);
-        var hello = new AsstHello("r2", "peer.bin", source.Length, 8192, "");
+        var sha = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
+        var hello = new AsstHello("r2", "peer.bin", source.Length, 8192, sha);
         var (clientT, serverT) = MemoryAsstTransport.CreatePair();
         serverT.RemoteAddress = "00:A7:60:50:75:04";
         listener.Enqueue(serverT);

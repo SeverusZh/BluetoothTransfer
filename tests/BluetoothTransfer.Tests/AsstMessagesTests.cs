@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using BluetoothTransfer.Core.Protocol;
 using Xunit;
 
@@ -52,5 +53,25 @@ public class AsstMessagesTests
     {
         Assert.Throws<AsstProtocolException>(() => AsstMessages.DecodeAck(new byte[3]));
         Assert.Throws<AsstProtocolException>(() => AsstMessages.DecodeOffer(new byte[8]));
+    }
+
+    [Fact]
+    public void Decode_StringLengthInt32Max_Rejected()
+    {
+        // OFFER：状态(1) + 偏移(8) + reason 长度声明 Int32.MaxValue（无实际内容）
+        var payload = new byte[13];
+        BinaryPrimitives.WriteInt64LittleEndian(payload.AsSpan(1), 0);
+        BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(9), int.MaxValue);
+        // 加法回绕曾绕过边界校验（可错误类型），现应稳定抛 AsstProtocolException
+        Assert.Throws<AsstProtocolException>(() => AsstMessages.DecodeOffer(payload));
+    }
+
+    [Fact]
+    public void Decode_DataLenInt32Max_Rejected()
+    {
+        var payload = new byte[12];
+        BinaryPrimitives.WriteInt64LittleEndian(payload, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(8), int.MaxValue);
+        Assert.Throws<AsstProtocolException>(() => AsstMessages.DecodeData(payload));
     }
 }
