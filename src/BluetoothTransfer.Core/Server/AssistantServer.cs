@@ -150,21 +150,31 @@ public sealed class AssistantServer
                 }
             }
         }
+        // 断点续传缺陷修复：蓝牙传输最常见的失败形态是连接中断（对端提前关闭/IO 异常，见
+        // AsstProtocolException"对端提前关闭连接"）。此前协议异常与一般异常分支会 deletePartial:
+        // true 删掉 .btpart/.btpart.meta，而发送端对断连会重试，重连后重发 HELLO，接收端因半成品
+        // 已删只能返回偏移 0，导致从头重传，断点续传名存实亡。
+        // 因此 HELLO 之后的任何传输中途失败（含协议异常与一般异常）一律保留半成品（deletePartial:
+        // false）。保留在协议上安全，理由有三：
+        //   1) 检查点可靠：WriteAsync 在发 ACK 前已 Flush(flushToDisk:true) 落盘，偏移即已确认进度；
+        //   2) meta 防脏续传：OpenAsync 按 meta（TransferId + FileSize）校验续传合法性，脏残留不可复用；
+        //   3) SHA-256 最终把关：CompleteAsync 校验哈希，不匹配时清空半成品，坏数据不会变成正式文件。
         catch (AsstProtocolException ex)
         {
             _onLog?.Invoke("ERROR", ex.Message);
             await TrySendErrorAsync(transport, ex.Message);
-            if (hello != null) await _sink.AbortAsync(hello, deletePartial: true, ct);
+            if (hello != null) await _sink.AbortAsync(hello, deletePartial: false, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // 宿主取消：保留半成品（可续传）
             if (hello != null) await _sink.AbortAsync(hello, deletePartial: false, ct);
         }
         catch (Exception ex)
         {
             _onLog?.Invoke("ERROR", $"接收失败：{ex.Message}");
             await TrySendErrorAsync(transport, ex.Message);
-            if (hello != null) await _sink.AbortAsync(hello, deletePartial: true, ct);
+            if (hello != null) await _sink.AbortAsync(hello, deletePartial: false, ct);
         }
         finally
         {
