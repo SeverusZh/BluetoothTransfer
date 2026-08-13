@@ -19,13 +19,44 @@
             <SolidColorBrush x:Key="PressedBrush" Color="#D5E7FA"/>
             <SolidColorBrush x:Key="DangerBrush" Color="#DC2626"/>
             <SolidColorBrush x:Key="SuccessBrush" Color="#16A34A"/>
+            <SolidColorBrush x:Key="StarBrush" Color="#F59E0B"/>
+            <SolidColorBrush x:Key="SubtleBrush" Color="#F8FAFC"/>
+            <SolidColorBrush x:Key="GridLineBrush" Color="#EEF1F5"/>
+            <SolidColorBrush x:Key="ColumnHeaderBrush" Color="#F1F5F9"/>
+            <SolidColorBrush x:Key="ProgressTrackBrush" Color="#E5EAF0"/>
+            <SolidColorBrush x:Key="ScrollThumbBrush" Color="#C6CDD6"/>
+            <SolidColorBrush x:Key="BrandPressedBrush" Color="#073F7D"/>
+            <SolidColorBrush x:Key="DangerHoverBrush" Color="#FDECEC"/>
             <SolidColorBrush x:Key="HeaderBrush" Color="#374151"/>
 
             <!-- 字体 -->
             <FontFamily x:Key="AppFont">Segoe UI</FontFamily>
 
             <!-- 按钮 -->
+            <!-- 键盘 Tab 导航焦点轮廓：仅在通过键盘聚焦时显示（鼠标点击不显示），
+                 使用 FocusVisualStyle 而非在模板里直接改描边，可同时适配白底/品牌底按钮。 -->
+            <Style x:Key="BrandFocusVisualStyle" TargetType="Control">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Control">
+                            <Rectangle Margin="-1" Stroke="{StaticResource BrandBrush}"
+                                       StrokeThickness="2" RadiusX="5" RadiusY="5"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <Style x:Key="LightFocusVisualStyle" TargetType="Control">
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Control">
+                            <Rectangle Margin="-1" Stroke="{StaticResource CardBrush}"
+                                       StrokeThickness="2" RadiusX="5" RadiusY="5"/>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
             <Style TargetType="Button">
+                <Setter Property="FocusVisualStyle" Value="{StaticResource BrandFocusVisualStyle}"/>
                 <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
                 <Setter Property="FontSize" Value="13"/>
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
@@ -68,14 +99,16 @@
                 <Setter Property="Foreground" Value="White"/>
                 <Setter Property="Background" Value="{StaticResource BrandBrush}"/>
                 <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}"/>
+                <!-- 品牌底上需用浅色轮廓才能看清键盘焦点 -->
+                <Setter Property="FocusVisualStyle" Value="{StaticResource LightFocusVisualStyle}"/>
                 <Style.Triggers>
                     <Trigger Property="IsMouseOver" Value="True">
                         <Setter Property="Background" Value="{StaticResource BrandDarkBrush}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource BrandDarkBrush}"/>
                     </Trigger>
                     <Trigger Property="IsPressed" Value="True">
-                        <Setter Property="Background" Value="#073F7D"/>
-                        <Setter Property="BorderBrush" Value="#073F7D"/>
+                        <Setter Property="Background" Value="{StaticResource BrandPressedBrush}"/>
+                        <Setter Property="BorderBrush" Value="{StaticResource BrandPressedBrush}"/>
                     </Trigger>
                 </Style.Triggers>
             </Style>
@@ -84,7 +117,7 @@
                 <Setter Property="Foreground" Value="{StaticResource DangerBrush}"/>
                 <Style.Triggers>
                     <Trigger Property="IsMouseOver" Value="True">
-                        <Setter Property="Background" Value="#FDECEC"/>
+                        <Setter Property="Background" Value="{StaticResource DangerHoverBrush}"/>
                         <Setter Property="BorderBrush" Value="{StaticResource DangerBrush}"/>
                     </Trigger>
                 </Style.Triggers>
@@ -106,7 +139,7 @@
                         <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}"/>
                     </Trigger>
                     <Trigger Property="IsReadOnly" Value="True">
-                        <Setter Property="Background" Value="#F8FAFC"/>
+                        <Setter Property="Background" Value="{StaticResource SubtleBrush}"/>
                     </Trigger>
                 </Style.Triggers>
             </Style>
@@ -210,7 +243,7 @@
                 <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
                 <Setter Property="BorderThickness" Value="1"/>
                 <Setter Property="GridLinesVisibility" Value="Horizontal"/>
-                <Setter Property="HorizontalGridLinesBrush" Value="#EEF1F5"/>
+                <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource GridLineBrush}"/>
                 <Setter Property="RowHeight" Value="28"/>
                 <Setter Property="HeadersVisibility" Value="Column"/>
                 <Setter Property="AutoGenerateColumns" Value="False"/>
@@ -218,11 +251,11 @@
                 <Setter Property="CanUserDeleteRows" Value="False"/>
                 <Setter Property="SelectionMode" Value="Single"/>
                 <Setter Property="RowBackground" Value="{StaticResource CardBrush}"/>
-                <Setter Property="AlternatingRowBackground" Value="#F8FAFC"/>
+                <Setter Property="AlternatingRowBackground" Value="{StaticResource SubtleBrush}"/>
                 <Setter Property="FontSize" Value="12.5"/>
             </Style>
             <Style TargetType="DataGridColumnHeader">
-                <Setter Property="Background" Value="#F1F5F9"/>
+                <Setter Property="Background" Value="{StaticResource ColumnHeaderBrush}"/>
                 <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
                 <Setter Property="Padding" Value="6,6"/>
@@ -240,9 +273,12 @@
             </Style>
 
             <!-- 进度条 -->
+            <!-- 说明：本自定义模板仅实现确定态（Value/Maximum 驱动的填充宽度），
+                 不实现 IsIndeterminate 不定态动画；本应用所有进度条均绑定进度值，
+                 无需不定态，故保持简单可靠。如需不定态，需另建含动画分支的模板。 -->
             <Style TargetType="ProgressBar">
                 <Setter Property="Height" Value="8"/>
-                <Setter Property="Background" Value="#E5EAF0"/>
+                <Setter Property="Background" Value="{StaticResource ProgressTrackBrush}"/>
                 <Setter Property="Foreground" Value="{StaticResource BrandBrush}"/>
                 <Setter Property="Template">
                     <Setter.Value>
@@ -261,6 +297,24 @@
             <ControlTemplate x:Key="TransparentRepeatButtonTemplate" TargetType="RepeatButton">
                 <Border Background="Transparent"/>
             </ControlTemplate>
+            <!-- 行级/列级箭头按钮模板：默认朝上（▲），需反向时通过 RenderTransform 旋转 -->
+            <ControlTemplate x:Key="ScrollLineButtonTemplate" TargetType="RepeatButton">
+                <Border x:Name="lineBtn" Background="Transparent" SnapsToDevicePixels="True">
+                    <Path Data="M0,0 L7,0 L3.5,6.5 Z" Fill="{StaticResource ScrollThumbBrush}"
+                          Stretch="None" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter TargetName="lineBtn" Property="Background" Value="{StaticResource HoverBrush}"/>
+                    </Trigger>
+                    <Trigger Property="IsPressed" Value="True">
+                        <Setter TargetName="lineBtn" Property="Background" Value="{StaticResource PressedBrush}"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                        <Setter Property="Opacity" Value="0.4"/>
+                    </Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate>
             <Style TargetType="ScrollBar">
                 <Setter Property="Width" Value="10"/>
                 <Setter Property="Background" Value="Transparent"/>
@@ -268,7 +322,14 @@
                     <Setter.Value>
                         <ControlTemplate TargetType="ScrollBar">
                             <Grid Background="Transparent">
-                                <Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="Vertical">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                <RepeatButton Grid.Row="0" Command="{x:Static ScrollBar.LineUpCommand}"
+                                              Template="{StaticResource ScrollLineButtonTemplate}"/>
+                                <Track x:Name="PART_Track" Grid.Row="1" IsDirectionReversed="True" Orientation="Vertical">
                                     <Track.DecreaseRepeatButton>
                                         <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}"
                                                       Template="{StaticResource TransparentRepeatButtonTemplate}" Focusable="False"/>
@@ -281,12 +342,19 @@
                                         <Thumb>
                                             <Thumb.Template>
                                                 <ControlTemplate TargetType="Thumb">
-                                                    <Border Background="#C6CDD6" CornerRadius="5" Margin="2"/>
+                                                    <Border Background="{StaticResource ScrollThumbBrush}" CornerRadius="5" Margin="2"/>
                                                 </ControlTemplate>
                                             </Thumb.Template>
                                         </Thumb>
                                     </Track.Thumb>
                                 </Track>
+                                <RepeatButton Grid.Row="2" Command="{x:Static ScrollBar.LineDownCommand}"
+                                              Template="{StaticResource ScrollLineButtonTemplate}"
+                                              RenderTransformOrigin="0.5,0.5">
+                                    <RepeatButton.RenderTransform>
+                                        <RotateTransform Angle="180"/>
+                                    </RepeatButton.RenderTransform>
+                                </RepeatButton>
                             </Grid>
                         </ControlTemplate>
                     </Setter.Value>
@@ -299,7 +367,19 @@
                             <Setter.Value>
                                 <ControlTemplate TargetType="ScrollBar">
                                     <Grid Background="Transparent">
-                                        <Track x:Name="PART_Track" Orientation="Horizontal">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <RepeatButton Grid.Column="0" Command="{x:Static ScrollBar.LineLeftCommand}"
+                                                      Template="{StaticResource ScrollLineButtonTemplate}"
+                                                      RenderTransformOrigin="0.5,0.5">
+                                            <RepeatButton.RenderTransform>
+                                                <RotateTransform Angle="-90"/>
+                                            </RepeatButton.RenderTransform>
+                                        </RepeatButton>
+                                        <Track x:Name="PART_Track" Grid.Column="1" Orientation="Horizontal">
                                             <Track.DecreaseRepeatButton>
                                                 <RepeatButton Command="{x:Static ScrollBar.PageLeftCommand}"
                                                               Template="{StaticResource TransparentRepeatButtonTemplate}" Focusable="False"/>
@@ -312,12 +392,19 @@
                                                 <Thumb>
                                                     <Thumb.Template>
                                                         <ControlTemplate TargetType="Thumb">
-                                                            <Border Background="#C6CDD6" CornerRadius="5" Margin="2"/>
+                                                            <Border Background="{StaticResource ScrollThumbBrush}" CornerRadius="5" Margin="2"/>
                                                         </ControlTemplate>
                                                     </Thumb.Template>
                                                 </Thumb>
                                             </Track.Thumb>
                                         </Track>
+                                        <RepeatButton Grid.Column="2" Command="{x:Static ScrollBar.LineRightCommand}"
+                                                      Template="{StaticResource ScrollLineButtonTemplate}"
+                                                      RenderTransformOrigin="0.5,0.5">
+                                            <RepeatButton.RenderTransform>
+                                                <RotateTransform Angle="90"/>
+                                            </RepeatButton.RenderTransform>
+                                        </RepeatButton>
                                     </Grid>
                                 </ControlTemplate>
                             </Setter.Value>

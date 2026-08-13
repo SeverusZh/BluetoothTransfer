@@ -2,7 +2,9 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- 应用主色 -->
+    <!-- 应用主色：App.xaml 通过 MergedDictionaries 优先合并本字典，故其全局按钮/进度条/
+         Tab 样式都能解析到 BrandBrush/BrandDarkBrush（StaticResource 可解析），保持在此处与
+         应用图标用色同源；主按按压色 BrandPressedBrush 等放于 App.xaml 资源区。 -->
     <SolidColorBrush x:Key="BrandBrush" Color="#0B6BCB"/>
     <SolidColorBrush x:Key="BrandDarkBrush" Color="#0958A8"/>
 

@@ -67,7 +67,8 @@
                     <Button Content="配对" Command="{Binding PairCommand}" Padding="12,6" Margin="0,0,8,0"/>
                     <Button Content="打开蓝牙设置" Command="{Binding OpenSettingsCommand}" Padding="12,6" Margin="0,0,8,0"/>
                     <Button Content="{Binding SelectedDevice.FavoriteDisplay, FallbackValue=☆}" Command="{Binding ToggleFavoriteCommand}"
-                            Padding="8,6" ToolTip="收藏/取消收藏当前设备"/>
+                            Padding="8,6" ToolTip="收藏/取消收藏当前设备"
+                            AutomationProperties.Name="收藏/取消收藏当前设备"/>
                 </StackPanel>
 
                 <Grid Grid.Row="2">
@@ -80,12 +81,12 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding FavoriteDisplay}" Foreground="#F59E0B" Margin="0,0,6,0"/>
+                                    <TextBlock Grid.Column="0" Text="{Binding FavoriteDisplay}" Foreground="{StaticResource StarBrush}" Margin="0,0,6,0"/>
                                     <StackPanel Grid.Column="1">
                                         <StackPanel Orientation="Horizontal">
                                             <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
                                             <TextBlock Text="{Binding PairedDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="8,1,0,0"/>
-                                            <TextBlock Text="助手" FontSize="11" Foreground="#16A34A" Margin="8,1,0,0">
+                                            <TextBlock Text="助手" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="8,1,0,0">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Visibility" Value="Collapsed"/>
@@ -160,7 +161,8 @@
                 <GroupBox Grid.Row="6" Header="接收助手">
                     <StackPanel>
                         <DockPanel>
-                            <Button DockPanel.Dock="Right" Content="目录…" Command="{Binding BrowseReceiveDirCommand}" Padding="10,5" Margin="4,0,0,0"/>
+                            <Button DockPanel.Dock="Right" Content="目录…" Command="{Binding BrowseReceiveDirCommand}" Padding="10,5" Margin="4,0,0,0"
+                                    AutomationProperties.Name="浏览接收目录"/>
                             <Button Content="{Binding ReceiveToggleText}" Command="{Binding ToggleReceiveCommand}"
                                     Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"/>
                         </DockPanel>
@@ -216,10 +218,12 @@
                 <GroupBox Grid.Row="2" Header="传输记录">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,5">
-                            <Button Content="刷新" Command="{Binding RefreshRecordsCommand}" Padding="10,3" Margin="0,0,5,0"/>
+                            <Button Content="刷新" Command="{Binding RefreshRecordsCommand}" Padding="10,3" Margin="0,0,5,0"
+                                    AutomationProperties.Name="刷新传输记录"/>
                             <Button Content="导出 CSV" Command="{Binding ExportCsvCommand}" Padding="10,3" Margin="0,0,5,0"/>
                             <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}" Padding="10,3" Margin="0,0,5,0"/>
-                            <Button Content="清空" Command="{Binding ClearRecordsCommand}" Style="{StaticResource DangerButtonStyle}" Padding="10,3"/>
+                            <Button Content="清空" Command="{Binding ClearRecordsCommand}" Style="{StaticResource DangerButtonStyle}" Padding="10,3"
+                                    AutomationProperties.Name="清空传输记录"/>
                         </StackPanel>
                         <DataGrid ItemsSource="{Binding Records}" AutoGenerateColumns="False" IsReadOnly="True"
                                   CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
