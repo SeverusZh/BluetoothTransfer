@@ -9,11 +9,21 @@ public sealed class TransferSpeedTracker
     private readonly Queue<(DateTime Time, long Bytes)> _samples = new();
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(5);
     private readonly object _lock = new();
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>
+    /// 创建一个传输速率跟踪器。
+    /// </summary>
+    /// <param name="timeProvider">时间源，用于获取样本时间戳；默认使用真实时钟，测试时可注入受控时钟。</param>
+    public TransferSpeedTracker(TimeProvider? timeProvider = null)
+    {
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
 
     /// <summary>记录一个进度样本（已发送总字节数）。</summary>
     public void AddSample(long totalBytesSent)
     {
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         lock (_lock)
         {
             _samples.Enqueue((now, totalBytesSent));
