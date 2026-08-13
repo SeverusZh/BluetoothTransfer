@@ -171,8 +171,25 @@
                         <TextBlock Text="{Binding ReceiveCurrentFile}" FontSize="11" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
                         <ProgressBar Height="8" Value="{Binding ReceiveProgress}" Margin="0,4,0,0"/>
                         <TextBlock Text="{Binding ReceiveProgressText}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
-                        <ListBox ItemsSource="{Binding ReceiveCompleted}" Height="64" Margin="0,6,0,0" FontSize="11"
-                                 bh:HoverScrollBehavior.Enabled="True"/>
+                        <Grid Height="64" Margin="0,6,0,0">
+                            <ListBox ItemsSource="{Binding ReceiveCompleted}" FontSize="11"
+                                     bh:HoverScrollBehavior.Enabled="True"/>
+                            <TextBlock Text="本会话暂无接收文件" FontSize="12"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                       IsHitTestVisible="False">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ReceiveCompleted.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
                         <CheckBox Content="每次接收前询问" IsChecked="{Binding ReceiveAsk}" Margin="0,6,0,0"/>
                     </StackPanel>
                 </GroupBox>
@@ -189,6 +206,7 @@
                 </Grid.RowDefinitions>
 
                 <GroupBox Grid.Row="0" Header="任务队列">
+                    <Grid>
                     <DataGrid ItemsSource="{Binding Jobs}" AutoGenerateColumns="False" IsReadOnly="True"
                               CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
                               HeadersVisibility="Column" bh:HoverScrollBehavior.Enabled="True">
@@ -213,6 +231,22 @@
                             </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
+                    <TextBlock Text="队列为空" FontSize="12"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Jobs.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    </Grid>
                 </GroupBox>
 
                 <GroupBox Grid.Row="2" Header="传输记录">
@@ -225,6 +259,7 @@
                             <Button Content="清空" Command="{Binding ClearRecordsCommand}" Style="{StaticResource DangerButtonStyle}" Padding="10,3"
                                     AutomationProperties.Name="清空传输记录"/>
                         </StackPanel>
+                        <Grid>
                         <DataGrid ItemsSource="{Binding Records}" AutoGenerateColumns="False" IsReadOnly="True"
                                   CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
                                   bh:HoverScrollBehavior.Enabled="True">
@@ -240,14 +275,47 @@
                                 <DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="150"/>
                             </DataGrid.Columns>
                         </DataGrid>
+                        <TextBlock Text="暂无传输记录" FontSize="12"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   IsHitTestVisible="False">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Records.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        </Grid>
                     </DockPanel>
                 </GroupBox>
 
                 <GroupBox Grid.Row="4" Header="日志">
+                    <Grid>
                     <ListBox x:Name="LogListBox" ItemsSource="{Binding LogLines}" BorderThickness="0"
                              FontFamily="Consolas" FontSize="11"
                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
                              bh:HoverScrollBehavior.Enabled="True"/>
+                    <TextBlock Text="暂无日志" FontSize="12"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding LogLines.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    </Grid>
                 </GroupBox>
             </Grid>
         </Grid>
