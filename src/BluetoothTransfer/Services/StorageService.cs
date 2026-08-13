@@ -33,7 +33,9 @@ public class StorageService
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? ".");
             _dbPath = fullPath;
         }
-        _connStr = $"Data Source={_dbPath}";
+        // 使用 SqliteConnectionStringBuilder 构造连接串，避免直接字符串拼接导致
+        // 路径含 ';、" 等字符时被解析为非法连接串（或注入额外连接参数）。
+        _connStr = new SqliteConnectionStringBuilder { DataSource = _dbPath }.ToString();
         InitDb();
     }
 
@@ -41,39 +43,60 @@ public class StorageService
     {
         using var conn = new SqliteConnection(_connStr);
         conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS transfer_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                direction TEXT NOT NULL,
-                type TEXT NOT NULL,
-                peer_name TEXT,
-                peer_addr TEXT,
-                name TEXT,
-                size INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'ok',
-                checksum TEXT,
-                channel TEXT DEFAULT 'ble',
-                local_path TEXT,
-                note TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_records_created ON transfer_records(created_at);
-            CREATE INDEX IF NOT EXISTS idx_records_peer ON transfer_records(peer_addr);
-            CREATE INDEX IF NOT EXISTS idx_records_direction ON transfer_records(direction);
-            CREATE INDEX IF NOT EXISTS idx_records_status ON transfer_records(status);
-            CREATE INDEX IF NOT EXISTS idx_records_type ON transfer_records(type);
 
-            CREATE TABLE IF NOT EXISTS devices (
-                addr TEXT PRIMARY KEY,
-                name TEXT,
-                alias TEXT,
-                favorite INTEGER DEFAULT 0,
-                last_seen TEXT,
-                last_connected TEXT
-            );
-            """;
-        cmd.ExecuteNonQuery();
+        // 从 PRAGMA user_version 读取当前库版本；整数类型，不涉及外部拼接，直接读取即可。
+        long userVersion;
+        using (var versionCmd = conn.CreateCommand())
+        {
+            versionCmd.CommandText = "PRAGMA user_version;";
+            userVersion = (long)versionCmd.ExecuteScalar()!;
+        }
+
+        // 迁移到版本 1：版本 0（含全新车库/未跟踪版本的旧库）在此建立基础表结构，
+        // 保持既有表结构不变，仅把 user_version 置为 1；未来 schema 演进在此追加
+        // 更高版本的迁移分支。写入 user_version 用参数化防止拼接外部输入。
+        if (userVersion < 1)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS transfer_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    peer_name TEXT,
+                    peer_addr TEXT,
+                    name TEXT,
+                    size INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'ok',
+                    checksum TEXT,
+                    channel TEXT DEFAULT 'ble',
+                    local_path TEXT,
+                    note TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_records_created ON transfer_records(created_at);
+                CREATE INDEX IF NOT EXISTS idx_records_peer ON transfer_records(peer_addr);
+                CREATE INDEX IF NOT EXISTS idx_records_direction ON transfer_records(direction);
+                CREATE INDEX IF NOT EXISTS idx_records_status ON transfer_records(status);
+                CREATE INDEX IF NOT EXISTS idx_records_type ON transfer_records(type);
+
+                CREATE TABLE IF NOT EXISTS devices (
+                    addr TEXT PRIMARY KEY,
+                    name TEXT,
+                    alias TEXT,
+                    favorite INTEGER DEFAULT 0,
+                    last_seen TEXT,
+                    last_connected TEXT
+                );
+                """;
+            cmd.ExecuteNonQuery();
+
+            // 写入 user_version：SQLite 的 PRAGMA 赋值不支持绑定参数（会报语法错误），
+            // 这里使用编译期整数常量（无外部输入，安全）。
+            using var setVersion = conn.CreateCommand();
+            setVersion.CommandText = "PRAGMA user_version = 1;";
+            setVersion.ExecuteNonQuery();
+        }
     }
 
     public void AddRecord(TransferRecord record)
@@ -85,7 +108,12 @@ public class StorageService
             INSERT INTO transfer_records (created_at, direction, type, peer_name, peer_addr, name, size, status, checksum, channel, local_path, note)
             VALUES (@created_at, @direction, @type, @peer_name, @peer_addr, @name, @size, @status, @checksum, @channel, @local_path, @note)
             """;
-        cmd.Parameters.AddWithValue("@created_at", string.IsNullOrEmpty(record.CreatedAt) ? DateTime.Now.ToString("o") : record.CreatedAt);
+        // created_at 一律落 UTC 时间（"o" 格式以 Z 结尾），保证 created_at 是字典序
+        // 即时间序，字符串比较/排序逻辑才不会因时区偏移混入而失效。
+        // 遗留说明：旧库中已存在的行仍可能是本地时间偏移格式（如 DateTime.Now 写入），
+        // 本次加固不迁移转换这些旧行，仅对新增写入保证 UTC 格式。
+        var createdUtc = DateTime.UtcNow.ToString("o");
+        cmd.Parameters.AddWithValue("@created_at", string.IsNullOrEmpty(record.CreatedAt) ? createdUtc : record.CreatedAt);
         cmd.Parameters.AddWithValue("@direction", record.Direction);
         cmd.Parameters.AddWithValue("@type", record.Type);
         cmd.Parameters.AddWithValue("@peer_name", record.PeerName);
@@ -122,8 +150,10 @@ public class StorageService
         if (type != null) { where.Add("type = @type"); cmd.Parameters.AddWithValue("@type", type); }
         if (peerAddr != null) { where.Add("peer_addr = @peer_addr"); cmd.Parameters.AddWithValue("@peer_addr", peerAddr); }
         if (status != null) { where.Add("status = @status"); cmd.Parameters.AddWithValue("@status", status); }
-        if (from != null) { where.Add("created_at >= @from"); cmd.Parameters.AddWithValue("@from", from.Value.ToString("o")); }
-        if (to != null) { where.Add("created_at <= @to"); cmd.Parameters.AddWithValue("@to", to.Value.ToString("o")); }
+        // created_at 现按 UTC 存储（Z 结尾字典序即时间序），from/to 统一转 UTC 后
+        // 再参与字符串比较，避免调用方传入本地偏移时间导致比较错位。
+        if (from != null) { where.Add("created_at >= @from"); cmd.Parameters.AddWithValue("@from", from.Value.ToUniversalTime().ToString("o")); }
+        if (to != null) { where.Add("created_at <= @to"); cmd.Parameters.AddWithValue("@to", to.Value.ToUniversalTime().ToString("o")); }
         if (search != null) { where.Add("(name LIKE @search OR peer_name LIKE @search)"); cmd.Parameters.AddWithValue("@search", $"%{search}%"); }
 
         var whereClause = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
@@ -170,7 +200,8 @@ public class StorageService
         conn.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "DELETE FROM transfer_records WHERE created_at < @before";
-        cmd.Parameters.AddWithValue("@before", before.ToString("o"));
+        // 与 GetRecords 一致：按 UTC 存储语义转成 UTC 后比较。
+        cmd.Parameters.AddWithValue("@before", before.ToUniversalTime().ToString("o"));
         cmd.ExecuteNonQuery();
     }
 
