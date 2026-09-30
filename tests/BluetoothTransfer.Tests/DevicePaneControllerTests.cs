@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows.Threading;
+using BluetoothTransfer.Core.Discovery;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
 using BluetoothTransfer.ViewModels;
@@ -9,10 +10,13 @@ namespace BluetoothTransfer.Tests;
 
 /// <summary>
 /// DevicePaneController 单元测试：全部经 fake 注入（IOppDiscoveryService / IStorageService /
-/// Dispatcher / Devices 集合 / 状态与日志回调），不触碰真实蓝牙静态调用，
-/// 也本批不测 Scan/Pair/Probe（涉及真实蓝牙静态调用）。
-/// 被测方法 ToggleFavoriteAsync 内部 await Task.Run(...)，延续经 DispatcherSynchronizationContext
-/// 回到 STA 线程后做集合操作，故测试体必须运行在「STA + Dispatcher 泵」上（见 RunOnDispatcherAsync）。
+/// Dispatcher / Devices 集合 / 状态与日志回调 / 助手探测与助手枚举委托），不触碰真实蓝牙静态调用。
+/// 本批新增 ScanAsync 的助手探测-合并竞争回归：探测入口（probeAssistant）与助手枚举
+/// （findAssistantDevices）均可注入 fake，因此无需蓝牙硬件即可复现"探测失败覆盖已知 true"。
+/// 被测方法内部 await Task.Run(...)，延续经 DispatcherSynchronizationContext 回到 STA 线程后做集合操作，
+/// 故测试体必须运行在「STA + Dispatcher 泵」上（见 RunOnDispatcherAsync）。
+/// 注意：这些测试依赖 WPF/Dispatcher，只能在 Windows 上执行；纯策略断言见
+/// <see cref="AssistantProbePolicyTests"/>（无 WPF 依赖，Linux 可跑）。
 /// </summary>
 public class DevicePaneControllerTests
 {
@@ -80,6 +84,127 @@ public class DevicePaneControllerTests
         });
     }
 
+    /// <summary>
+    /// 回归（Bug2 缺陷 3）：探测返回失败（Unknown）时，不得覆盖 MergeAssistantDevicesAsync 写入的 true。
+    /// 修复前 ProbeAssistantAsync 无条件 item.IsAssistant = has（has=false）会与合并且序竞争，徽标消失。
+    /// </summary>
+    [Fact]
+    public async Task Scan_ProbeFailure_DoesNotEraseAssistantBadgeFromMerge()
+    {
+        await RunOnDispatcherAsync(async () =>
+        {
+            const string addr = "aa:00:00:00:00:01";
+            var devices = new ObservableCollection<OppDeviceItem>();
+            var tracker = new AssistantPresenceTracker();
+            var probed = new List<string>();
+            var logs = new List<(string Level, string Message)>();
+
+            var controller = new DevicePaneController(
+                new StubDiscovery(new List<OppDeviceInfo>
+                {
+                    new() { Id = "dev-1", Addr = addr, Name = "对端", IsPaired = true }
+                }),
+                new FakeStorageService(),
+                Dispatcher.CurrentDispatcher,
+                devices,
+                tracker,
+                () => false,
+                _ => { },
+                _ => { },
+                _ => { },
+                (lvl, msg) => logs.Add((lvl, msg)),
+                probeAssistant: id => { probed.Add(id); return Task.FromResult(AssistantProbeResult.Failed("设备忙")); },
+                findAssistantDevices: _ => Task.FromResult(new List<AssistantDetector.AssistantDeviceInfo>
+                {
+                    new("dev-1", addr, "对端")
+                }));
+
+            await controller.ScanAsync();
+
+            // 探测确实执行过（失败），但合并的 true 必须保留。
+            Assert.Equal("dev-1", Assert.Single(probed));
+            var item = Assert.Single(devices);
+            Assert.True(item.IsAssistant);
+            Assert.True(tracker.Current(addr).IsAvailable);
+            return Unit.Default;
+        });
+    }
+
+    /// <summary>
+    /// 回归（Bug2 缺陷 1/2）：探测到助手应点亮徽标；随后的瞬时失败（Unknown）不得把已确认的 true 降级。
+    /// </summary>
+    [Fact]
+    public async Task Scan_ProbeAvailable_SetsBadge_AndLaterFailureKeepsIt()
+    {
+        await RunOnDispatcherAsync(async () =>
+        {
+            const string addr = "aa:00:00:00:00:02";
+            var devices = new ObservableCollection<OppDeviceItem>();
+            var tracker = new AssistantPresenceTracker();
+            var controller = new DevicePaneController(
+                new StubDiscovery(new List<OppDeviceInfo>
+                {
+                    new() { Id = "dev-2", Addr = addr, Name = "助手端", IsPaired = true }
+                }),
+                new FakeStorageService(),
+                Dispatcher.CurrentDispatcher,
+                devices,
+                tracker,
+                () => false,
+                _ => { },
+                _ => { },
+                _ => { },
+                (_, _) => { },
+                probeAssistant: _ => Task.FromResult(AssistantProbeResult.Available),
+                findAssistantDevices: _ => Task.FromResult(new List<AssistantDetector.AssistantDeviceInfo>()));
+
+            await controller.ScanAsync();
+            var item = Assert.Single(devices);
+            Assert.True(item.IsAssistant);
+
+            // 修复前这里会被无条件写成 false。
+            controller.ApplyProbeResult(item, AssistantProbeResult.Failed("设备忙/休眠"));
+            Assert.True(item.IsAssistant);
+            Assert.True(tracker.Current(addr).IsAvailable);
+            return Unit.Default;
+        });
+    }
+
+    /// <summary>
+    /// 回归（Bug2 缺陷 1）：确定的否定结果（Absent）应把徽标置为 false，但不得作为长期缓存结论
+    /// （tracker.Current 仍返回 Unknown，下一次探测/发送会重探）。
+    /// </summary>
+    [Fact]
+    public async Task Scan_ProbeAbsent_ClearsBadgeButStaysReprobeable()
+    {
+        await RunOnDispatcherAsync(() =>
+        {
+            const string addr = "aa:00:00:00:00:03";
+            var devices = new ObservableCollection<OppDeviceItem> { new() { Addr = addr, DeviceId = "dev-3", IsAssistant = true } };
+            var tracker = new AssistantPresenceTracker();
+            var controller = new DevicePaneController(
+                new StubDiscovery(new List<OppDeviceInfo>()),
+                new FakeStorageService(),
+                Dispatcher.CurrentDispatcher,
+                devices,
+                tracker,
+                () => false,
+                _ => { },
+                _ => { },
+                _ => { },
+                (_, _) => { },
+                probeAssistant: _ => Task.FromResult(AssistantProbeResult.Absent),
+                findAssistantDevices: _ => Task.FromResult(new List<AssistantDetector.AssistantDeviceInfo>()));
+
+            controller.ApplyProbeResult(devices[0], AssistantProbeResult.Absent);
+
+            Assert.False(devices[0].IsAssistant);
+            // 负结果不作为缓存结论：Current 仍为 Unknown（可重探），避免"一次否定锁死整个会话"。
+            Assert.True(tracker.Current(addr).IsUnknown);
+            return Task.FromResult(Unit.Default);
+        });
+    }
+
     private static DevicePaneController CreateController(
         IStorageService storage,
         ObservableCollection<OppDeviceItem> devices,
@@ -91,7 +216,7 @@ public class DevicePaneControllerTests
             storage,
             Dispatcher.CurrentDispatcher,
             devices,
-            new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase),
+            new AssistantPresenceTracker(),
             () => false,
             _ => { },
             s => statusCalls.Add(s),
@@ -147,4 +272,18 @@ internal sealed class FakeDiscovery : IOppDiscoveryService
 
     public Task<bool> PairAsync(string addr, string? pin = null, CancellationToken ct = default)
         => throw new NotSupportedException("本批测试不覆盖设备配对。");
+}
+
+/// <summary>返回预设设备列表的 IOppDiscoveryService fake：供 ScanAsync 助手探测-合并回归使用。</summary>
+internal sealed class StubDiscovery : IOppDiscoveryService
+{
+    private readonly List<OppDeviceInfo> _devices;
+
+    public StubDiscovery(List<OppDeviceInfo> devices) => _devices = devices;
+
+    public Task<List<OppDeviceInfo>> DiscoverAsync(bool pairedOnly = false, int seconds = 0, CancellationToken ct = default)
+        => Task.FromResult(new List<OppDeviceInfo>(_devices));
+
+    public Task<bool> PairAsync(string addr, string? pin = null, CancellationToken ct = default)
+        => Task.FromResult(false);
 }

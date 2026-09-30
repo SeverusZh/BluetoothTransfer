@@ -80,7 +80,10 @@ public class AssistantServerTests : IDisposable
         }, cts.Token);
         await progressSeen.Task;
         cts.Cancel();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => send1);
+        // 取消可能抛 OperationCanceledException 本身，也可能抛其子类 TaskCanceledException
+        // （取决于取消发生在协议读写还是发送循环内）。ThrowsAsync 要求类型精确相等，会间歇性失败，
+        // 故用 ThrowsAnyAsync 断言“任意取消异常”。
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => send1);
         await handle1;
 
         Assert.True(File.Exists(Path.Combine(_dir, "big.bin.btpart")));
@@ -174,7 +177,7 @@ public class AssistantServerTests : IDisposable
         // 等客户端收到至少一个 ACK（服务端已落盘）后再取消，保证半成品存在
         await progressSeen.Task;
         cts.Cancel();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => sendTask);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sendTask);
         await handleTask;
 
         Assert.True(File.Exists(Path.Combine(_dir, "keep.bin.btpart")));

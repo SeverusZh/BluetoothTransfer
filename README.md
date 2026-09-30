@@ -8,7 +8,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%2F%20Windows%2011-0078D4?logo=windows)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-184%20passed-success)](#开发与测试)
+[![Tests](https://img.shields.io/badge/tests-236%20cases-success)](#开发与测试)
 
 *📤 把文件推给任何蓝牙设备 · 🔄 Windows 之间断点续传 · 🛡️ SHA-256 校验 · 🧰 免安装接收端*
 
@@ -50,9 +50,10 @@
 
 ### 🔄 接收助手（btrecv · Windows ⇄ Windows）
 
-- **断点续传** — 私有分片协议（自定义 RFCOMM UUID）：中断后从**已确认偏移**继续，接收端保留半成品（`.btpart` + `.btpart.meta`），重连自动续传；完成时校验 SHA-256，不匹配自动清空重传
+- **断点续传** — 私有分片协议（自定义 RFCOMM UUID）：中断后从**已确认偏移**继续，接收端保留半成品（`.btpart` + `.btpart.meta`，按文件名 + 内容 SHA-256 + 大小校验），重连自动续传；完成时校验 SHA-256，不匹配自动清空重传
+- **跨进程 / 跨重启续传** — 发送端把「未完成传输」持久化到 `send-journal.json`（原子写 + 跨进程锁）：**应用关闭、进程被杀、电脑重启**后，下次启动自动重新发起，接收端凭半成品回传已确认偏移继续；zip/文本/文件夹的打包产物保留到传输完成，保证重启后 SHA-256 与文件名可复现。用户**暂停**的传输保留且不自动重发，**取消**的传输清理条目与产物；条目与产物 7 天过期自动清理
 - **真正的传输队列** — 任务支持单独**暂停 / 继续 / 移除 / 重试**；接收端忙时自动退避等待；发送端显示通道列（OPP / 助手）
-- **自动探测 + 手动覆盖** — 发送前 SDP 探测对端是否运行助手：在线走私有通道，离线自动回退 OPP；可在 GUI/CLI 强制指定通道
+- **自动探测 + 手动覆盖** — 发送前探测对端是否运行助手：在线走私有通道，离线自动回退 OPP；可在 GUI/CLI 强制指定通道。探测区分「确认无助手」与「查询失败」，**失败不会被缓存成结论**，也不会把已知在线状态降级，因此对端助手稍后启动或瞬时查询失败后，下一次发送仍能重新发现并切回助手通道；回退 OPP 时会输出具体原因
 - **极简接收端** — `btrecv` 单 exe：CLI 内核（`btrecv run [--dir 目录] [--no-ask]`）+ 极简 GUI 壳；**默认每次接收前询问**（防止已配对设备直接落盘）；先用 OPP 把 `btrecv` 包推过去，解压即用（自包含无需安装 .NET）
 - **链路加密可配置** — 助手通道与 OPP 通道共用 `OppProtectionLevel` 配置，`encrypt` 启用链路加密（RFCOMM 加密由发送端请求、系统协商）；应用层仍无端到端加密
 
@@ -162,7 +163,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 
 - **iPhone（iOS）不支持蓝牙文件接收协议，无法通过 OPP 推送**
 - OPP 为明文传输：无端到端加密、无接收端校验回传；需要链路层加密时使用 `OppProtectionLevel=encrypt`
-- **OPP 通道无断点续传**：由自动重试缓解；Windows 对 Windows 走接收助手（btrecv）私有通道时支持断点续传与 SHA-256 校验
+- **OPP 通道无断点续传**：由自动重试缓解；Windows 对 Windows 走接收助手（btrecv）私有通道时支持断点续传与 SHA-256 校验，且发送端持久化未完成传输，**应用关闭/电脑重启后仍可继续**
 - 单文件上限 4GB（OBEX 协议约束），建议不超过 2GB
 - Android 同时只接受一个 OPP 传输：对端已有待确认传输时新推送会被拒绝（0xC3 Forbidden），应用会自动重试
 
@@ -199,8 +200,9 @@ dotnet test BluetoothTransfer.sln -c Release
 btcli selftest
 ```
 
-- **xUnit 单元测试（184 个）**：OBEX 编解码/流程、重试策略、速率跟踪（受控时钟）、发送队列（含暂停/继续竞态回归）、zip 打包、存储/导出/清空/迁移、设备收藏/别名、配置迁移、助手协议帧/消息/内存传输/断线续传/客户端/服务端/接收端集成、CSV 注入防护、控制器并发守卫（手工依赖注入 + fake）
-- 构建基线：**0 警告 / 0 错误**
+- **xUnit 单元测试（236 项）**：OBEX 编解码/流程、重试策略、速率跟踪（受控时钟）、发送队列（含暂停/继续竞态回归）、zip 打包、存储/导出/清空/迁移、设备收藏/别名、配置迁移、助手协议帧/消息/内存传输/断线续传/客户端/服务端/接收端集成、CSV 注入防护、控制器并发守卫（手工依赖注入 + fake）
+- 构建基线：**0 警告 / 0 错误**（Linux 上亦可用 `dotnet build BluetoothTransfer.sln -c Release -p:EnableWindowsTargeting=true` 交叉编译验证）
+- **跨平台验证**：仓库内 WPF/WinRT 之外的纯逻辑（协议编解码、落盘与续传、发送日志与恢复、重试策略、存储/导出、控制器并发守卫等）可在非 Windows 主机上通过跨平台 harness 真实执行；当前 209 项在 Linux harness 通过。依赖 `Dispatcher`/STA 的控制器测试与真蓝牙路径需在 Windows 上运行
 
 ## 📄 许可
 

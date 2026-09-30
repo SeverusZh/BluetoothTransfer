@@ -116,14 +116,16 @@ public class OppViewModel : ViewModelBase, IDisposable
     // EventBus/接收服务的事件 handler 引用：保存引用以便 Dispose 时退订（-=/Unsubscribe 必须引用同一委托实例）
     private readonly Action<LogEvent> _logHandler;
     private readonly Action<TransferProgressEvent> _progressHandler;
-    private readonly Dictionary<string, bool> _assistantCache = new(StringComparer.OrdinalIgnoreCase);
+    // 助手在线状态跟踪器（纯类型）：只缓存正结果且带 TTL，负结果/查询失败不作为确定结论，
+    // 因此"对端助手后启动"时下一次发送即可重新发现，而不会一次失败锁死整个会话。
+    private readonly AssistantPresenceTracker _assistantTracker = new();
     private bool? _queueUseAssistant;
     private readonly Dispatcher _dispatcher;
     private readonly TransferSpeedTracker _speedTracker = new();
     private readonly OppSendQueue _queue = new();
     // 组合式拆分：设备域与记录域的纯内部逻辑分别下沉到 DevicePaneController / RecordsPaneController，
-    // 本 VM 保持对外门面，公开 API 不变。`_assistantCache` 与发送队列（ResolveAssistantOnceAsync）共用，
-    // 因此把它传给 DevicePaneController 同一实例引用，保证缓存写入语义跨两域一致。
+    // 本 VM 保持对外门面，公开 API 不变。`_assistantTracker` 与发送队列（ResolveAssistantOnceAsync）共用，
+    // 因此把它传给 DevicePaneController 同一实例引用，保证探测状态语义跨两域一致。
     private readonly DevicePaneController _devicePane;
     private readonly RecordsPaneController _recordsPane;
 
@@ -312,7 +314,7 @@ public class OppViewModel : ViewModelBase, IDisposable
     }
 
     private DevicePaneController CreateDevicePane() => new(
-        _discovery, _storage, _dispatcher, Devices, _assistantCache,
+        _discovery, _storage, _dispatcher, Devices, _assistantTracker,
         () => IsScanning, v => IsScanning = v,
         v => StatusText = v, v => _lastError = v,
         (lvl, msg) => _events.Publish(new LogEvent(lvl, msg)));
@@ -451,8 +453,8 @@ public class OppViewModel : ViewModelBase, IDisposable
 
     // ------------------------------------------------------------------ 发送
     // 说明：发送队列/通道解析（ResolveAssistantOnceAsync）/进度回调与 UI 线程及 ObservableCollection
-    // 增删严格耦合，拆分风险大，本次拆分不涉及；仅设备域的助手探测缓存（_assistantCache）与发送共用，
-    // 已保证两端读写同一字典实例、语义不变。
+    // 增删严格耦合，拆分风险大，本次拆分不涉及；仅设备域的助手探测状态（_assistantTracker）与发送共用，
+    // 已保证两端读写同一实例、语义不变。
 
     private void EnqueueAndStart(IEnumerable<OppSendJob> jobs)
     {
@@ -502,12 +504,16 @@ public class OppViewModel : ViewModelBase, IDisposable
         try
         {
             job.Channel = useAssistant ? TransferConst.ChannelAssistant : TransferConst.ChannelOpp;
+            // cancelledByPause：OppSendQueue.Pause 会先置 job.Status=Paused 再取消活动令牌，
+            // 因此取消时该闭包能可靠区分“用户暂停”（保留 journal 与打包产物、启动恢复不自动重发）
+            // 与“用户取消”（删除 journal 与打包产物）。见 task-2 durable send journal。
+            Func<bool> cancelledByPause = () => job.Status == OppJobStatus.Paused;
             return useAssistant
                 ? job.Kind switch
                 {
-                    TransferConst.TypeFolder => await _assistantPush.SendFolderAsync(device.Addr, job.SourcePath, ct),
-                    TransferConst.TypeText => await _assistantPush.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct),
-                    _ => await _assistantPush.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct)
+                    TransferConst.TypeFolder => await _assistantPush.SendFolderAsync(device.Addr, job.SourcePath, ct, cancelledByPause),
+                    TransferConst.TypeText => await _assistantPush.SendTextAsync(device.Addr, job.SourcePath, job.DisplayName, ct, cancelledByPause),
+                    _ => await _assistantPush.SendFileAsync(device.Addr, job.SourcePath, zip: false, ct, cancelledByPause)
                 }
                 : job.Kind switch
                 {
@@ -523,8 +529,9 @@ public class OppViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// 发送通道的助手探测缓存判等重要逻辑：与设备域共用 _assistantCache（同一字典实例由
-    /// DevicePaneController 与这里的 ResolveAssistantOnceAsync 共同读写），"先写者胜"语义保持。
+    /// 发送通道的助手探测判定：与设备域共用 _assistantTracker（同一实例由 DevicePaneController 与这里共同读写）。
+    /// auto 模式下只有"未过期的正结果"才会直接复用；负结果/查询失败都不缓存，
+    /// 因此对端助手后启动时，下一次发送会重新探测并切到助手通道，而不是一次失败锁死整个会话。
     /// </summary>
     private async Task<bool> ResolveAssistantOnceAsync(OppDeviceItem device)
     {
@@ -534,23 +541,24 @@ public class OppViewModel : ViewModelBase, IDisposable
                 return true;
             case TransferConst.ChannelOpp:
                 return false;
-            default:
-                lock (_assistantCache)
-                {
-                    if (_assistantCache.TryGetValue(device.Addr, out var cached))
-                        return cached;
-                }
-                var has = string.IsNullOrEmpty(device.DeviceId)
-                    ? false
-                    : await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(device.DeviceId));
-                lock (_assistantCache)
-                {
-                    // 先写者胜：避免扫描异步探测用过期 false 覆盖已确认的 true
-                    if (!_assistantCache.ContainsKey(device.Addr))
-                        _assistantCache[device.Addr] = has;
-                }
-                return has;
         }
+
+        if (_assistantTracker.Current(device.Addr).IsAvailable)
+            return true;
+
+        var probe = string.IsNullOrEmpty(device.DeviceId)
+            ? AssistantProbeResult.Failed("设备未解析到 WinRT 设备 Id（可先扫描或配对）")
+            : await Task.Run(() => AssistantDetector.ProbeAssistantAsync(device.DeviceId));
+
+        // 使用落库后的有效结论：查询失败不会把已知且未过期的 true 降级。
+        var effective = _assistantTracker.Record(device.Addr, probe);
+        if (!effective.IsAvailable)
+        {
+            var reason = probe.IsAbsent ? "对端未运行接收助手" : $"探测失败：{probe.Error ?? "原因未知"}";
+            // 不再静默回退：让用户知道这次为什么走 OPP。
+            PublishLog(TransferConst.LogWarn, $"本次回退 OPP（{reason}）：{device.DisplayName}");
+        }
+        return effective.IsAvailable;
     }
 
     private async Task SendTextAsync()
