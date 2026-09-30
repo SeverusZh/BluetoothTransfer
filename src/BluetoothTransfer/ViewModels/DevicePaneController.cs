@@ -14,8 +14,9 @@ namespace BluetoothTransfer.ViewModels;
 ///
 /// 约束与设计：
 /// 1. Devices 集合对象本身仍由 ViewModel 暴露（XAML 绑定），本控制器只通过构造注入的集合引用做内部操作；
-/// 2. _assistantCache 是与 ViewModel 发送队列（ResolveAssistantOnceAsync）共用的同一实例，
-///    由 ViewModel 在构造函数传入引用，保证"先行者胜"的缓存写入语义跨两域保持一致；
+/// 2. _assistantTracker 是与 ViewModel 发送队列（ResolveAssistantOnceAsync）共用的同一实例，
+///    由 ViewModel 在构造函数传入引用；探测结论（TTL 重探、"失败不得降级已知 true"）由纯类型
+///    AssistantPresenceTracker 统一裁决，两域只做薄适配；
 /// 3. 不反向依赖 ViewModel：凡需回写 VM 状态（IsScanning/StatusText/LastError）或发布日志处，
 ///    一律经构造注入的回调委托，避免本类反向引用 VM。
 /// </summary>
@@ -25,7 +26,9 @@ internal sealed class DevicePaneController
     private readonly IStorageService _storage;
     private readonly Dispatcher _dispatcher;
     private readonly ObservableCollection<OppDeviceItem> _devices;
-    private readonly Dictionary<string, bool> _assistantCache;
+    private readonly AssistantPresenceTracker _assistantTracker;
+    private readonly Func<string, Task<AssistantProbeResult>> _probeAssistant;
+    private readonly Func<CancellationToken, Task<List<AssistantDetector.AssistantDeviceInfo>>> _findAssistantDevices;
     private readonly Func<bool> _isScanning;
     private readonly Action<bool> _setScanning;
     private readonly Action<string> _setStatus;
@@ -37,18 +40,24 @@ internal sealed class DevicePaneController
         IStorageService storage,
         Dispatcher dispatcher,
         ObservableCollection<OppDeviceItem> devices,
-        Dictionary<string, bool> assistantCache,
+        AssistantPresenceTracker assistantTracker,
         Func<bool> isScanning,
         Action<bool> setScanning,
         Action<string> setStatus,
         Action<string> setLastError,
-        Action<string, string> publishLog)
+        Action<string, string> publishLog,
+        Func<string, Task<AssistantProbeResult>>? probeAssistant = null,
+        Func<CancellationToken, Task<List<AssistantDetector.AssistantDeviceInfo>>>? findAssistantDevices = null)
     {
         _discovery = discovery;
         _storage = storage;
         _dispatcher = dispatcher;
         _devices = devices;
-        _assistantCache = assistantCache;
+        _assistantTracker = assistantTracker;
+        // 探测入口可注入（单测用 fake，避免真实 SDP/WinRT 调用）。
+        _probeAssistant = probeAssistant ?? (id => AssistantDetector.ProbeAssistantAsync(id));
+        // 助手设备枚举同样可注入（单测用 fake，避免真实 WinRT 调用）。
+        _findAssistantDevices = findAssistantDevices ?? (ct => AssistantDetector.FindAssistantDevicesAsync(ct));
         _isScanning = isScanning;
         _setScanning = setScanning;
         _setStatus = setStatus;
@@ -65,10 +74,11 @@ internal sealed class DevicePaneController
             _setStatus("正在扫描支持 OPP 的设备（5 秒）...");
             var devices = await Task.Run(() => _discovery.DiscoverAsync(seconds: 5));
             var saved = _storage.GetDevices();
+            List<OppDeviceItem> pendingProbes = new();
             _dispatcher.Invoke(() =>
             {
                 _devices.Clear();
-                _assistantCache.Clear();
+                _assistantTracker.Clear();
                 var items = devices.Select(d =>
                 {
                     var info = saved.FirstOrDefault(s => OppDiscoveryService.AddrEquals(s.Addr, d.Addr));
@@ -88,9 +98,11 @@ internal sealed class DevicePaneController
                 .ThenByDescending(x => x.LastConnected)
                 .ToList();
                 foreach (var item in items) _devices.Add(item);
-                foreach (var item in _devices)
-                    _ = ProbeAssistantAsync(item);
+                pendingProbes = _devices.ToList();
             });
+            // 先 await 完本轮所有探测再合并助手设备：原实现 fire-and-forget 会让并发探测返回的
+            // 过期 false 覆盖 MergeAssistantDevicesAsync 写入的 true，表现为助手徽标"识别不到"。
+            await Task.WhenAll(pendingProbes.Select(ProbeAssistantAsync));
             await MergeAssistantDevicesAsync(saved);
             await LoadFavoriteDevicesAsync();
             _setStatus(_devices.Count > 0
@@ -184,7 +196,7 @@ internal sealed class DevicePaneController
         List<AssistantDetector.AssistantDeviceInfo> assistantDevices;
         try
         {
-            assistantDevices = await Task.Run(() => AssistantDetector.FindAssistantDevicesAsync());
+            assistantDevices = await Task.Run(() => _findAssistantDevices(CancellationToken.None));
         }
         catch (Exception ex)
         {
@@ -216,8 +228,8 @@ internal sealed class DevicePaneController
                         LastConnected = info?.LastConnected ?? ""
                     });
                 }
-                lock (_assistantCache)
-                    _assistantCache[ad.Addr] = true;
+                // 合并结果来自"已配对且确认声明助手服务"的枚举，是正结果（同时刷新 TTL）。
+                _assistantTracker.Record(ad.Addr, AssistantProbeResult.Available);
             }
             ResortDevices();
         });
@@ -266,14 +278,32 @@ internal sealed class DevicePaneController
 
     private async Task ProbeAssistantAsync(OppDeviceItem item)
     {
+        AssistantProbeResult result;
         try
         {
-            var has = await Task.Run(() => AssistantDetector.DeviceHasAssistantAsync(item.DeviceId));
-            _dispatcher.Invoke(() => item.IsAssistant = has);
+            result = await Task.Run(() => _probeAssistant(item.DeviceId));
         }
         catch (Exception ex)
         {
+            // 探测异常同样按"查询失败"处理：记 Unknown，不降级已知 true。
+            result = AssistantProbeResult.Failed(ex.Message);
             _publishLog(TransferConst.LogWarn, $"探测助手失败：{item.DisplayName}（{ex.Message}）");
         }
+        ApplyProbeResult(item, result);
+    }
+
+    /// <summary>
+    /// 把一次探测结果落到跟踪器与 UI 徽标（薄适配）：
+    /// Available → 置 true；Absent（查询成功且确认没有）→ 置 false；
+    /// Unknown（查询失败）→ 保持现状，绝不把已知 true 降级。
+    /// </summary>
+    internal void ApplyProbeResult(OppDeviceItem item, AssistantProbeResult result)
+    {
+        var effective = _assistantTracker.Record(item.Addr, result);
+        _dispatcher.Invoke(() =>
+        {
+            if (effective.IsAvailable) item.IsAssistant = true;
+            else if (effective.IsAbsent) item.IsAssistant = false;
+        });
     }
 }
