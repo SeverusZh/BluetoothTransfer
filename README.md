@@ -8,7 +8,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%2F%20Windows%2011-0078D4?logo=windows)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-236%20cases-success)](#开发与测试)
+[![Tests](https://img.shields.io/badge/tests-236%20cases-success)](#-开发与测试)
 
 *📤 把文件推给任何蓝牙设备 · 🔄 Windows 之间断点续传 · 🛡️ SHA-256 校验 · 🧰 免安装接收端*
 
@@ -122,7 +122,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 4. 之后默认走可续传的私有通道；对端未运行时自动回退 OPP
 5. 接收助手**默认每次接收前询问**（内置接收默认 `ReceiveAsk=true`，btrecv 默认询问，`--no-ask` 关闭）
 
-## ⌨️ CLI 命令参考
+## ⌨ CLI 命令参考
 
 | 分类 | 命令 | 说明 |
 |---|---|---|
@@ -146,7 +146,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | 测试 | `btcli selftest` | 无硬件自检（OBEX、存储、重试策略、zip、设备管理） |
 | 交互 | `btcli repl` | 交互式会话 |
 
-## ⚙️ 配置项
+## ⚙ 配置项
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -170,7 +170,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 - 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；连接默认明文，要求加密时可 `config set OppProtectionLevel encrypt`
 - 连接前进行 SDP 预检：确认服务声明 OPP（0x1105），不满足时给出明确错误并写入失败记录
 
-## ⚠️ 协议限制须知
+## ⚠ 协议限制须知
 
 - **iPhone（iOS）不支持蓝牙文件接收协议，无法通过 OPP 推送**
 - OPP 为明文传输：无端到端加密、无接收端校验回传；需要链路层加密时使用 `OppProtectionLevel=encrypt`
