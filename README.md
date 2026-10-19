@@ -4,7 +4,7 @@
 
 **轻量级 Windows 桌面应用：通用蓝牙推送 + Windows 双向互传**
 
-[![Version](https://img.shields.io/badge/version-1.4.0-0B6BCB)](https://github.com/SeverusZh/BluetoothTransfer/releases)
+[![Version](https://img.shields.io/badge/version-1.4.1-0B6BCB)](https://github.com/SeverusZh/BluetoothTransfer/releases)
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%2F%20Windows%2011-0078D4?logo=windows)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -21,24 +21,35 @@
 - 通过标准蓝牙 **OBEX Object Push Profile（OPP）** 把文件、文本、文件夹推送给任意支持「蓝牙文件接收」的设备（Android 手机/平板、Windows 电脑、功能机等），**接收端无需安装任何软件**；
 - 两台 Windows 电脑之间可走**接收助手通道**（完整 GUI 内置接收面板，或独立极简接收端 `btrecv`）：断点续传、SHA-256 校验、可管理的传输队列；发送前自动探测——助手在线走私有通道，离线自动回退 OPP。
 
-> ℹ️ v1.2 起聚焦「通用推送 + 接收助手」双通道；v1.3 引入 Windows 对 Windows 断点续传通道；**v1.4 全面加固**：续传可靠性修复、队列并发修复、协议输入硬化、安全默认值（接收默认询问）、可测试性改造与 184 项自动化测试。
+> ℹ️ v1.2 起聚焦「通用推送 + 接收助手」双通道；v1.3 引入 Windows 对 Windows 断点续传通道；**v1.4 全面加固**：续传可靠性修复、队列并发修复、协议输入硬化、安全默认值（接收默认询问）、可测试性改造与 184 项自动化测试。**v1.4.1** 完成整套 GUI 视觉重设计：Fluent 极简主题、两栏主界面、统一控件资源体系与接收端极简一屏，功能与协议不变。
 
 ## 📖 目录
 
+- [界面设计](#-界面设计)
 - [功能特性](#-功能特性)
 - [快速开始](#-快速开始)
 - [CLI 命令参考](#-cli-命令参考)
 - [配置项](#-配置项)
 - [Windows 兼容性说明](#-windows-兼容性说明)
-- [协议限制（需知悉）](#-协议限制需知悉)
-- [发布产物](#-发布产物-v140)
+- [协议限制须知](#-协议限制须知)
+- [发布产物](#-发布产物-v141)
 - [技术栈与架构](#-技术栈与架构)
 - [开发与测试](#-开发与测试)
 - [许可](#-许可)
 
+## 🎨 界面设计
+
+v1.4.1 对桌面端与接收端做了整套视觉重设计，只改呈现层，功能、绑定与协议保持不变，界面使用 Windows 自带字体与系统图标，不引入任何外部资源。
+
+- **统一资源体系** — 中性色阶、单一品牌蓝与成功/警告/错误语义色全部集中定义在 `App.xaml`，页面内不出现散落颜色；4 级字阶 18/14/13/12，8pt 网格间距，控件圆角 8、卡片圆角 12、1px 描边，阴影仅用于浮层且极轻
+- **两栏主窗口** — 顶栏标题区 + 左侧设备列表与接收助手 + 右侧发送区、任务队列与「传输记录 / 日志」标签页 + 底部状态栏，保留原生窗口边框
+- **完整控件样式** — 主/次/危险/幽灵按钮、输入框、下拉框、列表行、复选与开关、进度条、滚动条、标签页、右键菜单与提示气泡统一视觉；键盘焦点环可见，空状态与进度/统计信息层次明确
+- **极简接收端** — `btrecv` 保持一屏：状态、当前传输、本会话完成、设置四个分区，同样使用统一色板与控件样式
+- **可访问性** — 所有交互控件保留原有命令、自动化名称与键盘可达性；不新增交互语义、不隐藏任何功能入口
+
 ## 🎯 功能特性
 
-### 📤 通用推送（OPP）
+### 📤 通用推送 OPP
 
 | 能力 | 说明 |
 |---|---|
@@ -48,7 +59,7 @@
 | **发送队列** | 多文件/文件夹统一排队顺序推送（Android OPP 同时只接受一个传输）；支持取消全部、失败任务单点重发 |
 | **传输体验** | 实时进度条 + 速率（KB/s）与剩余时间（ETA）；系统托盘常驻 |
 
-### 🔄 接收助手（btrecv · Windows ⇄ Windows）
+### 🔄 接收助手 btrecv · Windows 互传
 
 - **断点续传** — 私有分片协议（自定义 RFCOMM UUID）：中断后从**已确认偏移**继续，接收端保留半成品（`.btpart` + `.btpart.meta`，按文件名 + 内容 SHA-256 + 大小校验），重连自动续传；完成时校验 SHA-256，不匹配自动清空重传
 - **跨进程 / 跨重启续传** — 发送端把「未完成传输」持久化到 `send-journal.json`（原子写 + 跨进程锁）：**应用关闭、进程被杀、电脑重启**后，下次启动自动重新发起，接收端凭半成品回传已确认偏移继续；zip/文本/文件夹的打包产物保留到传输完成，保证重启后 SHA-256 与文件名可复现。用户**暂停**的传输保留且不自动重发，**取消**的传输清理条目与产物；条目与产物 7 天过期自动清理
@@ -92,7 +103,7 @@
 3. 发送方扫描/收藏到对方设备后直接发送——自动走接收助手通道（断点续传 + SHA-256 校验）
 4. 未检测到助手时自动回退 OPP 通用推送
 
-### 三、CLI（`btcli`）
+### 三、CLI 命令行
 
 ```powershell
 btcli opp-scan --seconds 5
@@ -103,7 +114,7 @@ btcli opp-send-text 00:11:22:33:44:55 "你好，这是蓝牙推送的文本" --n
 btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 ```
 
-### 四、接收助手引导（Windows 对 Windows）
+### 四、接收助手引导 Windows 对 Windows
 
 1. 发送端先通过 OPP 把 `btrecv-selfcontained.zip` 推给目标电脑（GUI「发送文件」或 `btcli opp-send-file <地址> <包路径>`）
 2. 对端解压、双击运行 `btrecv`（进入 GUI「监听中」，无需安装 .NET）
@@ -159,7 +170,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 - 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；连接默认明文，要求加密时可 `config set OppProtectionLevel encrypt`
 - 连接前进行 SDP 预检：确认服务声明 OPP（0x1105），不满足时给出明确错误并写入失败记录
 
-## ⚠️ 协议限制（需知悉）
+## ⚠️ 协议限制须知
 
 - **iPhone（iOS）不支持蓝牙文件接收协议，无法通过 OPP 推送**
 - OPP 为明文传输：无端到端加密、无接收端校验回传；需要链路层加密时使用 `OppProtectionLevel=encrypt`
@@ -167,7 +178,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 - 单文件上限 4GB（OBEX 协议约束），建议不超过 2GB
 - Android 同时只接受一个 OPP 传输：对端已有待确认传输时新推送会被拒绝（0xC3 Forbidden），应用会自动重试
 
-## 📦 发布产物（v1.4.0）
+## 📦 发布产物 v1.4.1
 
 每个产物提供两种形态：**含运行时**（自包含单文件，目标机无需安装 .NET 8）与**不含运行时**（框架依赖，目标机需安装 .NET 8 桌面运行时，体积更小）。
 
@@ -184,7 +195,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | 层 | 技术 |
 |---|---|
 | 语言 / 运行时 | C# + .NET 8 |
-| GUI | WPF（MVVM 组合式分层），SVG 矢量图标（`AppIcons.xaml` 同源，`tools/IconGenerator` 生成 PNG/ICO） |
+| GUI | WPF（MVVM 组合式分层），Fluent 极简主题（`App.xaml` 语义化资源体系），SVG 矢量图标（`AppIcons.xaml` 同源，`tools/IconGenerator` 生成 PNG/ICO） |
 | 蓝牙 | WinRT `Windows.Devices.Bluetooth.Rfcomm`（OPP 客户端 / 助手服务端） |
 | 协议 | 自研 OBEX 客户端（CONNECT/PUT/DISCONNECT，两阶段 PUT，UTF-16BE 无 BOM Name 头）；私有分片续传协议（`BluetoothTransfer.Core`，HELLO/OFFER/DATA/ACK/DONE，SHA-256 校验） |
 | 存储 | Microsoft.Data.Sqlite + System.Text.Json |
