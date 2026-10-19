@@ -22,7 +22,6 @@
             <Color x:Key="ColorOnAccent">#FFFFFF</Color>
             <Color x:Key="ColorAccent">#0B6BCB</Color>
             <Color x:Key="ColorAccentSoft">#E9F2FC</Color>
-            <Color x:Key="ColorSuccessSoft">#E6F3E7</Color>
             <Color x:Key="ColorScrollThumb">#C7D0DB</Color>
             <Color x:Key="ColorScrollThumbHover">#AFBAC8</Color>
             <!-- #endregion 调色板 -->
@@ -40,7 +39,6 @@
             <SolidColorBrush x:Key="OnAccentBrush" Color="{StaticResource ColorOnAccent}"/>
             <SolidColorBrush x:Key="BrandBrush" Color="{StaticResource ColorAccent}"/>
             <SolidColorBrush x:Key="SelectionBrush" Color="{StaticResource ColorAccentSoft}"/>
-            <SolidColorBrush x:Key="SuccessSoftBrush" Color="{StaticResource ColorSuccessSoft}"/>
             <SolidColorBrush x:Key="ScrollThumbBrush" Color="{StaticResource ColorScrollThumb}"/>
             <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="{StaticResource ColorScrollThumbHover}"/>
             <!-- #endregion 画刷 -->
@@ -77,7 +75,7 @@
 
             <Style x:Key="ChipTextStyle" TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
-                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="FontSize" Value="11"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
                 <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
                 <Setter Property="VerticalAlignment" Value="Center"/>
@@ -251,7 +249,8 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ListBoxItem">
-                            <Border x:Name="bd" Background="Transparent" CornerRadius="6"
+                            <Border x:Name="bd" Background="Transparent" CornerRadius="8"
+                                    BorderBrush="Transparent" BorderThickness="1"
                                     Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
                                 <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                                   VerticalAlignment="Center"/>
@@ -262,6 +261,9 @@
                                 </Trigger>
                                 <Trigger Property="IsSelected" Value="True">
                                     <Setter TargetName="bd" Property="Background" Value="{StaticResource SelectionBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                                    <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource BrandBrush}"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -294,7 +296,7 @@
             </ControlTemplate>
 
             <Style TargetType="ScrollBar">
-                <Setter Property="Width" Value="10"/>
+                <Setter Property="Width" Value="12"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="Template">
                     <Setter.Value>
@@ -314,7 +316,7 @@
                                             <Thumb.Template>
                                                 <ControlTemplate TargetType="Thumb">
                                                     <Border x:Name="thumbBd" Background="{StaticResource ScrollThumbBrush}"
-                                                            CornerRadius="4" Margin="3,2"/>
+                                                            CornerRadius="5" Margin="3,2"/>
                                                     <ControlTemplate.Triggers>
                                                         <Trigger Property="IsMouseOver" Value="True">
                                                             <Setter TargetName="thumbBd" Property="Background" Value="{StaticResource ScrollThumbHoverBrush}"/>
@@ -332,7 +334,7 @@
                 <Style.Triggers>
                     <Trigger Property="Orientation" Value="Horizontal">
                         <Setter Property="Width" Value="Auto"/>
-                        <Setter Property="Height" Value="10"/>
+                        <Setter Property="Height" Value="12"/>
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ScrollBar">
@@ -351,7 +353,7 @@
                                                     <Thumb.Template>
                                                         <ControlTemplate TargetType="Thumb">
                                                             <Border x:Name="thumbBd" Background="{StaticResource ScrollThumbBrush}"
-                                                                    CornerRadius="4" Margin="2,3"/>
+                                                                    CornerRadius="5" Margin="2,3"/>
                                                             <ControlTemplate.Triggers>
                                                                 <Trigger Property="IsMouseOver" Value="True">
                                                                     <Setter TargetName="thumbBd" Property="Background" Value="{StaticResource ScrollThumbHoverBrush}"/>
@@ -382,9 +384,9 @@
             </Style>
 
             <Style x:Key="ChipStyle" TargetType="Border">
-                <Setter Property="Background" Value="{StaticResource SuccessSoftBrush}"/>
+                <Setter Property="Background" Value="{StaticResource HoverBrush}"/>
                 <Setter Property="CornerRadius" Value="9"/>
-                <Setter Property="Padding" Value="9,2"/>
+                <Setter Property="Padding" Value="8,2"/>
                 <Setter Property="VerticalAlignment" Value="Center"/>
                 <Setter Property="BorderThickness" Value="0"/>
                 <Setter Property="SnapsToDevicePixels" Value="True"/>
@@ -425,7 +427,7 @@
                 <Border Grid.Column="1" Style="{StaticResource ChipStyle}" MaxWidth="300">
                     <TextBlock x:Name="StatusText" Text="正在启动…"
                                Style="{StaticResource ChipTextStyle}"
-                               Foreground="{StaticResource BrandBrush}"
+                               Foreground="{StaticResource TextSecondaryBrush}"
                                TextTrimming="CharacterEllipsis"/>
                 </Border>
             </Grid>

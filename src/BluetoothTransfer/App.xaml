@@ -949,7 +949,7 @@
                                             BorderThickness="0,0,0,1" Padding="6,0">
                                         <TabPanel IsItemsHost="True" HorizontalAlignment="Left"/>
                                     </Border>
-                                    <ContentPresenter Grid.Row="1" ContentSource="SelectedContent"/>
+                                    <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent"/>
                                 </Grid>
                             </Border>
                         </ControlTemplate>

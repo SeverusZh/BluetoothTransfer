@@ -4,7 +4,7 @@
         xmlns:vm="clr-namespace:BluetoothTransfer.ViewModels"
         xmlns:bh="clr-namespace:BluetoothTransfer.Behaviors"
         xmlns:tb="http://www.hardcodet.net/taskbar"
-        Title="蓝牙传输" Height="820" Width="1280" MinHeight="760" MinWidth="1120"
+        Title="蓝牙传输" Height="720" Width="1180" MinHeight="560" MinWidth="940"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/app.ico"
         Background="{StaticResource BackgroundBrush}"
@@ -68,7 +68,14 @@
         </Border>
 
         <!-- ================= 主区：左设备 / 右发送与队列 ================= -->
-        <Grid Grid.Row="1" Margin="24,16">
+        <!-- 主区外层滚动：窗口较小时（如 1366×768@125%）纵向滚动，内容不裁切。
+             ScrollViewer 会使 Grid 的 * 行退化为 auto，因此关键容器显式设置了 MinHeight。
+             水平方向不滚动：MinWidth 用 860 适配 940 最小窗口（客户区约 924，扣除 24×2 边距
+             与垂直滚动条约 12 后可用约 864；原定 916 会在最小窗口下被裁切约 52px）。 -->
+        <ScrollViewer Grid.Row="1" Focusable="False"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+        <Grid Margin="24,16" MinHeight="520" MinWidth="860">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="384"/>
                 <ColumnDefinition Width="16"/>
@@ -84,7 +91,7 @@
                 </Grid.RowDefinitions>
 
                 <!-- 设备列表 -->
-                <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="0">
+                <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="0" MinHeight="280">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -112,6 +119,7 @@
 
                         <Grid Grid.Row="1" Margin="8,0,8,8">
                             <ListView ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
+                                      MinHeight="230"
                                       bh:HoverScrollBehavior.Enabled="True">
                                 <ListView.ItemTemplate>
                                     <DataTemplate>
@@ -399,7 +407,7 @@
                                                     <TextBlock Text="{Binding Error}" Margin="10,0,0,0"
                                                                FontSize="12" Foreground="{StaticResource DangerBrush}"
                                                                TextTrimming="CharacterEllipsis" MaxWidth="240"
-                                                               VerticalAlignment="Center">
+                                                               ToolTip="{Binding Error}" VerticalAlignment="Center">
                                                         <TextBlock.Style>
                                                             <Style TargetType="TextBlock">
                                                                 <Style.Triggers>
@@ -454,7 +462,7 @@
                 </Border>
 
                 <!-- 记录 / 日志 -->
-                <TabControl Grid.Row="4">
+                <TabControl Grid.Row="4" MinHeight="280">
                     <TabItem Header="传输记录">
                         <Grid Margin="12,10,12,12">
                             <Grid.RowDefinitions>
@@ -477,7 +485,10 @@
                                         AutomationProperties.Name="清空传输记录"/>
                             </StackPanel>
 
-                            <Border Grid.Row="1" Style="{StaticResource TableHeaderStyle}" Margin="0,0,12,0">
+                            <!-- 表头与行对齐依据：行内容起点 = ListViewItem 1px 边框 + 行 Border Padding 8 = 9px，
+                                 故表头 Border Padding 用 9,4；右侧 Margin 12 预留垂直滚动条宽度，两处 Grid 星号列宽一致。 -->
+                            <Border Grid.Row="1" Style="{StaticResource TableHeaderStyle}"
+                                    Padding="9,4" Margin="0,0,12,0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="118"/>
@@ -504,8 +515,17 @@
 
                             <Grid Grid.Row="2" Margin="0,4,0,0">
                                 <ListView ItemsSource="{Binding Records}"
+                                          MinHeight="140"
                                           ScrollViewer.VerticalScrollBarVisibility="Visible"
                                           bh:HoverScrollBehavior.Enabled="True">
+                                    <!-- 清除隐式 ListViewItem 的 Padding 10,7（否则行内容会再左移 10px），
+                                         行内边距统一由 DataTemplate 的 Border Padding 8,6 控制。 -->
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+                                            <Setter Property="Padding" Value="0"/>
+                                            <Setter Property="Margin" Value="0"/>
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
                                     <ListView.ItemTemplate>
                                         <DataTemplate>
                                             <Border BorderBrush="{StaticResource GridLineBrush}"
@@ -568,6 +588,7 @@
                     <TabItem Header="日志">
                         <Grid Margin="12,10,12,12">
                             <ListBox x:Name="LogListBox" ItemsSource="{Binding LogLines}"
+                                     MinHeight="140"
                                      FontFamily="{StaticResource MonoFont}" FontSize="11"
                                      BorderThickness="0"
                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
@@ -591,7 +612,8 @@
                     </TabItem>
                 </TabControl>
             </Grid>
-        </Grid>
+            </Grid>
+        </ScrollViewer>
 
         <!-- ================= 状态栏 ================= -->
         <Border Grid.Row="2" Background="{StaticResource CardBrush}"
