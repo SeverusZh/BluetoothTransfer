@@ -4,7 +4,7 @@
         xmlns:vm="clr-namespace:BluetoothTransfer.ViewModels"
         xmlns:bh="clr-namespace:BluetoothTransfer.Behaviors"
         xmlns:tb="http://www.hardcodet.net/taskbar"
-        Title="蓝牙传输" Height="760" Width="1180"
+        Title="蓝牙传输" Height="820" Width="1280" MinHeight="760" MinWidth="1120"
         WindowStartupLocation="CenterScreen"
         Icon="pack://application:,,,/Assets/app.ico"
         Background="{StaticResource BackgroundBrush}"
@@ -14,6 +14,7 @@
         <vm:OppViewModel/>
     </Window.DataContext>
     <Window.Resources>
+        <!-- 托盘图标必须保留资源键 TrayIcon：MainWindow.xaml.cs 通过 FindResource("TrayIcon") 取用 -->
         <tb:TaskbarIcon x:Key="TrayIcon" ToolTipText="蓝牙传输"
                         TrayMouseDoubleClick="OnTrayDoubleClick">
             <tb:TaskbarIcon.ContextMenu>
@@ -25,159 +26,223 @@
             </tb:TaskbarIcon.ContextMenu>
         </tb:TaskbarIcon>
     </Window.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="30"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <Grid Grid.Row="0" Margin="10">
+        <!-- ================= 顶栏：标题 + 全局操作 ================= -->
+        <Border Grid.Row="0" BorderBrush="{StaticResource GridLineBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="24,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="{StaticResource AppIcon}" Width="34" Height="34"
+                           VerticalAlignment="Center"/>
+                    <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="蓝牙传输" Style="{StaticResource PageTitleTextStyle}"/>
+                        <TextBlock Text="通用蓝牙推送 · Windows 互传 · 拖动文件到窗口即可发送"
+                                   Style="{StaticResource CaptionTextStyle}" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="配对" Command="{Binding PairCommand}"/>
+                    <Button Content="打开蓝牙设置" Command="{Binding OpenSettingsCommand}" Margin="8,0,0,0"/>
+                    <Button Command="{Binding ScanCommand}" Style="{StaticResource PrimaryButtonStyle}"
+                            Margin="8,0,0,0" AutomationProperties.Name="扫描设备">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}"
+                                       FontSize="13" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock Text="扫描" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ================= 主区：左设备 / 右发送与队列 ================= -->
+        <Grid Grid.Row="1" Margin="24,16">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="360"/>
-                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="384"/>
+                <ColumnDefinition Width="16"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="12"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
 
-            <!-- 顶部说明 -->
-            <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource CardBrush}"
-                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="12,8">
-                <TextBlock Text="v1.3 双通道：本机可在「接收助手」面板开始监听，两台主机运行完整 GUI 或 btrecv 即可互传（断点续传 + SHA-256 校验）；发送时目标机运行助手则自动走助手通道，否则回退 OPP 通用推送（需先配对；iPhone 不支持，Android 接收时保持屏幕点亮并留意“接受文件”提示）。文件/文件夹可直接拖入窗口；收藏设备启动即显示、无需每次扫描。"
-                           TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}"/>
-            </Border>
-
-            <!-- 左栏：设备 + 发送 -->
-            <Grid Grid.Row="2" Grid.Column="0">
+            <!-- ===== 左栏：设备 + 接收助手 ===== -->
+            <Grid Grid.Column="0">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="8"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="8"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="16"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" Orientation="Horizontal">
-                    <Button Content="扫描" Command="{Binding ScanCommand}" Style="{StaticResource PrimaryButtonStyle}" Padding="14,6" Margin="0,0,8,0"/>
-                    <Button Content="配对" Command="{Binding PairCommand}" Padding="12,6" Margin="0,0,8,0"/>
-                    <Button Content="打开蓝牙设置" Command="{Binding OpenSettingsCommand}" Padding="12,6" Margin="0,0,8,0"/>
-                    <Button Content="{Binding SelectedDevice.FavoriteDisplay, FallbackValue=☆}" Command="{Binding ToggleFavoriteCommand}"
-                            Padding="8,6" ToolTip="收藏/取消收藏当前设备"
-                            AutomationProperties.Name="收藏/取消收藏当前设备"/>
-                </StackPanel>
+                <!-- 设备列表 -->
+                <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
 
-                <Grid Grid.Row="2">
-                    <ListView ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
-                              bh:HoverScrollBehavior.Enabled="True">
-                        <ListView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Margin="2,4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="{Binding FavoriteDisplay}" Foreground="{StaticResource StarBrush}" Margin="0,0,6,0"/>
-                                    <StackPanel Grid.Column="1">
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
-                                            <TextBlock Text="{Binding PairedDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="8,1,0,0"/>
-                                            <TextBlock Text="助手" FontSize="11" Foreground="{StaticResource SuccessBrush}" Margin="8,1,0,0">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsAssistant}" Value="True">
-                                                                <Setter Property="Visibility" Value="Visible"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
-                                        </StackPanel>
-                                        <TextBlock Text="{Binding AddrDisplay}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
-                                    </StackPanel>
-                                </Grid>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                    <TextBlock Text="未发现 OPP 设备&#x0a;请确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               TextAlignment="Center" LineHeight="20"
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               IsHitTestVisible="False">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Devices.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                </Grid>
-
-                <GroupBox Grid.Row="4" Header="发送">
-                    <StackPanel>
-                        <DockPanel Margin="0,0,0,6">
-                            <TextBlock DockPanel.Dock="Left" Text="通道：" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="12"/>
-                            <ComboBox Width="140" SelectedValue="{Binding SelectedTransferMode}" SelectedValuePath="Tag" HorizontalAlignment="Left">
-                                <ComboBoxItem Content="自动（探测助手，否则 OPP）" Tag="auto"/>
-                                <ComboBoxItem Content="强制接收助手" Tag="assistant"/>
-                                <ComboBoxItem Content="强制 OPP" Tag="opp"/>
-                            </ComboBox>
-                        </DockPanel>
-                        <Grid>
+                        <Grid Grid.Row="0" Margin="16,14,16,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="72"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox Grid.Column="0" Text="{Binding SendText, UpdateSourceTrigger=PropertyChanged}"
-                                     Height="46" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Margin="0,0,8,0"/>
-                            <Button Grid.Column="1" Content="发送文本" Command="{Binding SendTextCommand}" Height="46"/>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="设备" Style="{StaticResource SectionTitleTextStyle}"/>
+                                <TextBlock Text="{Binding Devices.Count, StringFormat={}共 {0} 台}"
+                                           Style="{StaticResource CaptionTextStyle}"
+                                           VerticalAlignment="Center" Margin="10,0,0,0"/>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Content="{Binding SelectedDevice.FavoriteDisplay, FallbackValue=☆}"
+                                    Command="{Binding ToggleFavoriteCommand}"
+                                    Style="{StaticResource StarButtonStyle}"
+                                    ToolTip="收藏/取消收藏当前设备"
+                                    AutomationProperties.Name="收藏/取消收藏当前设备"/>
                         </Grid>
-                        <WrapPanel Margin="0,8,0,0">
-                            <Button Content="发送文件" Command="{Binding SendFileCommand}" Padding="12,5" Margin="0,0,8,4"/>
-                            <Button Content="文件夹 (zip)" Command="{Binding SendFolderCommand}" Padding="12,5" Margin="0,0,8,4"/>
-                            <Button Content="剪贴板" Command="{Binding SendClipboardCommand}" Padding="12,5" Margin="0,0,8,4"/>
-                            <Button Content="取消全部" Command="{Binding CancelAllCommand}" Style="{StaticResource DangerButtonStyle}" Padding="12,5" Margin="0,0,8,4"/>
-                        </WrapPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                            <ProgressBar Width="190" Height="10" Value="{Binding TransferProgress}" Minimum="0" Maximum="100"/>
-                            <TextBlock Text="{Binding TransferProgress, StringFormat={}{0:F0}%}" VerticalAlignment="Center" Margin="8,0,8,0"/>
-                            <TextBlock Text="{Binding ProgressText}" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
-                        </StackPanel>
-                        <TextBlock Text="{Binding StatusText}" Margin="0,8,0,0" TextWrapping="Wrap" FontSize="12"
-                                   Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
-                    </StackPanel>
-                </GroupBox>
 
-                <GroupBox Grid.Row="6" Header="接收助手">
-                    <StackPanel>
-                        <DockPanel>
-                            <Button DockPanel.Dock="Right" Content="目录…" Command="{Binding BrowseReceiveDirCommand}" Padding="10,5" Margin="4,0,0,0"
-                                    AutomationProperties.Name="浏览接收目录"/>
-                            <Button Content="{Binding ReceiveToggleText}" Command="{Binding ToggleReceiveCommand}"
-                                    Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"/>
-                        </DockPanel>
-                        <TextBlock Text="{Binding ReceiveSaveDir}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"
-                                   Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Text="{Binding ReceiveCurrentFile}" FontSize="11" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
-                        <ProgressBar Height="8" Value="{Binding ReceiveProgress}" Margin="0,4,0,0"/>
-                        <TextBlock Text="{Binding ReceiveProgressText}" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,2,0,0"/>
-                        <Grid Height="64" Margin="0,6,0,0">
-                            <ListBox ItemsSource="{Binding ReceiveCompleted}" FontSize="11"
+                        <Grid Grid.Row="1" Margin="8,0,8,8">
+                            <ListView ItemsSource="{Binding Devices}" SelectedItem="{Binding SelectedDevice}"
+                                      bh:HoverScrollBehavior.Enabled="True">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding FavoriteDisplay}"
+                                                       Foreground="{StaticResource StarBrush}" FontSize="14"
+                                                       VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding DisplayName}"
+                                                               Style="{StaticResource BodyTextStyle}"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                    <Border Margin="8,0,0,0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border" BasedOn="{StaticResource SuccessChipStyle}">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsAssistant}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="助手" Style="{StaticResource ChipTextStyle}"
+                                                                   Foreground="{StaticResource SuccessBrush}"/>
+                                                    </Border>
+                                                </StackPanel>
+                                                <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                    <TextBlock Text="{Binding PairedDisplay}"
+                                                               Style="{StaticResource CaptionTextStyle}"/>
+                                                    <TextBlock Text="{Binding AddrDisplay}"
+                                                               Style="{StaticResource CaptionTextStyle}"
+                                                               Foreground="{StaticResource TextTertiaryBrush}"
+                                                               Margin="10,0,0,0"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2" Text="&#xE76C;"
+                                                       FontFamily="{StaticResource IconFont}"
+                                                       FontSize="11" Foreground="{StaticResource TextTertiaryBrush}"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <!-- 空状态 -->
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        IsHitTestVisible="False">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Devices.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="&#xE702;" FontFamily="{StaticResource IconFont}"
+                                           FontSize="28" Foreground="{StaticResource TextTertiaryBrush}"
+                                           HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                <TextBlock Text="未发现 OPP 设备" HorizontalAlignment="Center"
+                                           Style="{StaticResource EmptyStateTitleTextStyle}"/>
+                                <TextBlock Text="请确认对端已开启蓝牙并处于可发现状态，或先在系统设置中配对"
+                                           MaxWidth="280" Margin="0,6,0,0"
+                                           Style="{StaticResource EmptyStateTextStyle}"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- 接收助手 -->
+                <Border Grid.Row="2" Style="{StaticResource CardStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="接收助手" Style="{StaticResource SectionTitleTextStyle}"
+                                       VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="目录…" Command="{Binding BrowseReceiveDirCommand}"
+                                        Style="{StaticResource GhostButtonStyle}"
+                                        AutomationProperties.Name="浏览接收目录"/>
+                                <Button Content="{Binding ReceiveToggleText}" Command="{Binding ToggleReceiveCommand}"
+                                        Style="{StaticResource PrimaryButtonStyle}" Padding="12,5"
+                                        Margin="8,0,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Grid.Row="1" Text="{Binding ReceiveSaveDir}"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   Foreground="{StaticResource TextTertiaryBrush}"
+                                   TextTrimming="CharacterEllipsis" Margin="0,10,0,0"/>
+
+                        <TextBlock Grid.Row="2" Text="{Binding ReceiveCurrentFile}"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
+
+                        <ProgressBar Grid.Row="3" Value="{Binding ReceiveProgress}"
+                                     Margin="0,8,0,0"/>
+
+                        <TextBlock Grid.Row="4" Text="{Binding ReceiveProgressText}"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   Margin="0,5,0,0"/>
+
+                        <Grid Grid.Row="5" Height="92" Margin="0,10,0,0">
+                            <ListBox ItemsSource="{Binding ReceiveCompleted}"
+                                     ItemContainerStyle="{StaticResource CompactListBoxItemStyle}"
+                                     FontSize="12"
                                      bh:HoverScrollBehavior.Enabled="True"/>
-                            <TextBlock Text="本会话暂无接收文件" FontSize="12"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                       IsHitTestVisible="False">
+                            <TextBlock Text="本会话暂无接收文件" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" IsHitTestVisible="False"
+                                       Foreground="{StaticResource TextTertiaryBrush}" FontSize="12">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Visibility" Value="Collapsed"/>
@@ -190,142 +255,355 @@
                                 </TextBlock.Style>
                             </TextBlock>
                         </Grid>
-                        <CheckBox Content="每次接收前询问" IsChecked="{Binding ReceiveAsk}" Margin="0,6,0,0"/>
-                    </StackPanel>
-                </GroupBox>
+
+                        <CheckBox Grid.Row="6" Content="每次接收前询问" IsChecked="{Binding ReceiveAsk}"
+                                  Margin="0,10,0,0"/>
+                    </Grid>
+                </Border>
             </Grid>
 
-            <!-- 右栏：任务队列 + 传输记录 + 日志 -->
-            <Grid Grid.Row="2" Grid.Column="2">
+            <!-- ===== 右栏：发送 + 队列 + 记录日志 ===== -->
+            <Grid Grid.Column="2">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="150"/>
-                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="16"/>
+                    <RowDefinition Height="180"/>
+                    <RowDefinition Height="16"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="8"/>
-                    <RowDefinition Height="150"/>
                 </Grid.RowDefinitions>
 
-                <GroupBox Grid.Row="0" Header="任务队列">
+                <!-- 发送 -->
+                <Border Grid.Row="0" Style="{StaticResource CardStyle}">
                     <Grid>
-                    <DataGrid ItemsSource="{Binding Jobs}" AutoGenerateColumns="False" IsReadOnly="True"
-                              CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
-                              HeadersVisibility="Column" bh:HoverScrollBehavior.Enabled="True">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="名称" Binding="{Binding DisplayName}" Width="*"/>
-                            <DataGridTextColumn Header="通道" Binding="{Binding ChannelDisplay}" Width="56"/>
-                            <DataGridTextColumn Header="状态" Binding="{Binding StatusDisplay}" Width="70"/>
-                            <DataGridTextColumn Header="失败原因" Binding="{Binding Error}" Width="200"/>
-                            <DataGridTemplateColumn Header="操作" Width="150">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal">
-                                            <Button Content="暂停" Command="{Binding DataContext.PauseJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    CommandParameter="{Binding}" Padding="6,1" Margin="0,0,4,0" FontSize="11"/>
-                                            <Button Content="继续" Command="{Binding DataContext.ContinueJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    CommandParameter="{Binding}" Padding="6,1" Margin="0,0,4,0" FontSize="11"/>
-                                            <Button Content="移除" Command="{Binding DataContext.RemoveJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
-                                                    CommandParameter="{Binding}" Padding="6,1" FontSize="11"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                        </DataGrid.Columns>
-                    </DataGrid>
-                    <TextBlock Text="队列为空" FontSize="12"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               IsHitTestVisible="False">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Jobs.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
-                    </Grid>
-                </GroupBox>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-                <GroupBox Grid.Row="2" Header="传输记录">
-                    <DockPanel>
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,5">
-                            <Button Content="刷新" Command="{Binding RefreshRecordsCommand}" Padding="10,3" Margin="0,0,5,0"
-                                    AutomationProperties.Name="刷新传输记录"/>
-                            <Button Content="导出 CSV" Command="{Binding ExportCsvCommand}" Padding="10,3" Margin="0,0,5,0"/>
-                            <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}" Padding="10,3" Margin="0,0,5,0"/>
-                            <Button Content="清空" Command="{Binding ClearRecordsCommand}" Style="{StaticResource DangerButtonStyle}" Padding="10,3"
-                                    AutomationProperties.Name="清空传输记录"/>
-                        </StackPanel>
-                        <Grid>
-                        <DataGrid ItemsSource="{Binding Records}" AutoGenerateColumns="False" IsReadOnly="True"
-                                  CanUserAddRows="False" CanUserDeleteRows="False" GridLinesVisibility="Horizontal"
-                                  bh:HoverScrollBehavior.Enabled="True">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="时间" Binding="{Binding CreatedAtDisplay}" Width="140"/>
-                                <DataGridTextColumn Header="方向" Binding="{Binding DirectionDisplay}" Width="50"/>
-                                <DataGridTextColumn Header="类型" Binding="{Binding TypeDisplay}" Width="50"/>
-                                <DataGridTextColumn Header="对端" Binding="{Binding PeerName}" Width="110"/>
-                                <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="*"/>
-                                <DataGridTextColumn Header="大小" Binding="{Binding SizeDisplay}" Width="80"/>
-                                <DataGridTextColumn Header="状态" Binding="{Binding StatusDisplay}" Width="60"/>
-                                <DataGridTextColumn Header="通道" Binding="{Binding ChannelDisplay}" Width="60"/>
-                                <DataGridTextColumn Header="备注" Binding="{Binding Note}" Width="150"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <TextBlock Text="暂无传输记录" FontSize="12"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
-                                   IsHitTestVisible="False">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Records.Count}" Value="0">
-                                            <Setter Property="Visibility" Value="Visible"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="发送" Style="{StaticResource SectionTitleTextStyle}"
+                                       VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="通道" Style="{StaticResource CaptionTextStyle}"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox Width="190" SelectedValue="{Binding SelectedTransferMode}"
+                                          SelectedValuePath="Tag" VerticalAlignment="Center">
+                                    <ComboBoxItem Content="自动（探测助手，否则 OPP）" Tag="auto"/>
+                                    <ComboBoxItem Content="强制接收助手" Tag="assistant"/>
+                                    <ComboBoxItem Content="强制 OPP" Tag="opp"/>
+                                </ComboBox>
+                            </StackPanel>
                         </Grid>
-                    </DockPanel>
-                </GroupBox>
 
-                <GroupBox Grid.Row="4" Header="日志">
-                    <Grid>
-                    <ListBox x:Name="LogListBox" ItemsSource="{Binding LogLines}" BorderThickness="0"
-                             FontFamily="Consolas" FontSize="11"
-                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                             bh:HoverScrollBehavior.Enabled="True"/>
-                    <TextBlock Text="暂无日志" FontSize="12"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                               Foreground="{StaticResource TextSecondaryBrush}"
-                               IsHitTestVisible="False">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding LogLines.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                        <Grid Grid.Row="1" Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0"
+                                     Text="{Binding SendText, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="68" TextWrapping="Wrap" AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
+                                     Padding="10,8" Margin="0,0,10,0"/>
+                            <Button Grid.Column="1" Content="发送文本" Command="{Binding SendTextCommand}"
+                                    Style="{StaticResource PrimaryButtonStyle}"
+                                    Height="68" Width="96" Padding="0"/>
+                        </Grid>
+
+                        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,10,0,0">
+                            <Button Content="发送文件" Command="{Binding SendFileCommand}"
+                                    Padding="12,5" Margin="0,0,8,0"/>
+                            <Button Content="文件夹 (zip)" Command="{Binding SendFolderCommand}"
+                                    Padding="12,5" Margin="0,0,8,0"/>
+                            <Button Content="剪贴板" Command="{Binding SendClipboardCommand}"
+                                    Padding="12,5"/>
+                        </StackPanel>
+
+                        <Grid Grid.Row="3" Margin="0,12,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ProgressBar Grid.Column="0" Value="{Binding TransferProgress}"
+                                             Minimum="0" Maximum="100" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding TransferProgress, StringFormat={}{0:F0}%}"
+                                           Style="{StaticResource MetricTextStyle}"
+                                           MinWidth="38" TextAlignment="Right" VerticalAlignment="Center"
+                                           Margin="12,0,0,0"/>
+                                <TextBlock Grid.Column="2" Text="{Binding ProgressText}"
+                                           Style="{StaticResource CaptionTextStyle}"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                           MaxWidth="260" Margin="14,0,0,0"/>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Text="{Binding StatusText}"
+                                       Style="{StaticResource CaptionTextStyle}"
+                                       TextTrimming="CharacterEllipsis" Margin="0,8,0,0"/>
+                        </Grid>
                     </Grid>
-                </GroupBox>
+                </Border>
+
+                <!-- 任务队列 -->
+                <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <Grid Grid.Row="0" Margin="16,14,16,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="任务队列" Style="{StaticResource SectionTitleTextStyle}"
+                                       VerticalAlignment="Center"/>
+                            <Button Grid.Column="1" Content="取消全部" Command="{Binding CancelAllCommand}"
+                                    Style="{StaticResource CompactDangerButtonStyle}"/>
+                        </Grid>
+
+                        <Grid Grid.Row="1" Margin="8,0,8,8">
+                            <ListView ItemsSource="{Binding Jobs}" bh:HoverScrollBehavior.Enabled="True">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           Style="{StaticResource BodyTextStyle}"
+                                                           FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                                    <Border Style="{StaticResource ChipStyle}">
+                                                        <TextBlock Text="{Binding ChannelDisplay}"
+                                                                   Style="{StaticResource ChipTextStyle}"
+                                                                   Foreground="{StaticResource TextSecondaryBrush}"/>
+                                                    </Border>
+                                                    <TextBlock Text="{Binding StatusDisplay}"
+                                                               Style="{StaticResource CaptionTextStyle}"
+                                                               VerticalAlignment="Center" Margin="8,0,0,0"/>
+                                                    <TextBlock Text="{Binding Error}" Margin="10,0,0,0"
+                                                               FontSize="12" Foreground="{StaticResource DangerBrush}"
+                                                               TextTrimming="CharacterEllipsis" MaxWidth="240"
+                                                               VerticalAlignment="Center">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Error}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Error}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                        VerticalAlignment="Center" Margin="12,0,0,0">
+                                                <Button Content="暂停"
+                                                        Command="{Binding DataContext.PauseJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{StaticResource CompactGhostButtonStyle}"/>
+                                                <Button Content="继续"
+                                                        Command="{Binding DataContext.ContinueJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{StaticResource CompactGhostButtonStyle}" Margin="4,0,0,0"/>
+                                                <Button Content="移除"
+                                                        Command="{Binding DataContext.RemoveJobCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                        CommandParameter="{Binding}"
+                                                        Style="{StaticResource CompactGhostButtonStyle}" Margin="4,0,0,0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <TextBlock Text="队列为空" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       IsHitTestVisible="False" Foreground="{StaticResource TextTertiaryBrush}"
+                                       FontSize="12">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Jobs.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- 记录 / 日志 -->
+                <TabControl Grid.Row="4">
+                    <TabItem Header="传输记录">
+                        <Grid Margin="12,10,12,12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                                <Button Content="刷新" Command="{Binding RefreshRecordsCommand}"
+                                        FontSize="12" Padding="12,4"
+                                        AutomationProperties.Name="刷新传输记录"/>
+                                <Button Content="导出 CSV" Command="{Binding ExportCsvCommand}"
+                                        FontSize="12" Padding="12,4" Margin="8,0,0,0"/>
+                                <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}"
+                                        FontSize="12" Padding="12,4" Margin="8,0,0,0"/>
+                                <Button Content="清空" Command="{Binding ClearRecordsCommand}"
+                                        Style="{StaticResource DangerButtonStyle}"
+                                        FontSize="12" Padding="12,4" Margin="8,0,0,0"
+                                        AutomationProperties.Name="清空传输记录"/>
+                            </StackPanel>
+
+                            <Border Grid.Row="1" Style="{StaticResource TableHeaderStyle}" Margin="0,0,12,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="118"/>
+                                        <ColumnDefinition Width="44"/>
+                                        <ColumnDefinition Width="44"/>
+                                        <ColumnDefinition Width="92"/>
+                                        <ColumnDefinition Width="1.5*"/>
+                                        <ColumnDefinition Width="62"/>
+                                        <ColumnDefinition Width="54"/>
+                                        <ColumnDefinition Width="44"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="时间" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="1" Text="方向" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="2" Text="类型" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="3" Text="对端" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="4" Text="名称" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="5" Text="大小" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="6" Text="状态" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="7" Text="通道" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="8" Text="备注" Style="{StaticResource TableHeaderTextStyle}"/>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Row="2" Margin="0,4,0,0">
+                                <ListView ItemsSource="{Binding Records}"
+                                          ScrollViewer.VerticalScrollBarVisibility="Visible"
+                                          bh:HoverScrollBehavior.Enabled="True">
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{StaticResource GridLineBrush}"
+                                                    BorderThickness="0,0,0,1" Padding="8,6">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="118"/>
+                                                        <ColumnDefinition Width="44"/>
+                                                        <ColumnDefinition Width="44"/>
+                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="1.5*"/>
+                                                        <ColumnDefinition Width="62"/>
+                                                        <ColumnDefinition Width="54"/>
+                                                        <ColumnDefinition Width="44"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding CreatedAtDisplay}"
+                                                               Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding DirectionDisplay}"
+                                                               Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                    <TextBlock Grid.Column="2" Text="{Binding TypeDisplay}"
+                                                               Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                    <TextBlock Grid.Column="3" Text="{Binding PeerName}"
+                                                               Style="{StaticResource TableCellTextStyle}"/>
+                                                    <TextBlock Grid.Column="4" Text="{Binding Name}"
+                                                               Style="{StaticResource TableCellTextStyle}"/>
+                                                    <TextBlock Grid.Column="5" Text="{Binding SizeDisplay}"
+                                                               Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                    <TextBlock Grid.Column="6" Text="{Binding StatusDisplay}"
+                                                               Style="{StaticResource TableCellTextStyle}"/>
+                                                    <TextBlock Grid.Column="7" Text="{Binding ChannelDisplay}"
+                                                               Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                    <TextBlock Grid.Column="8" Text="{Binding Note}"
+                                                               ToolTip="{Binding Note}"
+                                                               Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                </ListView>
+
+                                <TextBlock Text="暂无传输记录" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" IsHitTestVisible="False"
+                                           Foreground="{StaticResource TextTertiaryBrush}" FontSize="12">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Records.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </Grid>
+                    </TabItem>
+
+                    <TabItem Header="日志">
+                        <Grid Margin="12,10,12,12">
+                            <ListBox x:Name="LogListBox" ItemsSource="{Binding LogLines}"
+                                     FontFamily="{StaticResource MonoFont}" FontSize="11"
+                                     BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                     ItemContainerStyle="{StaticResource CompactListBoxItemStyle}"
+                                     bh:HoverScrollBehavior.Enabled="True"/>
+                            <TextBlock Text="暂无日志" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       IsHitTestVisible="False" Foreground="{StaticResource TextTertiaryBrush}"
+                                       FontSize="12">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LogLines.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </Grid>
         </Grid>
 
-        <Border Grid.Row="1" Background="{StaticResource CardBrush}" BorderBrush="{StaticResource BorderBrush}"
-                BorderThickness="0,1,0,0">
+        <!-- ================= 状态栏 ================= -->
+        <Border Grid.Row="2" Background="{StaticResource CardBrush}"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
+                Padding="24,6">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Right" Text="{Binding VersionText}" VerticalAlignment="Center"
-                            Margin="10,0" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}"/>
-                <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Margin="10,0" FontSize="12"/>
+                <TextBlock DockPanel.Dock="Right" Text="{Binding VersionText}"
+                           Style="{StaticResource CaptionTextStyle}"
+                           Foreground="{StaticResource TextTertiaryBrush}"
+                           VerticalAlignment="Center" Margin="16,0,0,0"/>
+                <TextBlock Text="{Binding StatusText}" Style="{StaticResource CaptionTextStyle}"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
             </DockPanel>
         </Border>
     </Grid>
