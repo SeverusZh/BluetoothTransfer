@@ -961,6 +961,9 @@
                 <Setter Property="FontFamily" Value="{StaticResource AppFont}"/>
                 <Setter Property="FontSize" Value="13"/>
                 <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}"/>
+                <!-- 内容对齐保险：显式 Stretch，避免选中内容在可用空间大于 DesiredSize 时左上对齐。 -->
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="VerticalContentAlignment" Value="Stretch"/>
                 <Setter Property="Padding" Value="12,10"/>
                 <Setter Property="Cursor" Value="Hand"/>
                 <Setter Property="SnapsToDevicePixels" Value="True"/>
