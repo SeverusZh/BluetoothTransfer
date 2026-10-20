@@ -103,6 +103,21 @@ public partial class MainWindow : Window
         Activate();
     }
 
+    /// <summary>
+    /// 二次启动激活：把窗口从托盘隐藏 / 最小化状态恢复并前台化。
+    /// 由 App 在收到第二实例的激活信号后经 Dispatcher 调用（必须运行在 UI 线程）。
+    /// 只做显示与激活，不触碰托盘/关闭逻辑：_forceClose 与 OnClosing 的最小化到托盘语义保持不变。
+    /// </summary>
+    public void ActivateFromSecondInstance()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        // 先置顶再取消：绕过 Windows 对非前台进程 SetForegroundWindow 的调用限制，保证窗口真正到前台。
+        Topmost = true;
+        Topmost = false;
+        Activate();
+    }
+
     private void OnTrayExit(object sender, RoutedEventArgs e)
     {
         _forceClose = true;

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
@@ -9,11 +10,116 @@ namespace BluetoothTransfer;
 /// </summary>
 public partial class App : Application
 {
+    /// <summary>
+    /// 单实例标识：同一登录会话内用该名字的命名内核对象做互斥。
+    /// 说明：跨版本升级必须保持同名，否则新旧版本可同时启动；改名需评估兼容性。
+    /// </summary>
+    private const string SingleInstanceAppId = "BluetoothTransfer.Gui";
+
+    private SingleInstanceGuard? _instanceGuard;
+    private MainWindow? _mainWindow;
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 先建守卫再建窗：二次启动绝不创建窗口，只向已运行实例发激活信号，然后以退出码 0 结束。
+        // 混合权限（管理员实例 vs 普通权限二次启动）下打开命名内核对象可能被 ACL 拒绝，统一在工厂里提示退出。
+        _instanceGuard = CreateInstanceGuardOrExit();
+        if (_instanceGuard == null) return;
+
+        var signaledExistingInstance = false;
+        if (!_instanceGuard.IsPrimaryInstance)
+        {
+            // 主实例可能仍在启动（先占 Mutex、后建激活事件），TrySignalExisting 内部会短间隔重试。
+            signaledExistingInstance = SingleInstanceGuard.TrySignalExisting(SingleInstanceAppId);
+            if (!signaledExistingInstance)
+            {
+                // 没找到可通知的实例：多半是旧实例正在退出（Mutex 即将释放）。释放句柄后重试一次接管，
+                // 避免“旧实例已退出、新实例也退出”的启动空窗；仍抢不到则按二次启动处理，安静退出。
+                _instanceGuard.Dispose();
+                _instanceGuard = CreateInstanceGuardOrExit();
+                if (_instanceGuard == null) return;
+            }
+            if (!_instanceGuard.IsPrimaryInstance)
+            {
+                if (!signaledExistingInstance)
+                {
+                    // 极低概率路径：既通知不到已有实例、也抢不到 Mutex（旧实例正在退出的窗口期）。
+                    // 正常二次启动应静默退出，这里只留诊断日志、不弹窗打扰用户。
+                    Trace.WriteLine("[App] 二次启动未能通知已有实例，且旧实例尚未释放 Mutex；本次静默退出。");
+                }
+                _instanceGuard.Dispose();
+                _instanceGuard = null;
+                Shutdown(0);
+                return;
+            }
+        }
+
         base.OnStartup(e);
+
+        // App.xaml 已移除 StartupUri，主窗口在守卫判定为主实例后手动创建并显示；
+        // 同时设置 Application.MainWindow，保持与 WPF 约定一致（Owner / 任务栏行为依赖它）。
+        _mainWindow = new MainWindow();
+        _mainWindow.Closed += (_, _) => _mainWindow = null;
+        MainWindow = _mainWindow;
+        _mainWindow.Show();
+
         // 不阻塞 UI 启动：后台恢复上次未完成的助手推送（durable send journal）。
         _ = Task.Run(ResumePendingSendsAsync);
+    }
+
+    /// <summary>
+    /// 创建单实例守卫；若因权限不足无法打开命名内核对象（典型：主实例以管理员权限运行、
+    /// 本次以普通权限启动，对象 ACL 拒绝访问），弹中文提示并以退出码 1 结束启动，返回 null。
+    /// 只捕获 <see cref="UnauthorizedAccessException"/>，其它异常保持原样上抛，不静默吞掉。
+    /// </summary>
+    private SingleInstanceGuard? CreateInstanceGuardOrExit()
+    {
+        try
+        {
+            return new SingleInstanceGuard(SingleInstanceAppId, RequestActivationFromSecondInstance);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // 此时无法安全判定主/次实例，也不应继续建窗（会与已有实例抢 RFCOMM/SQLite），提示后非 0 退出。
+            Trace.WriteLine($"[App] 单实例守卫初始化失败（权限不足）：{ex}");
+            MessageBox.Show(
+                "检测到另一个蓝牙传输实例正在以更高权限运行。\n请先退出该实例，或以相同权限启动。",
+                "蓝牙传输",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            Shutdown(1);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 二次启动激活回调：由 <see cref="SingleInstanceGuard"/> 在线程池线程触发，
+    /// 这里切回 UI 线程再操作窗口；排队而非阻塞，保证二次启动进程能立即退出。
+    /// </summary>
+    private void RequestActivationFromSecondInstance()
+    {
+        var dispatcher = Dispatcher;
+        if (dispatcher.HasShutdownStarted) return;
+        try
+        {
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                // 窗口真正关闭（托盘退出）后 _mainWindow 会被置空：此时激活请求已无意义，直接忽略。
+                _mainWindow?.ActivateFromSecondInstance();
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher 正在关闭（应用退出中）时排队会抛异常：丢掉这次迟到的激活请求即可。
+        }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        // 正常退出释放 Mutex 与激活事件，保证下一次启动可以立即成为主实例。
+        _instanceGuard?.Dispose();
+        _instanceGuard = null;
+        base.OnExit(e);
     }
 
     /// <summary>
