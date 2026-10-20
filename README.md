@@ -8,7 +8,7 @@
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%2F%20Windows%2011-0078D4?logo=windows)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-236%20cases-success)](#-开发与测试)
+[![Tests](https://img.shields.io/badge/tests-361%20cases-success)](#-开发与测试)
 
 *📤 把文件推给任何蓝牙设备 · 🔄 Windows 之间断点续传 · 🛡️ SHA-256 校验 · 🧰 免安装接收端*
 
@@ -28,6 +28,7 @@
 - [界面设计](#-界面设计)
 - [功能特性](#-功能特性)
 - [快速开始](#-快速开始)
+- [资源管理器右键菜单（可选）](#-资源管理器右键菜单可选)
 - [CLI 命令参考](#-cli-命令参考)
 - [配置项](#-配置项)
 - [Windows 兼容性说明](#-windows-兼容性说明)
@@ -82,10 +83,17 @@ v1.4.1 对桌面端与接收端做了整套视觉重设计，只改呈现层，�
 
 ### 📊 记录与统计
 
-- 所有推送自动写入 SQLite（时间/方向/类型/对端/名称/大小/状态/通道/SHA-256/失败原因）
-- 记录列表（GUI）/ `btcli records`（CLI）查询与筛选
+- 所有推送自动写入 SQLite（时间/方向/类型/对端/名称/大小/状态/通道/SHA-256/失败原因；发送文本的正文也保存在记录中，便于回看/复制；正文入库上限 1MB，超过上限不保存正文，复制时会给出中文提示）
+- **记录行一键复制**：每行「操作」列提供通用复制（文本记录→文本、图片→图片、其它文件/文件夹→文件剪贴板）；单文件记录额外提供「复制内容」图标（读取文件正文/图片，其它格式回退复制文件本身）
+- 记录列表（GUI）/ `btcli records`（CLI）查询与筛选；记录/日志区固定高度内部滚动，记录再多页面也不会被撑长（默认展示最近 200 条，不删除数据）
 - 导出 CSV / JSON，统计汇总，**清空记录**（GUI 按钮带确认，或 `btcli records clear [--yes]`）
 - 1.0/1.1 旧记录（`channel=ble/rfcomm`、`direction=recv`）只读兼容，不会被新版本覆盖
+
+### 🖱️ 资源管理器右键菜单（可选）
+
+- 托盘菜单可一键**安装/移除**资源管理器右键菜单（只写 HKCU，无需管理员权限）：文件、文件夹、文件夹空白处、驱动器、`.txt` 发送文本内容
+- 多选文件请用「发送到 → 蓝牙传输」；右键后若应用未运行会自动启动，若已运行则激活已有窗口，待发送项进入队列，用户选定设备后点击「发送待发送项」才会真正发送
+- Windows 11 中静态菜单项位于右键菜单的「显示更多选项」（Shift+F10 / 菜单键），「发送到」子菜单不受影响
 
 ## 🚀 快速开始
 
@@ -122,6 +130,24 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 4. 之后默认走可续传的私有通道；对端未运行时自动回退 OPP
 5. 接收助手**默认每次接收前询问**（内置接收默认 `ReceiveAsk=true`，btrecv 默认询问，`--no-ask` 关闭）
 
+## 🖱️ 资源管理器右键菜单（可选）
+
+**使用步骤：**
+
+1. 右键托盘图标 →「安装资源管理器右键菜单」（只写当前用户注册表，无需管理员权限；重复安装会更新程序路径）
+2. 在资源管理器中对文件/文件夹/文件夹空白处/驱动器右键 →「用蓝牙传输发送」；对 `.txt` 右键 →「用蓝牙发送文本内容」
+3. 应用未运行时会自动启动；已运行时会激活已有窗口。窗口状态栏提示「已收到 N 个待发送项」，选中目标设备后点「发送待发送项」即入队发送
+4. **多选**：选中多个文件 → 右键 →「发送到 → 蓝牙传输」（静态菜单项的多选行为跨 Windows 版本不可靠，故多选统一走「发送到」）
+5. 移除：托盘菜单 →「移除资源管理器右键菜单」。Windows 11 请在「显示更多选项」中查看右键菜单项
+
+**实现细节：**
+
+- **安装内容**（全部在 `HKEY_CURRENT_USER\Software\Classes` 下，卸载时精确删除本应用创建的键）：
+  `*\shell\BluetoothTransfer.Send`（文件）、`Directory\shell\...`（文件夹）、`Directory\Background\shell\...`（文件夹空白处，`%V`）、`Drive\shell\...`（驱动器）、`SystemFileAssociations\.txt\shell\...`（发送文本内容）
+- **「发送到」快捷方式**：`%APPDATA%\Microsoft\Windows\SendTo\蓝牙传输.lnk`，承担多选入口（一次传入全部路径）
+- **命令行契约**：右键菜单以 `BluetoothTransfer.exe --send "<path>"` 或 `--send-text "<path>"` 调用 GUI；应用已运行时二次进程把请求原子写入 `%LOCALAPPDATA%\BluetoothTransfer\inbox` 并通知已有窗口（多选逐项启动时以 400ms 去抖合并）
+- **安全**：只写 HKCU、不申请提权、不执行任何 Shell 命令；只接受已存在路径、去重、单次最多 100 项；收件箱只接受本机同用户写入的 JSON（单文件 ≤1MB）并在消费后删除
+
 ## ⌨ CLI 命令参考
 
 | 分类 | 命令 | 说明 |
@@ -135,7 +161,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 | 发送 | `btcli opp-send-file\|files\|text\|folder ... [--mode auto\|assistant\|opp]` | 选择通道：`auto` 助手优先失败回退 OPP / `assistant` 强制助手 / `opp` 强制 OPP（默认 opp） |
 | 设备 | `btcli detect <地址>` | 探测对端是否运行接收助手 |
 | 发布 | `btcli package-receiver [--root 仓库根]` | 一键发布接收助手（自包含 + 框架依赖） |
-| 记录 | `btcli records [--direction send\|recv] [--type text\|file] [--status ok\|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json]` | 查询传输记录 |
+| 记录 | `btcli records [--direction send\|recv] [--type text\|file\|folder] [--status ok\|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json]` | 查询传输记录 |
 | 记录 | `btcli records clear [--yes]` | 清空全部传输记录（交互确认，--yes 跳过） |
 | 记录 | `btcli export <csv\|json> <输出文件>` | 导出全部记录 |
 | 统计 | `btcli stats [--json]` | 收发统计 |
@@ -150,9 +176,10 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `OppChunkSize` | 32768 | OPP 分片大小（字节） |
+| `OppChunkSize` | 32768 | OPP 分片大小（字节）。真实设备兼容性因接收端而异，未验证前不建议超过 65536 |
 | `OppConnectTimeout` | 30 | 连接超时（秒） |
-| `OppSendTimeout` | 300 | 发送超时（秒） |
+| `OppSendTimeout` | 300 | **发送空闲超时（秒）**：连续无进展超过该值才判失败；大文件传输不再受「整段发送总时长」限制，超时可自动重试 |
+| `AssistantChunkSize` | 262144 | 助手通道分片大小（字节，默认 256KB；范围 4KB～约 1MB，越界自动钳制）。仅影响应用间私有通道，旧版本接收端兼容 |
 | `PushTextFileName` | bt-note.txt | 文本推送默认文件名 |
 | `OppAuthPassword` | （空） | 设备要求 OBEX 认证时的密码 |
 | `OppNameUseBom` | false | Name 头是否带 UTF-16 BOM（默认无 BOM，兼容 Android/Windows） |
@@ -169,6 +196,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 - **接收端**：由系统「蓝牙文件传输向导」（fsquirt）承载；若 Win11 找不到入口，运行 `fsquirt` 或检查注册表 `DisableFsquirt`
 - 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；连接默认明文，要求加密时可 `config set OppProtectionLevel encrypt`
 - 连接前进行 SDP 预检：确认服务声明 OPP（0x1105），不满足时给出明确错误并写入失败记录
+- **资源管理器右键菜单**：只写 `HKEY_CURRENT_USER\Software\Classes`（无需管理员权限），不注入资源管理器；Windows 11 需在「显示更多选项」中查看；「发送到」子菜单在新菜单中仍可用
 
 ## ⚠ 协议限制须知
 
@@ -182,9 +210,11 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 
 每个产物提供两种形态：**含运行时**（自包含单文件，目标机无需安装 .NET 8）与**不含运行时**（框架依赖，目标机需安装 .NET 8 桌面运行时，体积更小）。
 
+自当前发布脚本起，**自包含**单文件产物默认启用 **`EnableCompressionInSingleFile`**（压缩率因产物而异：本仓库 Linux 交叉发布的 CLI-only 自包含实测由 13.57MB 降至 11.12MB，约 -18%；Windows 本地发布以实际为准；首次启动需解压、启动略慢）。**框架依赖**产物受 SDK 限制（单文件压缩仅支持自包含，NETSDK1176）保持未压缩单文件，但目标机只需安装 .NET 8 桌面运行时。
+
 | 产物 | 说明 |
 |---|---|
-| `btrecv-cli-only.zip` | 接收助手纯 CLI 自包含（约 6MB，解压即用），OBEX 引导首选 |
+| `btrecv-cli-only.zip` | 接收助手纯 CLI 自包含（已启用单文件压缩，解压即用），OBEX 引导首选 |
 | `btrecv-selfcontained.zip` / `btrecv-frameworkdependent.zip` | 接收助手完整 GUI（含运行时 / 不含运行时） |
 | `BluetoothTransfer-selfcontained.zip` / `BluetoothTransfer-frameworkdependent.zip` | 完整发送端 GUI（内置接收助手，含运行时 / 不含运行时） |
 
@@ -211,9 +241,9 @@ dotnet test BluetoothTransfer.sln -c Release
 btcli selftest
 ```
 
-- **xUnit 单元测试（236 项）**：OBEX 编解码/流程、重试策略、速率跟踪（受控时钟）、发送队列（含暂停/继续竞态回归）、zip 打包、存储/导出/清空/迁移、设备收藏/别名、配置迁移、助手协议帧/消息/内存传输/断线续传/客户端/服务端/接收端集成、CSV 注入防护、控制器并发守卫（手工依赖注入 + fake）
-- 构建基线：**0 警告 / 0 错误**（Linux 上亦可用 `dotnet build BluetoothTransfer.sln -c Release -p:EnableWindowsTargeting=true` 交叉编译验证）
-- **跨平台验证**：仓库内 WPF/WinRT 之外的纯逻辑（协议编解码、落盘与续传、发送日志与恢复、重试策略、存储/导出、控制器并发守卫等）可在非 Windows 主机上通过跨平台 harness 真实执行；当前 209 项在 Linux harness 通过。依赖 `Dispatcher`/STA 的控制器测试与真蓝牙路径需在 Windows 上运行
+- **xUnit 单元测试（361 项）**：OBEX 编解码/流程、重试策略、速率跟踪（受控时钟）、发送队列（含暂停/继续竞态回归）、zip 打包、存储/导出/清空/schema v1→v2 迁移、设备收藏/别名、配置迁移、助手协议帧/消息/内存传输/断线续传/客户端/服务端/接收端集成、CSV 注入防护、控制器并发守卫（手工依赖注入 + fake）、记录一键复制/内容复制规划、接收落盘路径解析、OPP 空闲超时、设备解析缓存、资源管理器命令行解析/收件箱转发
+- 构建基线：**0 警告 / 0 错误**（Linux 上亦可用 `dotnet build BluetoothTransfer.sln -c Release -p:EnableWindowsTargeting=true` 交叉编译验证；`NETSDK1188` 为缺 ICU 的 Linux 环境噪声，Windows 上不出现）
+- **跨平台验证**：仓库内 WPF/WinRT 之外的纯逻辑（协议编解码、落盘与续传、发送日志与恢复、重试策略、存储/迁移/导出、复制规划、命令行解析、收件箱转发、控制器并发守卫等）可在非 Windows 主机上通过跨平台 harness 真实执行；当前 **328 项在 Linux harness 实测通过**。依赖 `Dispatcher`/STA 的控制器测试、注册表/SendTo 集成与真蓝牙路径需在 Windows 上运行
 
 ## 📄 许可
 

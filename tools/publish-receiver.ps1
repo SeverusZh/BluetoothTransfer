@@ -10,11 +10,15 @@ $fd = Join-Path $OutputDir "frameworkdependent"
 $cli = Join-Path $OutputDir "cli-only-selfcontained"
 $cliFd = Join-Path $OutputDir "cli-only-frameworkdependent"
 
-dotnet publish $proj -c Release -r win-x64 --self-contained true  -p:PublishSingleFile=true -o $sc
+# 单文件压缩（EnableCompressionInSingleFile）仅支持自包含发布（SDK 限制 NETSDK1176）：
+# 自包含产物体积约 -50%～-70%，代价是首次启动需解压、启动略慢。
+# 对经蓝牙引导的 btrecv-cli-only 包尤其重要：体积减半可直接缩短 Windows 互传的首包传输时间。
+# 框架依赖形态不能压缩，保持未压缩单文件。
+dotnet publish $proj -c Release -r win-x64 --self-contained true  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o $sc
 if ($LASTEXITCODE -ne 0) { Write-Error "接收端自包含发布失败（退出码 $LASTEXITCODE）"; exit 1 }
 dotnet publish $proj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o $fd
 if ($LASTEXITCODE -ne 0) { Write-Error "接收端框架依赖发布失败（退出码 $LASTEXITCODE）"; exit 1 }
-dotnet publish $proj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishCliOnly=true -p:PublishTrimmed=true -o $cli
+dotnet publish $proj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:PublishCliOnly=true -p:PublishTrimmed=true -o $cli
 if ($LASTEXITCODE -ne 0) { Write-Error "纯 CLI 自包含发布失败（退出码 $LASTEXITCODE）"; exit 1 }
 dotnet publish $proj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishCliOnly=true -o $cliFd
 if ($LASTEXITCODE -ne 0) { Write-Error "纯 CLI 框架依赖发布失败（退出码 $LASTEXITCODE）"; exit 1 }
