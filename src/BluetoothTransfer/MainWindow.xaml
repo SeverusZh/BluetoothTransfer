@@ -21,6 +21,11 @@
                 <ContextMenu>
                     <MenuItem Header="显示" Click="OnTrayShow"/>
                     <Separator/>
+                    <!-- 资源管理器右键菜单安装/卸载：只写 HKCU，无需管理员权限；结果经状态栏/日志/气球提示反馈。
+                         Win11 中静态 Verb 位于右键菜单的「显示更多选项」内，安装成功提示会说明。 -->
+                    <MenuItem Header="安装资源管理器右键菜单" Click="OnTrayInstallExplorerMenu"/>
+                    <MenuItem Header="移除资源管理器右键菜单" Click="OnTrayUninstallExplorerMenu"/>
+                    <Separator/>
                     <MenuItem Header="退出" Click="OnTrayExit"/>
                 </ContextMenu>
             </tb:TaskbarIcon.ContextMenu>
@@ -331,6 +336,29 @@
                                     Padding="12,5" Margin="0,0,8,0"/>
                             <Button Content="剪贴板" Command="{Binding SendClipboardCommand}"
                                     Padding="12,5"/>
+                            <!-- 外部待发送项：资源管理器右键菜单 / 「发送到」/ 二次实例转发进来的项目先缓冲在此，
+                                 用户选定目标设备后点此按钮才真正入队发送（不自动发送，避免误发到错误设备）。
+                                 HasPendingExternal 为 false 时整块隐藏；按钮使能由命令的 CanExecute 控制。 -->
+                            <Button Command="{Binding SendPendingExternalCommand}"
+                                    Margin="12,0,0,0" Padding="12,5"
+                                    ToolTip="发送通过资源管理器右键菜单/「发送到」收到的待发送项（需先在设备列表中选中目标设备）"
+                                    AutomationProperties.Name="发送待发送项">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasPendingExternal}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE724;" FontFamily="{StaticResource IconFont}"
+                                               FontSize="12" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                    <TextBlock Text="发送待发送项" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
 
                         <Grid Grid.Row="3" Margin="0,12,0,0">

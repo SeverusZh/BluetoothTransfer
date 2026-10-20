@@ -21,6 +21,10 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 资源管理器右键菜单 / 「发送到」入口：--send <path...> / --send-text <file>。
+        // 解析必须早于建窗与守卫：非主实例只转发载荷、不建窗；无参数/未知参数解析为空请求，走正常启动。
+        var ownSendRequest = ShellSendRequest.Parse(e.Args);
+
         // 先建守卫再建窗：二次启动绝不创建窗口，只向已运行实例发激活信号，然后以退出码 0 结束。
         // 混合权限（管理员实例 vs 普通权限二次启动）下打开命名内核对象可能被 ACL 拒绝，统一在工厂里提示退出。
         _instanceGuard = CreateInstanceGuardOrExit();
@@ -29,29 +33,56 @@ public partial class App : Application
         var signaledExistingInstance = false;
         if (!_instanceGuard.IsPrimaryInstance)
         {
+            // 顺序不能反：先把载荷写入收件箱，再发激活信号——主实例收到信号后会立即排空收件箱，
+            // 若先发信号后写文件，主实例可能在文件落盘前完成排空，导致本次右键发送静默丢失。
+            var inbox = new ExternalSendInbox();
+            var payloadForwarded = true;
+            var payloadError = "";
+            // 有发送项、或只有解析提示（例如选中路径已被移动/删除）时都转发：后者让主实例状态栏能看到失败原因，
+            // 避免“右键后主窗口被激活但没有任何提示”的静默失败。
+            if (ownSendRequest.HasItems || ownSendRequest.Warnings.Count > 0)
+                payloadForwarded = inbox.TryWrite(ownSendRequest, out payloadError);
+            if (!payloadForwarded)
+            {
+                payloadError = string.IsNullOrWhiteSpace(payloadError) ? "未知原因" : payloadError;
+                Trace.WriteLine($"[App] 发送请求写入收件箱失败：{payloadError}");
+            }
+
             // 主实例可能仍在启动（先占 Mutex、后建激活事件），TrySignalExisting 内部会短间隔重试。
             signaledExistingInstance = SingleInstanceGuard.TrySignalExisting(SingleInstanceAppId);
             if (!signaledExistingInstance)
             {
                 // 没找到可通知的实例：多半是旧实例正在退出（Mutex 即将释放）。释放句柄后重试一次接管，
-                // 避免“旧实例已退出、新实例也退出”的启动空窗；仍抢不到则按二次启动处理，安静退出。
+                // 避免“旧实例已退出、新实例也退出”的启动空窗；仍抢不到则按二次启动处理。
                 _instanceGuard.Dispose();
                 _instanceGuard = CreateInstanceGuardOrExit();
                 if (_instanceGuard == null) return;
             }
             if (!_instanceGuard.IsPrimaryInstance)
             {
-                if (!signaledExistingInstance)
+                if (!payloadForwarded)
+                {
+                    // 载荷转发失败但主实例在运行：不能静默退出，否则用户右键后没有任何反应。
+                    MessageBox.Show(
+                        $"无法把待发送的文件转交给已运行的蓝牙传输窗口：\n{payloadError}\n" +
+                        "请重试，或把文件/文件夹直接拖到主窗口中发送。",
+                        "蓝牙传输",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                else if (!signaledExistingInstance)
                 {
                     // 极低概率路径：既通知不到已有实例、也抢不到 Mutex（旧实例正在退出的窗口期）。
-                    // 正常二次启动应静默退出，这里只留诊断日志、不弹窗打扰用户。
-                    Trace.WriteLine("[App] 二次启动未能通知已有实例，且旧实例尚未释放 Mutex；本次静默退出。");
+                    // 载荷已留在收件箱，下次主实例启动/激活时会兜底消费，这里只留诊断日志、不弹窗打扰用户。
+                    Trace.WriteLine("[App] 二次启动未能通知已有实例，且旧实例尚未释放 Mutex；发送请求已留在收件箱，本次静默退出。");
                 }
                 _instanceGuard.Dispose();
                 _instanceGuard = null;
-                Shutdown(0);
+                Shutdown(payloadForwarded ? 0 : 1);
                 return;
             }
+            // 走到这里说明“旧实例正在退出”窗口期内接管成功：本进程成为主实例，
+            // ownSendRequest 由下面的正常启动路径消费，不经过收件箱也不会丢。
         }
 
         base.OnStartup(e);
@@ -62,6 +93,10 @@ public partial class App : Application
         _mainWindow.Closed += (_, _) => _mainWindow = null;
         MainWindow = _mainWindow;
         _mainWindow.Show();
+
+        // 主实例：消费自身命令行载荷 + 排空收件箱（含上次崩溃/信号丢失的残留），全部在 UI 线程由窗口处理。
+        // 内部已捕获并上报异常，不阻塞启动；无载荷时该调用会很快返回。
+        _ = _mainWindow.HandleExternalSendRequestsAsync(ownSendRequest);
 
         // 不阻塞 UI 启动：后台恢复上次未完成的助手推送（durable send journal）。
         _ = Task.Run(ResumePendingSendsAsync);
@@ -105,7 +140,12 @@ public partial class App : Application
             dispatcher.BeginInvoke(new Action(() =>
             {
                 // 窗口真正关闭（托盘退出）后 _mainWindow 会被置空：此时激活请求已无意义，直接忽略。
-                _mainWindow?.ActivateFromSecondInstance();
+                var window = _mainWindow;
+                if (window == null) return;
+                // 先显示/激活窗口，再排空收件箱：二次实例的载荷（--send 路径）已写入 inbox，
+                // 由窗口用 ~400ms 去抖合并多选时“逐项拉起多个进程”的情况后再统一入队。
+                window.ActivateFromSecondInstance();
+                window.ScheduleExternalInboxDrain();
             }));
         }
         catch (InvalidOperationException)

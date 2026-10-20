@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Media.Imaging;
@@ -137,6 +139,15 @@ public class OppViewModel : ViewModelBase, IDisposable
     private string _progressText = "";
     private string _lastError = "";
     private OppDeviceItem? _queueDevice;
+    // 外部待发送缓存（资源管理器右键 / 「发送到」/ 二次实例转发的收件箱）：收到时先缓存、绝不自动发送，
+    // 等用户在设备列表选中目标设备后点击「发送待发送项」才交给 EnqueueAndStart。
+    private readonly List<OppSendJob> _externalPending = new();
+    // 已入队的外部任务 Id：队列完成回调里只为这些任务补一条「失败/取消」中文提示，
+    // 避免与普通拖放/手动发送任务已由传输服务记录的日志重复。
+    // 线程安全：OppSendQueue.JobCompleted 由队列的异步续体触发，可能在后台线程执行；
+    // 而 UI 线程在 SendPendingExternalAsync 里登记/回滚这些 Id。HashSet 非线程安全，
+    // 故用 ConcurrentDictionary<string, byte> 充当并发集合（value 无业务含义，仅作占位）。
+    private readonly ConcurrentDictionary<string, byte> _externalJobIds = new(StringComparer.Ordinal);
 
     public ObservableCollection<OppDeviceItem> Devices { get; } = new();
     public ObservableCollection<TransferRecord> Records { get; } = new();
@@ -177,6 +188,7 @@ public class OppViewModel : ViewModelBase, IDisposable
             SendFileCommand.RaiseCanExecuteChanged();
             SendFolderCommand.RaiseCanExecuteChanged();
             SendClipboardCommand.RaiseCanExecuteChanged();
+            SendPendingExternalCommand.RaiseCanExecuteChanged();
             PairCommand.RaiseCanExecuteChanged();
             ToggleFavoriteCommand.RaiseCanExecuteChanged();
         }
@@ -186,6 +198,12 @@ public class OppViewModel : ViewModelBase, IDisposable
     public string ProgressText { get => _progressText; set => SetProperty(ref _progressText, value); }
     public bool CanSend => SelectedDevice != null && !IsScanning;
     public string LastError => _lastError;
+
+    /// <summary>外部（资源管理器右键 / 「发送到」）收到的待发送项数量。</summary>
+    public int PendingExternalCount => _externalPending.Count;
+
+    /// <summary>是否存在待发送项：控制发送区「发送待发送项」按钮的可见性。</summary>
+    public bool HasPendingExternal => _externalPending.Count > 0;
 
     /// <summary>发送通道模式：auto（探测助手，否则 OPP）/ assistant / opp。</summary>
     public string SelectedTransferMode
@@ -215,6 +233,8 @@ public class OppViewModel : ViewModelBase, IDisposable
     public RelayCommand SendFileCommand { get; private set; } = null!;
     public RelayCommand SendFolderCommand { get; private set; } = null!;
     public RelayCommand SendClipboardCommand { get; private set; } = null!;
+    /// <summary>发送外部待发送项：仅在「已选中设备 + 存在待发送项」时可执行（由资源管理器右键/SendTo 触发）。</summary>
+    public RelayCommand SendPendingExternalCommand { get; private set; } = null!;
     public RelayCommand CancelAllCommand { get; private set; } = null!;
     public RelayCommand RefreshRecordsCommand { get; private set; } = null!;
     public RelayCommand ExportCsvCommand { get; private set; } = null!;
@@ -352,6 +372,10 @@ public class OppViewModel : ViewModelBase, IDisposable
         SendFileCommand = new RelayCommand(() => SafeAsync(SendFileAsync), () => CanSend);
         SendFolderCommand = new RelayCommand(() => SafeAsync(SendFolderAsync), () => CanSend);
         SendClipboardCommand = new RelayCommand(() => SafeAsync(SendClipboardAsync), () => CanSend);
+        // 外部待发送项：必须显式「已选设备 + 有缓存」才可执行；不因选中设备而自动发送。
+        SendPendingExternalCommand = new RelayCommand(
+            () => SafeAsync(SendPendingExternalAsync),
+            () => SelectedDevice != null && HasPendingExternal);
         CancelAllCommand = new RelayCommand(() => _queue.CancelAll());
         RefreshRecordsCommand = new RelayCommand(() => SafeAsync(LoadRecordsAsync));
         ExportCsvCommand = new RelayCommand(() => SafeAsync(() =>
@@ -377,6 +401,8 @@ public class OppViewModel : ViewModelBase, IDisposable
 
         _events.Subscribe(_logHandler);
         _events.Subscribe(_progressHandler);
+        // 队列终态回调：为外部待发送任务补「失败/取消」中文提示（普通任务不在此重复记录）。
+        _queue.JobCompleted += OnQueueJobCompleted;
         _ = LoadRecordsAsync();
         _ = _devicePane.LoadFavoriteDevicesAsync();
     }
@@ -711,6 +737,238 @@ public class OppViewModel : ViewModelBase, IDisposable
         return Task.CompletedTask;
     }
 
+    // ------------------------------------------------------------------ 外部待发送（资源管理器右键 / 发送到 / 二次实例转发）
+
+    /// <summary>
+    /// 外部发送入口（由 MainWindow 在 UI 线程调用）：把资源管理器右键菜单 / 「发送到」/ 二次实例转发的请求
+    /// 转成待发送任务并缓存，<b>不自动发送</b>。用户选中目标设备并点击「发送待发送项」后才入队。
+    ///
+    /// 行为：
+    /// 1) 激活窗口与状态栏提示由调用方负责，本方法负责提示文案：未选设备时提示「已收到 N 个待发送项：请选择目标设备后点击发送」；
+    /// 2) 设备列表为空时自动触发一次扫描（用户右键时对端可能还没被扫描到）；
+    /// 3) 文本项优先用解析阶段读出的正文；正文缺失（旧收件箱/转发异常）时重新读文件，失败回退为按文件发送并提示；
+    /// 4) 路径在收到请求到用户点发送之间可能失效：入队/点击发送时再次校验，全部失效给出中文提示（不静默）。
+    /// </summary>
+    public async Task EnqueueExternalSendAsync(ShellSendRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // UI 线程约束：PendingExternalCount/HasPendingExternal 与 StatusText 都是绑定属性，ObservableCollection 只能在 UI 线程增删。
+        if (!_dispatcher.CheckAccess())
+        {
+            await _dispatcher.InvokeAsync(() => EnqueueExternalSendAsync(request)).Task.Unwrap();
+            return;
+        }
+
+        if (!request.HasItems)
+        {
+            foreach (var warning in request.Warnings)
+                PublishLog(TransferConst.LogWarn, warning);
+            return;
+        }
+
+        // 文本读取/文件大小探测属本地 IO，放后台线程，避免大文本或网络路径阻塞 UI；
+        // await 后回到 UI 线程（未使用 ConfigureAwait(false)），下面的集合/属性更新是安全的。
+        var built = await Task.Run(() => BuildExternalJobs(request));
+        foreach (var warning in request.Warnings.Concat(built.Warnings))
+            PublishLog(TransferConst.LogWarn, warning);
+
+        if (built.Jobs.Count == 0)
+        {
+            StatusText = "已收到发送请求，但所有待发送项都已失效（文件可能已被移动或删除）";
+            PublishLog(TransferConst.LogWarn, StatusText);
+            return;
+        }
+
+        _externalPending.AddRange(built.Jobs);
+        NotifyPendingExternalChanged();
+
+        var device = SelectedDevice;
+        if (device != null)
+        {
+            StatusText = $"已收到 {built.Jobs.Count} 个待发送项：点击「发送待发送项」发送至 {device.DisplayName}";
+        }
+        else
+        {
+            StatusText = $"已收到 {built.Jobs.Count} 个待发送项：请选择目标设备后点击发送";
+            // 设备列表为空时自动扫描一次（IsScanning 置位期间不重复触发；扫描本身有并发保护）。
+            if (Devices.Count == 0 && !IsScanning)
+                SafeAsync(ScanAsync);
+        }
+        PublishLog(TransferConst.LogInfo, StatusText);
+    }
+
+    /// <summary>
+    /// 把缓存的外部待发送项交给现有队列（用户已选定设备并点击按钮）：
+    /// 成功入队后清空缓存；入队抛异常时把任务放回缓存并给出中文失败提示，避免用户请求丢失。
+    /// </summary>
+    private Task SendPendingExternalAsync()
+    {
+        var device = SelectedDevice;
+        if (device == null)
+        {
+            StatusText = "请先在设备列表中选中目标设备，再点击「发送待发送项」";
+            return Task.CompletedTask;
+        }
+        if (_externalPending.Count == 0)
+        {
+            StatusText = "没有待发送项";
+            return Task.CompletedTask;
+        }
+
+        // 快照 + 清空：避免重复点击重复入队；任务 Id 登记到 _externalJobIds，用于完成回调里补失败/取消提示。
+        var jobs = _externalPending.ToList();
+        _externalPending.Clear();
+        NotifyPendingExternalChanged();
+        foreach (var job in jobs)
+            _externalJobIds.TryAdd(job.Id, 0);
+
+        try
+        {
+            EnqueueAndStart(jobs);
+            StatusText = $"已发送待发送项 {jobs.Count} 项：{device.DisplayName}";
+            PublishLog(TransferConst.LogInfo, StatusText);
+        }
+        catch (Exception ex)
+        {
+            // 入队失败（极端 UI 状态）：任务放回缓存，用户可稍后重试；错误经状态栏 + 日志上报。
+            foreach (var job in jobs)
+                _externalJobIds.TryRemove(job.Id, out _);
+            _externalPending.InsertRange(0, jobs);
+            NotifyPendingExternalChanged();
+            StatusText = $"发送待发送项失败：{ex.Message}";
+            PublishLog(TransferConst.LogError, StatusText);
+        }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>把外部请求映射为现有 <see cref="OppSendJob"/>（文件/文件夹/文本）；无法使用的项转成中文提示。</summary>
+    private (List<OppSendJob> Jobs, List<string> Warnings) BuildExternalJobs(ShellSendRequest request)
+    {
+        var jobs = new List<OppSendJob>();
+        var warnings = new List<string>();
+
+        foreach (var item in request.Items)
+        {
+            var path = item.Path;
+            try
+            {
+                var isDirectory = Directory.Exists(path);
+                var isFile = File.Exists(path);
+                if (!isDirectory && !isFile)
+                {
+                    warnings.Add($"待发送项已不存在（可能已被移动或删除），已跳过：{path}");
+                    continue;
+                }
+
+                if (item.Kind == ShellSendItemKind.Text)
+                {
+                    var text = item.Text;
+                    if (string.IsNullOrEmpty(text))
+                    {
+                        // 文本正文缺失（旧收件箱/转发异常/直接构造请求）：重新读文件；仍失败则回退为按文件发送。
+                        if (ShellTextFileReader.TryReadText(path, out var body, out var readError))
+                            text = body;
+                        else
+                            warnings.Add($"读取文本失败（{readError}），已改为按文件发送：{GetFileNameOrFallback(path)}");
+                    }
+
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        jobs.Add(new OppSendJob
+                        {
+                            Kind = TransferConst.TypeText,
+                            // 与 SendClipboardAsync 的约定一致：文本任务的 SourcePath 存放正文本身（传输时再包成 .txt）。
+                            SourcePath = text,
+                            DisplayName = GetTextDisplayName(path),
+                            Size = System.Text.Encoding.UTF8.GetByteCount(text)
+                        });
+                        continue;
+                    }
+                    // 文本正文确实拿不到（读取失败）：落到下面按普通文件发送（回退语义）。
+                }
+
+                if (isDirectory)
+                {
+                    jobs.Add(new OppSendJob
+                    {
+                        Kind = TransferConst.TypeFolder,
+                        SourcePath = path,
+                        DisplayName = GetFolderDisplayName(path),
+                        Size = 0
+                    });
+                }
+                else
+                {
+                    jobs.Add(new OppSendJob
+                    {
+                        Kind = TransferConst.TypeFile,
+                        SourcePath = path,
+                        DisplayName = Path.GetFileName(path),
+                        Size = new FileInfo(path).Length
+                    });
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 单个项读不了（被占用/无权限）不应阻断整批：提示后跳过，其余项照常发送。
+                warnings.Add($"读取待发送项失败，已跳过：{path}（{ex.Message}）");
+            }
+        }
+
+        return (jobs, warnings);
+    }
+
+    /// <summary>待发送缓存变化：刷新计数/可见性并主动评估命令使能（WPF 不会因属性变化自动重查 CanExecute）。</summary>
+    private void NotifyPendingExternalChanged()
+    {
+        OnPropertyChanged(nameof(PendingExternalCount));
+        OnPropertyChanged(nameof(HasPendingExternal));
+        SendPendingExternalCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// 队列任务完成回调：仅对「外部待发送」任务补一条中文结果，失败/取消时同步状态栏。
+    /// 普通拖放/手动发送任务的日志由各传输服务负责，这里不重复。
+    /// </summary>
+    private void OnQueueJobCompleted(OppSendJob job, bool ok)
+    {
+        if (!_externalJobIds.TryRemove(job.Id, out _)) return;
+
+        var reason = string.IsNullOrWhiteSpace(job.Error) ? "原因未知" : job.Error;
+        var message = ok
+            ? $"待发送项发送完成：{job.DisplayName}"
+            : job.Status == OppJobStatus.Cancelled
+                ? $"待发送项已取消：{job.DisplayName}"
+                : $"待发送项发送失败：{job.DisplayName}（{reason}）";
+        PublishLog(ok ? TransferConst.LogInfo : TransferConst.LogWarn, message);
+        if (ok) return;
+
+        // 状态栏是绑定属性：回调通常已在 UI 线程，但这里按 Dispatcher 兜底，避免跨线程访问 WPF 控件属性。
+        void UpdateStatus() => StatusText = message;
+        if (_dispatcher.CheckAccess()) UpdateStatus();
+        else _dispatcher.BeginInvoke(new Action(UpdateStatus));
+    }
+
+    private static string GetFileNameOrFallback(string path)
+    {
+        var name = Path.GetFileName(path);
+        return string.IsNullOrWhiteSpace(name) ? path : name;
+    }
+
+    private string GetTextDisplayName(string path)
+    {
+        var name = Path.GetFileName(path);
+        return string.IsNullOrWhiteSpace(name) ? _config.PushTextFileName : name;
+    }
+
+    private static string GetFolderDisplayName(string path)
+    {
+        // 根目录（如 "D:\"）取不到文件名：退回完整路径作为展示名，避免出现空任务名。
+        var name = Path.GetFileName(path.TrimEnd('\\', '/'));
+        return string.IsNullOrWhiteSpace(name) ? path : name;
+    }
+
     // ------------------------------------------------------------------ 记录
     // 记录域的纯内部逻辑（加载/导出/清空/统计）已下沉到 RecordsPaneController（含加载并发保护），
     // 以下方法仅作门面委托，保持命令语义与 Records 集合绑定不变。
@@ -856,6 +1114,9 @@ public class OppViewModel : ViewModelBase, IDisposable
         _receive.ProgressChanged -= OnReceiveProgress;
         _receive.Completed -= OnReceiveCompleted;
         _receive.Logged -= OnReceiveLogged;
+
+        // 队列完成回调退订：避免队列（随本 VM 存活）继续持有 UI 回调。
+        _queue.JobCompleted -= OnQueueJobCompleted;
 
         // 3. 停止接收监听（若正在监听）：同步等待结束，异常仅记录、不向调用方抛出。
         if (_receive.IsListening)
