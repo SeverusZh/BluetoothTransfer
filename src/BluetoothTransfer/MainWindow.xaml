@@ -462,7 +462,11 @@
                 </Border>
 
                 <!-- 记录 / 日志 -->
-                <TabControl Grid.Row="4" MinHeight="280">
+                <!-- 高度约束（第 2 项修复）：主区外层 ScrollViewer 以无限高测量内容，Grid 星号行会退化为 auto，
+                     若不给本 TabControl 上限，记录（最多 200 条）/日志会把它和整页撑到数千像素高。
+                     这里统一限制 MinHeight/MaxHeight：内容在固定范围内由内部 ListView/ListBox 滚动，
+                     页面总高不再随记录数无限增长；窗口过小时仍由外层 ScrollViewer 兜底纵向滚动。 -->
+                <TabControl Grid.Row="4" MinHeight="280" MaxHeight="440">
                     <TabItem Header="传输记录">
                         <Grid Margin="12,10,12,12">
                             <Grid.RowDefinitions>
@@ -471,35 +475,50 @@
                                 <RowDefinition Height="*"/>
                             </Grid.RowDefinitions>
 
-                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
-                                <Button Content="刷新" Command="{Binding RefreshRecordsCommand}"
-                                        FontSize="12" Padding="12,4"
-                                        AutomationProperties.Name="刷新传输记录"/>
-                                <Button Content="导出 CSV" Command="{Binding ExportCsvCommand}"
-                                        FontSize="12" Padding="12,4" Margin="8,0,0,0"/>
-                                <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}"
-                                        FontSize="12" Padding="12,4" Margin="8,0,0,0"/>
-                                <Button Content="清空" Command="{Binding ClearRecordsCommand}"
-                                        Style="{StaticResource DangerButtonStyle}"
-                                        FontSize="12" Padding="12,4" Margin="8,0,0,0"
-                                        AutomationProperties.Name="清空传输记录"/>
-                            </StackPanel>
+                            <Grid Grid.Row="0" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                                    <Button Content="刷新" Command="{Binding RefreshRecordsCommand}"
+                                            FontSize="12" Padding="12,4"
+                                            AutomationProperties.Name="刷新传输记录"/>
+                                    <Button Content="导出 CSV" Command="{Binding ExportCsvCommand}"
+                                            FontSize="12" Padding="12,4" Margin="8,0,0,0"/>
+                                    <Button Content="导出 JSON" Command="{Binding ExportJsonCommand}"
+                                            FontSize="12" Padding="12,4" Margin="8,0,0,0"/>
+                                    <Button Content="清空" Command="{Binding ClearRecordsCommand}"
+                                            Style="{StaticResource DangerButtonStyle}"
+                                            FontSize="12" Padding="12,4" Margin="8,0,0,0"
+                                            AutomationProperties.Name="清空传输记录"/>
+                                </StackPanel>
+                                <!-- 说明文案与 RecordsPaneController.DisplayLimit（GetRecords limit:200）保持一致：
+                                     列表仅展示最近 200 条、不删除数据库数据，完整记录可用导出功能获取。 -->
+                                <TextBlock Grid.Column="1" Text="{Binding RecordsLimitText}"
+                                           Style="{StaticResource CaptionTextStyle}"
+                                           VerticalAlignment="Center" Margin="12,0,0,0"
+                                           ToolTip="记录按时间倒序仅展示最近 200 条；完整记录可用 CSV/JSON 导出"
+                                           AutomationProperties.Name="记录展示上限说明"/>
+                            </Grid>
 
                             <!-- 表头与行对齐依据：行内容起点 = ListViewItem 1px 边框 + 行 Border Padding 8 = 9px，
-                                 故表头 Border Padding 用 9,4；右侧 Margin 12 预留垂直滚动条宽度，两处 Grid 星号列宽一致。 -->
+                                 故表头 Border Padding 用 9,4；右侧 Margin 12 预留垂直滚动条宽度，两处 Grid 星号列宽一致。
+                                 新增「操作」列后各固定列宽度做了小幅收窄，表格总宽与改动前基本一致，列定义必须与行模板逐列保持同步。 -->
                             <Border Grid.Row="1" Style="{StaticResource TableHeaderStyle}"
                                     Padding="9,4" Margin="0,0,12,0">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="118"/>
-                                        <ColumnDefinition Width="44"/>
-                                        <ColumnDefinition Width="44"/>
-                                        <ColumnDefinition Width="92"/>
+                                        <ColumnDefinition Width="38"/>
+                                        <ColumnDefinition Width="38"/>
+                                        <ColumnDefinition Width="80"/>
                                         <ColumnDefinition Width="1.5*"/>
-                                        <ColumnDefinition Width="62"/>
-                                        <ColumnDefinition Width="54"/>
-                                        <ColumnDefinition Width="44"/>
+                                        <ColumnDefinition Width="56"/>
+                                        <ColumnDefinition Width="46"/>
+                                        <ColumnDefinition Width="38"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="48"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="时间" Style="{StaticResource TableHeaderTextStyle}"/>
                                     <TextBlock Grid.Column="1" Text="方向" Style="{StaticResource TableHeaderTextStyle}"/>
@@ -510,6 +529,7 @@
                                     <TextBlock Grid.Column="6" Text="状态" Style="{StaticResource TableHeaderTextStyle}"/>
                                     <TextBlock Grid.Column="7" Text="通道" Style="{StaticResource TableHeaderTextStyle}"/>
                                     <TextBlock Grid.Column="8" Text="备注" Style="{StaticResource TableHeaderTextStyle}"/>
+                                    <TextBlock Grid.Column="9" Text="操作" Style="{StaticResource TableHeaderTextStyle}"/>
                                 </Grid>
                             </Border>
 
@@ -533,14 +553,15 @@
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="118"/>
-                                                        <ColumnDefinition Width="44"/>
-                                                        <ColumnDefinition Width="44"/>
-                                                        <ColumnDefinition Width="92"/>
+                                                        <ColumnDefinition Width="38"/>
+                                                        <ColumnDefinition Width="38"/>
+                                                        <ColumnDefinition Width="80"/>
                                                         <ColumnDefinition Width="1.5*"/>
-                                                        <ColumnDefinition Width="62"/>
-                                                        <ColumnDefinition Width="54"/>
-                                                        <ColumnDefinition Width="44"/>
+                                                        <ColumnDefinition Width="56"/>
+                                                        <ColumnDefinition Width="46"/>
+                                                        <ColumnDefinition Width="38"/>
                                                         <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="48"/>
                                                     </Grid.ColumnDefinitions>
                                                     <TextBlock Grid.Column="0" Text="{Binding CreatedAtDisplay}"
                                                                Style="{StaticResource TableCellSecondaryTextStyle}"/>
@@ -561,6 +582,43 @@
                                                     <TextBlock Grid.Column="8" Text="{Binding Note}"
                                                                ToolTip="{Binding Note}"
                                                                Style="{StaticResource TableCellSecondaryTextStyle}"/>
+                                                    <!-- 操作列：每行通用复制（把传输对象放进剪贴板）；单文件记录额外提供「复制内容」。
+                                                         命令在 OppViewModel，参数经 CommandParameter 传入当前行记录；失败会给出中文状态栏提示。 -->
+                                                    <StackPanel Grid.Column="9" Orientation="Horizontal"
+                                                                VerticalAlignment="Center">
+                                                        <Button Command="{Binding DataContext.CopyRecordCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"
+                                                                Style="{StaticResource CompactGhostButtonStyle}"
+                                                                Padding="3,2" MinHeight="20" MinWidth="20"
+                                                                ToolTip="复制到剪贴板（文本→文本、图片→图片、其它文件→文件）"
+                                                                AutomationProperties.Name="复制到剪贴板">
+                                                            <TextBlock Text="&#xE8C8;" FontFamily="{StaticResource IconFont}"
+                                                                       FontSize="12" HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </Button>
+                                                        <Button Command="{Binding DataContext.CopyRecordContentCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"
+                                                                Padding="3,2" MinHeight="20" MinWidth="20" Margin="2,0,0,0"
+                                                                ToolTip="复制文件内容（文本文件→文本、图片→图片，其它格式复制文件本身）"
+                                                                AutomationProperties.Name="复制文件内容">
+                                                            <Button.Style>
+                                                                <Style TargetType="Button"
+                                                                       BasedOn="{StaticResource CompactGhostButtonStyle}">
+                                                                    <!-- 单文件记录（Type=file）才显示专属「复制内容」图标；
+                                                                         文件缺失时点击仍会得到中文提示，不做静默隐藏。 -->
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding IsFileRecord}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Button.Style>
+                                                            <TextBlock Text="&#xE8A5;" FontFamily="{StaticResource IconFont}"
+                                                                       FontSize="12" HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </Button>
+                                                    </StackPanel>
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>

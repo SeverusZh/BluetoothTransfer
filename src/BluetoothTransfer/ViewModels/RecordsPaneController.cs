@@ -20,6 +20,12 @@ namespace BluetoothTransfer.ViewModels;
 /// </summary>
 internal sealed class RecordsPaneController
 {
+    /// <summary>
+    /// 记录窗格展示上限：与界面「显示最近 N 条」说明保持一致。
+    /// 仅限制展示条数，不删除数据库中的任何记录（清空需用户显式确认）。
+    /// </summary>
+    public const int DisplayLimit = 200;
+
     private readonly IStorageService _storage;
     private readonly Dispatcher _dispatcher;
     private readonly ObservableCollection<TransferRecord> _records;
@@ -70,7 +76,7 @@ internal sealed class RecordsPaneController
             do
             {
                 _reloadRequested = false;
-                var records = await Task.Run(() => _storage.GetRecords(limit: 200));
+                var records = await Task.Run(() => _storage.GetRecords(limit: DisplayLimit));
                 // 若在后台加载期间又有新请求到达，则忽略本次结果重新拉取，保证最终显示最新数据。
                 if (_reloadRequested) continue;
                 _dispatcher.Invoke(() =>

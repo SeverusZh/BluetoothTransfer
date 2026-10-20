@@ -41,6 +41,12 @@ public class TransferRecord
     public string Note { get; set; } = "";
 
     /// <summary>
+    /// 是否为单文件记录：供记录表 DataTrigger 显示「复制内容」专属图标（只按 Type 判定，不涉及数据库结构）。
+    /// 文件是否仍然存在由复制规划器 TransferCopyPlanner 在点击时校验并给出中文提示，避免静默失败。
+    /// </summary>
+    public bool IsFileRecord => Type == TransferConst.TypeFile;
+
+    /// <summary>
     /// 供 DataGrid 展示的本地化时间（"yyyy-MM-dd HH:mm:ss"）。
     /// CreatedAt 以 ISO-8601 字符串存储，直接套用 DateTime 的 StringFormat 不会生效。
     /// </summary>

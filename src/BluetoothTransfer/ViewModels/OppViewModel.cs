@@ -143,6 +143,9 @@ public class OppViewModel : ViewModelBase, IDisposable
     public ObservableCollection<string> LogLines { get; } = new();
     public ObservableCollection<OppSendJob> Jobs => _queue.Jobs;
 
+    /// <summary>记录表工具栏说明文案：与 RecordsPaneController 的展示上限（GetRecords limit）保持一致。</summary>
+    public string RecordsLimitText => $"显示最近 {RecordsPaneController.DisplayLimit} 条";
+
     public string StatusText { get => _statusText; set => SetProperty(ref _statusText, value); }
 
     /// <summary>版本号单一事实源：取程序集版本（csproj &lt;Version&gt;）的 major.minor.build 拼接显示。</summary>
@@ -217,6 +220,8 @@ public class OppViewModel : ViewModelBase, IDisposable
     public RelayCommand ExportCsvCommand { get; private set; } = null!;
     public RelayCommand ExportJsonCommand { get; private set; } = null!;
     public RelayCommand ClearRecordsCommand { get; private set; } = null!;
+    public RelayCommand CopyRecordCommand { get; private set; } = null!;
+    public RelayCommand CopyRecordContentCommand { get; private set; } = null!;
     public RelayCommand PauseJobCommand { get; private set; } = null!;
     public RelayCommand ContinueJobCommand { get; private set; } = null!;
     public RelayCommand RemoveJobCommand { get; private set; } = null!;
@@ -354,6 +359,9 @@ public class OppViewModel : ViewModelBase, IDisposable
         ExportJsonCommand = new RelayCommand(() => SafeAsync(() =>
             ExportRecordsAsync("JSON 文件|*.json", "json", ExportService.ExportJson)));
         ClearRecordsCommand = new RelayCommand(() => SafeAsync(ClearRecordsAsync));
+        // 记录表行内复制：参数为 DataTemplate 当前行的 TransferRecord；失败经状态栏 + 日志上报，不静默。
+        CopyRecordCommand = new RelayCommand(p => SafeAsync(() => CopyRecordAsync(p, contentOnly: false)));
+        CopyRecordContentCommand = new RelayCommand(p => SafeAsync(() => CopyRecordAsync(p, contentOnly: true)));
         PauseJobCommand = new RelayCommand(job => _queue.Pause((OppSendJob)job!));
         ContinueJobCommand = new RelayCommand(job =>
         {
@@ -713,6 +721,78 @@ public class OppViewModel : ViewModelBase, IDisposable
         => _recordsPane.ExportRecordsAsync(filter, ext, export);
 
     private Task ClearRecordsAsync() => _recordsPane.ClearRecordsAsync();
+
+    /// <summary>
+    /// 记录表「复制」的统一实现：规划（含文本读取，后台线程）→ 准备剪贴板数据（图片解码，后台线程）
+    /// → 回到 UI（STA）线程写入剪贴板。任何失败都以中文状态栏消息 + 日志上报，不静默；异常不逃逸。
+    /// </summary>
+    /// <param name="parameter">CommandParameter：当前行的 <see cref="TransferRecord"/>。</param>
+    /// <param name="contentOnly">true=「复制内容」（单文件专属）；false=通用复制（把传输对象放进剪贴板）。</param>
+    private async Task CopyRecordAsync(object? parameter, bool contentOnly)
+    {
+        if (parameter is not TransferRecord record)
+        {
+            ReportCopyFailure("复制失败：未找到对应的传输记录", TransferConst.LogError);
+            return;
+        }
+
+        // 文件读取（文本内容）放到后台线程，避免 UI 卡顿；规划器只做路径/扩展名/存在性与有上限的读取。
+        var plan = await Task.Run(() => contentOnly
+            ? TransferCopyPlanner.PlanContentCopy(record)
+            : TransferCopyPlanner.PlanCopy(record));
+        if (!plan.IsSuccess)
+        {
+            ReportCopyFailure(plan.Error, TransferConst.LogWarn);
+            return;
+        }
+
+        // 图片解码同样在后台线程完成（冻结位图可跨线程），剪贴板写入本身必须回到 UI 线程。
+        var prepared = await Task.Run(() => WpfClipboardWriter.Prepare(plan));
+        var payload = prepared.Payload;
+        if (payload == null)
+        {
+            ReportCopyFailure(prepared.Error, TransferConst.LogError);
+            return;
+        }
+        if (!WpfClipboardWriter.TryWrite(payload, out var writeError))
+        {
+            ReportCopyFailure(writeError, TransferConst.LogError);
+            return;
+        }
+
+        StatusText = BuildCopySuccessText(record, plan, contentOnly);
+        PublishLog(TransferConst.LogInfo, StatusText);
+    }
+
+    /// <summary>复制失败统一上报：状态栏给出中文原因，同时发布日志（缺失/无路径记 WARN，剪贴板写入失败记 ERROR）。</summary>
+    private void ReportCopyFailure(string reason, string level)
+    {
+        // reason 本身已是可直接展示的中文原因（可能已含「复制失败：」前缀），日志/状态栏均原样使用，避免前缀重复。
+        StatusText = reason;
+        PublishLog(level, reason);
+    }
+
+    private static string BuildCopySuccessText(TransferRecord record, TransferCopyPlan plan, bool contentOnly)
+    {
+        var name = string.IsNullOrWhiteSpace(record.Name) ? "传输记录" : record.Name;
+        if (contentOnly)
+        {
+            return plan.Kind switch
+            {
+                TransferCopyKind.Text => $"已复制文本内容：{name}",
+                TransferCopyKind.Image => $"已复制图片内容：{name}",
+                _ => string.IsNullOrEmpty(plan.Note)
+                    ? $"已复制文件：{name}"
+                    : $"已复制文件：{name}（{plan.Note}）"
+            };
+        }
+        return plan.Kind switch
+        {
+            TransferCopyKind.Text => $"已复制文本到剪贴板：{name}",
+            TransferCopyKind.Image => $"已复制图片到剪贴板：{name}",
+            _ => $"已复制文件到剪贴板：{name}"
+        };
+    }
 
     // ------------------------------------------------------------------ 事件
     // 说明：日志/进度事件需经 EventBus 汇集并回写 UI 线程（LogLines/LastError/TransferProgress），

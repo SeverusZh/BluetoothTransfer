@@ -20,6 +20,8 @@ public sealed class ReceiveService : IReceiveService
     private AssistantServer? _server;
     private CancellationTokenSource? _cts;
     private Task? _runTask;
+    /// <summary>最近一次 StartAsync 的保存目录（绝对路径）：接收完成写记录时据此补 LocalPath，供界面复制定位文件。</summary>
+    private string _saveDir = "";
 
     public ReceiveService(StorageService storage, EventBus events, IAsstListener? listenerOverride = null)
     {
@@ -42,6 +44,8 @@ public sealed class ReceiveService : IReceiveService
         if (IsListening) return;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         Directory.CreateDirectory(saveDir);
+        // 记录保存目录（转绝对路径）：接收完成写记录时补 LocalPath，界面「复制」据此定位落盘文件。
+        _saveDir = Path.GetFullPath(saveDir);
         AsstFileSink.CleanStale(saveDir, TimeSpan.FromDays(7));
         var sink = new AsstFileSink(saveDir);
         IAsstListener listener;
@@ -127,6 +131,10 @@ public sealed class ReceiveService : IReceiveService
                 Status = TransferConst.StatusOk,
                 Checksum = hello.ExpectedSha256,
                 Channel = TransferConst.ChannelAssistant,
+                // 接收记录补本地路径（否则界面无法复制接收文件）：
+                // AsstFileSink 完成时可能因重名把文件改名为 stem (1).ext（如 recv.bin → recv (1).bin），故由 ReceiveLocalPathResolver
+                // 按候选名 + 文件大小解析实际落盘文件；解析不到时留空，让复制规划器提示「无本地路径」而不是复制错文件。
+                LocalPath = ReceiveLocalPathResolver.Resolve(_saveDir, hello.FileName, hello.FileSize),
                 Note = "接收助手"
             });
         }
