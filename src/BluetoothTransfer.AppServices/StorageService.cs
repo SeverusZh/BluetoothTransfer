@@ -39,64 +39,120 @@ public class StorageService : IStorageService
         InitDb();
     }
 
+    /// <summary>
+    /// 当前 schema 版本：v2 在 v1 基础上为 transfer_records 增加 content 列（文本记录正文）。
+    /// 迁移顺序固定为 0→1→2：全新库也先建 v1 基础表，再按同一分支升到 v2，保证新库/老库路径一致。
+    /// </summary>
+    private const long SchemaVersion = 2;
+
     private void InitDb()
     {
         using var conn = new SqliteConnection(_connStr);
         conn.Open();
 
-        // 从 PRAGMA user_version 读取当前库版本；整数类型，不涉及外部拼接，直接读取即可。
-        long userVersion;
-        using (var versionCmd = conn.CreateCommand())
-        {
-            versionCmd.CommandText = "PRAGMA user_version;";
-            userVersion = (long)versionCmd.ExecuteScalar()!;
-        }
+        var userVersion = ReadUserVersion(conn);
 
-        // 迁移到版本 1：版本 0（含全新车库/未跟踪版本的旧库）在此建立基础表结构，
-        // 保持既有表结构不变，仅把 user_version 置为 1；未来 schema 演进在此追加
-        // 更高版本的迁移分支。写入 user_version 用参数化防止拼接外部输入。
+        // 迁移到版本 1：版本 0（含全新库/未跟踪版本的旧库）在此建立基础表结构，
+        // 保持既有表结构不变，仅把 user_version 置为 1。
         if (userVersion < 1)
+            MigrateToV1(conn);
+
+        // 迁移到版本 2：transfer_records 增加 content 列（文本记录正文）。
+        if (userVersion < 2)
+            MigrateToV2(conn);
+    }
+
+    private static long ReadUserVersion(SqliteConnection conn)
+    {
+        // 从 PRAGMA user_version 读取当前库版本；整数类型，不涉及外部拼接，直接读取即可。
+        using var versionCmd = conn.CreateCommand();
+        versionCmd.CommandText = "PRAGMA user_version;";
+        return (long)versionCmd.ExecuteScalar()!;
+    }
+
+    private static void MigrateToV1(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS transfer_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                type TEXT NOT NULL,
+                peer_name TEXT,
+                peer_addr TEXT,
+                name TEXT,
+                size INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'ok',
+                checksum TEXT,
+                channel TEXT DEFAULT 'ble',
+                local_path TEXT,
+                note TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_records_created ON transfer_records(created_at);
+            CREATE INDEX IF NOT EXISTS idx_records_peer ON transfer_records(peer_addr);
+            CREATE INDEX IF NOT EXISTS idx_records_direction ON transfer_records(direction);
+            CREATE INDEX IF NOT EXISTS idx_records_status ON transfer_records(status);
+            CREATE INDEX IF NOT EXISTS idx_records_type ON transfer_records(type);
+
+            CREATE TABLE IF NOT EXISTS devices (
+                addr TEXT PRIMARY KEY,
+                name TEXT,
+                alias TEXT,
+                favorite INTEGER DEFAULT 0,
+                last_seen TEXT,
+                last_connected TEXT
+            );
+            """;
+        cmd.ExecuteNonQuery();
+
+        // 写入 user_version：SQLite 的 PRAGMA 赋值不支持绑定参数（会报语法错误），
+        // 这里使用编译期整数常量（无外部输入，安全）。
+        using var setVersion = conn.CreateCommand();
+        setVersion.CommandText = "PRAGMA user_version = 1;";
+        setVersion.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 迁移到版本 2：新增 content TEXT 列。放在事务里，并先检查列是否已存在：
+    /// 即便上次迁移在「ALTER 成功、user_version 落盘前」被强杀（SQLite DDL 可回滚，但防御性处理），
+    /// 重复执行也不会因 duplicate column 失败——保证迁移幂等。
+    /// </summary>
+    private static void MigrateToV2(SqliteConnection conn)
+    {
+        using var transaction = conn.BeginTransaction();
+
+        if (!ColumnExists(conn, transaction, "transfer_records", "content"))
         {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE IF NOT EXISTS transfer_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    direction TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    peer_name TEXT,
-                    peer_addr TEXT,
-                    name TEXT,
-                    size INTEGER DEFAULT 0,
-                    status TEXT DEFAULT 'ok',
-                    checksum TEXT,
-                    channel TEXT DEFAULT 'ble',
-                    local_path TEXT,
-                    note TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_records_created ON transfer_records(created_at);
-                CREATE INDEX IF NOT EXISTS idx_records_peer ON transfer_records(peer_addr);
-                CREATE INDEX IF NOT EXISTS idx_records_direction ON transfer_records(direction);
-                CREATE INDEX IF NOT EXISTS idx_records_status ON transfer_records(status);
-                CREATE INDEX IF NOT EXISTS idx_records_type ON transfer_records(type);
-
-                CREATE TABLE IF NOT EXISTS devices (
-                    addr TEXT PRIMARY KEY,
-                    name TEXT,
-                    alias TEXT,
-                    favorite INTEGER DEFAULT 0,
-                    last_seen TEXT,
-                    last_connected TEXT
-                );
-                """;
-            cmd.ExecuteNonQuery();
-
-            // 写入 user_version：SQLite 的 PRAGMA 赋值不支持绑定参数（会报语法错误），
-            // 这里使用编译期整数常量（无外部输入，安全）。
-            using var setVersion = conn.CreateCommand();
-            setVersion.CommandText = "PRAGMA user_version = 1;";
-            setVersion.ExecuteNonQuery();
+            using var alter = conn.CreateCommand();
+            alter.Transaction = transaction;
+            alter.CommandText = "ALTER TABLE transfer_records ADD COLUMN content TEXT";
+            alter.ExecuteNonQuery();
         }
+
+        using var setVersion = conn.CreateCommand();
+        setVersion.Transaction = transaction;
+        // SchemaVersion 为编译期常量（2），无外部输入。
+        setVersion.CommandText = $"PRAGMA user_version = {SchemaVersion};";
+        setVersion.ExecuteNonQuery();
+
+        transaction.Commit();
+    }
+
+    /// <summary>检查指定表是否已有某列（PRAGMA table_info 的第 2 列是列名）。</summary>
+    private static bool ColumnExists(SqliteConnection conn, SqliteTransaction transaction, string table, string column)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = transaction;
+        // 表名为内部常量（transfer_records），列名为内部常量（content），无外部输入拼接。
+        cmd.CommandText = $"PRAGMA table_info({table});";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     public void AddRecord(TransferRecord record)
@@ -105,8 +161,8 @@ public class StorageService : IStorageService
         conn.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO transfer_records (created_at, direction, type, peer_name, peer_addr, name, size, status, checksum, channel, local_path, note)
-            VALUES (@created_at, @direction, @type, @peer_name, @peer_addr, @name, @size, @status, @checksum, @channel, @local_path, @note)
+            INSERT INTO transfer_records (created_at, direction, type, peer_name, peer_addr, name, size, status, checksum, channel, local_path, note, content)
+            VALUES (@created_at, @direction, @type, @peer_name, @peer_addr, @name, @size, @status, @checksum, @channel, @local_path, @note, @content)
             """;
         // created_at 一律落 UTC 时间（"o" 格式以 Z 结尾），保证 created_at 是字典序
         // 即时间序，字符串比较/排序逻辑才不会因时区偏移混入而失效。
@@ -125,6 +181,7 @@ public class StorageService : IStorageService
         cmd.Parameters.AddWithValue("@channel", record.Channel);
         cmd.Parameters.AddWithValue("@local_path", record.LocalPath);
         cmd.Parameters.AddWithValue("@note", record.Note);
+        cmd.Parameters.AddWithValue("@content", record.Content ?? "");
         cmd.ExecuteNonQuery();
     }
 
@@ -157,7 +214,12 @@ public class StorageService : IStorageService
         if (search != null) { where.Add("(name LIKE @search OR peer_name LIKE @search)"); cmd.Parameters.AddWithValue("@search", $"%{search}%"); }
 
         var whereClause = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
-        cmd.CommandText = $"SELECT * FROM transfer_records {whereClause} ORDER BY {orderBy} LIMIT @limit";
+        // 显式列举列名而不是 SELECT *：content 是 v2 迁移追加的最后一列（序号 13），
+        // 显式列表可让读取索引与列顺序解耦，也不受未来加列影响。
+        cmd.CommandText = $"""
+            SELECT id, created_at, direction, type, peer_name, peer_addr, name, size, status, checksum, channel, local_path, note, content
+            FROM transfer_records {whereClause} ORDER BY {orderBy} LIMIT @limit
+            """;
         cmd.Parameters.AddWithValue("@limit", limit);
 
         var records = new List<TransferRecord>();
@@ -178,7 +240,9 @@ public class StorageService : IStorageService
                 Checksum = reader.IsDBNull(9) ? "" : reader.GetString(9),
                 Channel = reader.IsDBNull(10) ? "ble" : reader.GetString(10),
                 LocalPath = reader.IsDBNull(11) ? "" : reader.GetString(11),
-                Note = reader.IsDBNull(12) ? "" : reader.GetString(12)
+                Note = reader.IsDBNull(12) ? "" : reader.GetString(12),
+                // 旧库迁移后该列为 NULL；文本记录正文缺省为空字符串（复制时回退 LocalPath）。
+                Content = reader.IsDBNull(13) ? "" : reader.GetString(13)
             });
         }
         return records;

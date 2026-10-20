@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using BluetoothTransfer.Models;
 using BluetoothTransfer.Services;
 using Xunit;
@@ -36,6 +37,10 @@ public class OppPushServiceTests : IDisposable
     {
         private readonly OppDeviceInfo _device;
         private readonly MemoryObexTransport _transport;
+        private int _resolveCalls;
+
+        /// <summary>设备解析（含缓存未命中后的真实解析）调用次数，用于验证 DeviceInfoCache 命中。</summary>
+        public int ResolveCalls => Volatile.Read(ref _resolveCalls);
 
         public FakeOppPushService(EventBus events, StorageService storage, AppConfig config, OppDeviceInfo? device = null)
             : base(events, storage, config)
@@ -52,6 +57,7 @@ public class OppPushServiceTests : IDisposable
 
         protected override Task<OppDeviceInfo> ResolveDeviceAsync(string deviceAddr, CancellationToken ct)
         {
+            Interlocked.Increment(ref _resolveCalls);
             if (!OppDiscoveryService.AddrEquals(deviceAddr, _device.Addr))
                 throw new ObexException($"未找到支持 OPP 的蓝牙设备：{deviceAddr}（请先扫描并确认设备已配对）");
             return Task.FromResult(_device);
@@ -80,6 +86,9 @@ public class OppPushServiceTests : IDisposable
         Assert.Equal("hello.txt", record.Name);
         Assert.Equal("Test Phone", record.PeerName);
         Assert.Equal(64, record.Checksum.Length);
+        // 单文件记录保持 Type=file + 原文件路径，且不写正文。
+        Assert.Equal(Path.GetFullPath(filePath), Path.GetFullPath(record.LocalPath));
+        Assert.False(record.HasContent);
     }
 
     [Fact]
@@ -128,6 +137,11 @@ public class OppPushServiceTests : IDisposable
         Assert.Equal("bt-note.txt", record.Name);
         Assert.Equal(TransferConst.ChannelOpp, record.Channel);
         Assert.Equal(TransferConst.StatusOk, record.Status);
+        // 文本记录：Type=text + 正文入库（临时 .txt 已清理，复制只能依赖 content）。
+        Assert.Equal(TransferConst.TypeText, record.Type);
+        Assert.Equal("你好，蓝牙", record.Content);
+        Assert.True(record.HasContent);
+        Assert.Contains("已发送", record.Note);
     }
 
     [Fact]
@@ -151,6 +165,10 @@ public class OppPushServiceTests : IDisposable
         Assert.Equal(TransferConst.ChannelOpp, record.Channel);
         Assert.Equal(TransferConst.StatusOk, record.Status);
         Assert.True(record.Size > 0);
+        // 文件夹记录：Type=folder + 原始文件夹路径（临时 zip 发送后即删除，仍可用文件夹复制）。
+        Assert.Equal(TransferConst.TypeFolder, record.Type);
+        Assert.Equal(Path.GetFullPath(folder), Path.GetFullPath(record.LocalPath));
+        Assert.False(record.HasContent);
     }
 
     // ---------------------------------------------------------------
@@ -168,10 +186,17 @@ public class OppPushServiceTests : IDisposable
         private readonly int _failOpenAttempts;
         private readonly string _errorMessage;
         private int _openCalls;
+        private int _resolveCalls;
 
         public int OpenCalls
         {
             get { lock (_lock) return _openCalls; }
+        }
+
+        /// <summary>设备解析调用次数（含缓存未命中后的真实解析），用于验证失败后失效重试。</summary>
+        public int ResolveCalls
+        {
+            get { lock (_lock) return _resolveCalls; }
         }
 
         public FailThenSuccessPushService(EventBus events, StorageService storage, AppConfig config,
@@ -191,6 +216,7 @@ public class OppPushServiceTests : IDisposable
 
         protected override Task<OppDeviceInfo> ResolveDeviceAsync(string deviceAddr, CancellationToken ct)
         {
+            lock (_lock) _resolveCalls++;
             if (!OppDiscoveryService.AddrEquals(deviceAddr, _device.Addr))
                 throw new ObexException($"未找到支持 OPP 的蓝牙设备：{deviceAddr}（请先扫描并确认设备已配对）");
             return Task.FromResult(_device);
@@ -313,8 +339,139 @@ public class OppPushServiceTests : IDisposable
     }
 
     /// <summary>
+    /// 在每次读取响应前延迟固定时长的内存传输（自动应答 CONNECT/PUT/DISCONNECT）。
+    /// 用于验证「整次发送总耗时 &gt; 空闲超时、但每片都有进展」时应成功：
+    /// 把 OppSendTimeoutSeconds 配小后，旧实现（整段一次性 CancelAfter）必然失败，新实现应通过。
+    /// </summary>
+    private sealed class DelayedMemoryTransport : IObexTransport
+    {
+        private readonly MemoryObexTransport _inner = new() { AutoReply = true };
+        private readonly TimeSpan _readDelay;
+
+        public DelayedMemoryTransport(TimeSpan readDelay) => _readDelay = readDelay;
+
+        public Task WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+            => _inner.WriteAsync(buffer, ct);
+
+        public async Task<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            // 每个分片的“写请求 → 等响应”间隔 ≈ _readDelay，远小于空闲超时。
+            await Task.Delay(_readDelay, ct);
+            return await _inner.ReadAsync(buffer, ct);
+        }
+
+        public ValueTask DisposeAsync() => _inner.DisposeAsync();
+    }
+
+    /// <summary>
+    /// 先正常应答 CONNECT/头包与若干数据分片，随后不再返回任何数据（模拟对端卡死）。
+    /// 用于验证空闲超时：有进展时持续成功，卡死后在 OppSendTimeoutSeconds 内取消并写失败记录。
+    /// </summary>
+    private sealed class StallAfterProgressTransport : IObexTransport
+    {
+        private readonly Queue<byte[]> _responses = new();
+        private readonly int _continueChunks;
+        private byte[]? _current;
+        private int _currentPos;
+        private int _putCount;
+
+        /// <param name="continueChunks">允许成功应答的数据分片数（之后卡死）。</param>
+        public StallAfterProgressTransport(int continueChunks) => _continueChunks = continueChunks;
+
+        public Task WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default)
+        {
+            var opcode = buffer.Span[0];
+            if (opcode == (byte)ObexRequestOpcode.Connect)
+            {
+                _responses.Enqueue(new ObexPacket
+                {
+                    Opcode = ObexResponseCode.Ok,
+                    IncludeConnectFields = true,
+                    Version = 0x10,
+                    Flags = 0x00,
+                    MaxPacketLength = ushort.MaxValue
+                }.ToBytes());
+            }
+            else if (opcode == (byte)ObexRequestOpcode.Put)
+            {
+                _putCount++;
+                // 第 1 个 PUT 是头包；其后是数据分片。只对前 N 个分片回 Continue，之后不再回包。
+                if (_putCount == 1 || _putCount - 1 <= _continueChunks)
+                    _responses.Enqueue(new ObexPacket { Opcode = ObexResponseCode.Continue }.ToBytes());
+            }
+            else if (opcode == (byte)ObexRequestOpcode.PutFinal)
+            {
+                _responses.Enqueue(new ObexPacket { Opcode = ObexResponseCode.Ok }.ToBytes());
+            }
+            else if (opcode == (byte)ObexRequestOpcode.Disconnect)
+            {
+                _responses.Enqueue(new ObexPacket { Opcode = ObexResponseCode.Ok }.ToBytes());
+            }
+            return Task.CompletedTask;
+        }
+
+        public async Task<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var current = _current;
+            if (current == null || _currentPos >= current.Length)
+            {
+                if (_responses.Count == 0)
+                {
+                    // 卡死：不再返回数据，等待发送端空闲超时取消令牌。
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0;
+                }
+                current = _responses.Dequeue();
+                _current = current;
+                _currentPos = 0;
+            }
+            // 用局部变量承接当前响应包：await 之后字段的 null 状态不再被编译器信任。
+            var n = Math.Min(buffer.Length, current.Length - _currentPos);
+            current.AsSpan(_currentPos, n).CopyTo(buffer.Span);
+            _currentPos += n;
+            return n;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    /// <summary>配对状态可变的假服务：用于验证“未配对失败也会失效设备缓存、下次重新解析”。</summary>
+    private sealed class MutableDevicePushService : OppPushService
+    {
+        private readonly object _lock = new();
+        private readonly MemoryObexTransport _transport = new() { AutoReply = true };
+        private int _resolveCalls;
+
+        public bool Paired { get; set; }
+        public int ResolveCalls
+        {
+            get { lock (_lock) return _resolveCalls; }
+        }
+
+        public MutableDevicePushService(EventBus events, StorageService storage, AppConfig config)
+            : base(events, storage, config)
+        {
+        }
+
+        protected override Task<OppDeviceInfo> ResolveDeviceAsync(string deviceAddr, CancellationToken ct)
+        {
+            lock (_lock) _resolveCalls++;
+            return Task.FromResult(new OppDeviceInfo
+            {
+                Id = "fake-id",
+                Addr = TestAddr,
+                Name = "Test Phone",
+                IsPaired = Paired
+            });
+        }
+
+        protected override Task<IObexTransport> OpenTransportAsync(OppDeviceInfo device, CancellationToken ct)
+            => Task.FromResult<IObexTransport>(_transport);
+    }
+
+    /// <summary>
     /// 重试后成功的路径：首次打开传输失败（可重试错误），策略退避后重试成功。
-    /// 断言最终成功、尝试次数为 2，且记录为成功。
+    /// 断言最终成功、尝试次数为 2，且记录为成功；并验证失败后设备缓存失效、重试前重新解析。
     /// </summary>
     [Fact]
     public async Task SendFileAsync_Retry_ThenSucceeds()
@@ -331,6 +488,7 @@ public class OppPushServiceTests : IDisposable
 
         Assert.True(ok);
         Assert.Equal(2, push.OpenCalls); // 第 1 次失败 + 1 次重试成功
+        Assert.Equal(2, push.ResolveCalls); // 连接失败失效缓存后，重试前重新解析了一次设备
         var record = Assert.Single(_storage.GetRecords(peerAddr: TestAddr));
         Assert.Equal(TransferConst.ChannelOpp, record.Channel);
         Assert.Equal(TransferConst.StatusOk, record.Status);
@@ -474,5 +632,156 @@ public class OppPushServiceTests : IDisposable
         Assert.Equal(TransferConst.StatusOk, record.Status);
         Assert.Equal("data.bin.zip", record.Name);
         Assert.True(record.Size > 0);
+        // --zip 仍归为单文件记录：Type=file + 原文件路径（临时 zip 不是复制目标）。
+        Assert.Equal(TransferConst.TypeFile, record.Type);
+        Assert.Equal(Path.GetFullPath(filePath), Path.GetFullPath(record.LocalPath));
+    }
+
+    // ---------------------------------------------------------------
+    // 文本记录正文上限 / 设备解析缓存 / 发送空闲超时专项测试
+    // ---------------------------------------------------------------
+
+    /// <summary>
+    /// 文本正文超过 MaxRecordContentLength：记录仍成功写入，但 content 留空、Note 说明未保存正文，
+    /// 复制时由 TransferCopyPlanner 给出中文提示（避免 1MB+ 正文撑大 SQLite 记录）。
+    /// </summary>
+    [Fact]
+    public async Task SendTextAsync_ContentOverLimit_StoresEmptyContentWithNote()
+    {
+        var text = new string('x', TransferConst.MaxRecordContentLength + 1);
+        var push = new FakeOppPushService(new EventBus(), _storage, _config);
+
+        var ok = await push.SendTextAsync(TestAddr, text);
+
+        Assert.True(ok);
+        var record = Assert.Single(_storage.GetRecords(peerAddr: TestAddr));
+        Assert.Equal(TransferConst.TypeText, record.Type);
+        Assert.Equal("", record.Content);
+        Assert.False(record.HasContent);
+        Assert.Contains("未保存正文", record.Note);
+        Assert.Contains("上限", record.Note);
+        Assert.Equal(TransferConst.MaxRecordContentLength + 1L, record.Size);
+    }
+
+    /// <summary>正文上限边界：恰好等于上限保留正文，超过 1 字节则留空并给出说明。</summary>
+    [Fact]
+    public void PrepareTextRecordContent_AtLimitKeeps_OverLimitOmits()
+    {
+        var atLimit = new string('x', TransferConst.MaxRecordContentLength);
+        var (kept, keptNote) = PushSendHelper.PrepareTextRecordContent(atLimit);
+        Assert.Equal(atLimit, kept);
+        Assert.Equal("", keptNote);
+
+        var overLimit = new string('x', TransferConst.MaxRecordContentLength + 1);
+        var (omitted, omittedNote) = PushSendHelper.PrepareTextRecordContent(overLimit);
+        Assert.Equal("", omitted);
+        Assert.Contains("未保存正文", omittedNote);
+    }
+
+    /// <summary>文本发送失败时，失败记录也应保持 Type=text（与成功记录的类型语义一致）。</summary>
+    [Fact]
+    public async Task SendTextAsync_DeviceNotFound_WritesTextTypeFailedRecord()
+    {
+        const string unknownAddr = "00:00:00:00:00:09";
+        var push = new FakeOppPushService(new EventBus(), _storage, _config);
+
+        var ok = await push.SendTextAsync(unknownAddr, "失败的文本");
+
+        Assert.False(ok);
+        var record = Assert.Single(_storage.GetRecords(peerAddr: unknownAddr));
+        Assert.Equal(TransferConst.TypeText, record.Type);
+        Assert.Equal(TransferConst.StatusFailed, record.Status);
+        Assert.Contains("未找到支持 OPP", record.Note);
+    }
+
+    /// <summary>
+    /// TTL 内第二次发送同一设备：设备解析应命中 DeviceInfoCache，只解析一次（避免每个文件都全量发现/SDP 枚举）。
+    /// </summary>
+    [Fact]
+    public async Task SendFileAsync_SecondSendWithinTtl_ReusesCachedDeviceResolution()
+    {
+        var first = Path.Combine(_tempDir, "first.bin");
+        var second = Path.Combine(_tempDir, "second.bin");
+        await File.WriteAllBytesAsync(first, new byte[] { 1, 2, 3 });
+        await File.WriteAllBytesAsync(second, new byte[] { 4, 5, 6 });
+        var push = new FakeOppPushService(new EventBus(), _storage, _config);
+
+        Assert.True(await push.SendFileAsync(TestAddr, first));
+        Assert.True(await push.SendFileAsync(TestAddr, second));
+
+        Assert.Equal(1, push.ResolveCalls);
+        Assert.Equal(2, _storage.GetRecords(peerAddr: TestAddr).Count);
+    }
+
+    /// <summary>
+    /// 未配对导致失败后应失效设备缓存：用户随后完成配对，下一次发送必须重新解析（而不是继续用“未配对”的旧结论）。
+    /// </summary>
+    [Fact]
+    public async Task SendFileAsync_UnpairedFailure_InvalidatesCacheAndReResolves()
+    {
+        var filePath = Path.Combine(_tempDir, "pair.bin");
+        await File.WriteAllBytesAsync(filePath, new byte[] { 1 });
+        var push = new MutableDevicePushService(new EventBus(), _storage, _config) { Paired = false };
+
+        Assert.False(await push.SendFileAsync(TestAddr, filePath));
+        Assert.Equal(1, push.ResolveCalls);
+        Assert.Equal(1, _storage.GetRecords(peerAddr: TestAddr).Count(r => r.Status == TransferConst.StatusFailed));
+
+        push.Paired = true;
+        Assert.True(await push.SendFileAsync(TestAddr, filePath));
+        Assert.Equal(2, push.ResolveCalls); // 缓存已失效 → 重新解析
+    }
+
+    /// <summary>
+    /// 发送空闲超时语义：整次发送总耗时超过 OppSendTimeoutSeconds，但每片间隔远小于它 → 必须成功。
+    /// （旧实现把 OppSendTimeoutSeconds 当作整段发送的总超时，此用例必然失败。）
+    /// </summary>
+    [Fact]
+    public async Task SendFileAsync_TotalDurationExceedsIdleTimeout_WithSteadyProgress_Succeeds()
+    {
+        var filePath = Path.Combine(_tempDir, "slow.bin");
+        await File.WriteAllBytesAsync(filePath, new byte[10 * 1024]); // 10 个 1KB 分片
+        _config.OppChunkSize = 1024;
+        _config.OppSendTimeoutSeconds = 3; // 空闲超时 3 秒；单分片间隔约 400ms（留足时序余量）
+        var push = new TransportPushService(new EventBus(), _storage, _config,
+            new DelayedMemoryTransport(TimeSpan.FromMilliseconds(400)));
+
+        var sw = Stopwatch.StartNew();
+        var ok = await push.SendFileAsync(TestAddr, filePath);
+        sw.Stop();
+
+        Assert.True(ok);
+        Assert.True(sw.Elapsed > TimeSpan.FromSeconds(3),
+            $"总发送耗时 {sw.Elapsed.TotalSeconds:0.00}s 应超过空闲超时 3s，才能证明旧“总超时”语义已被移除");
+        var record = Assert.Single(_storage.GetRecords(peerAddr: TestAddr));
+        Assert.Equal(TransferConst.StatusOk, record.Status);
+    }
+
+    /// <summary>
+    /// 发送空闲超时语义：先有若干分片进展，随后对端卡死不再响应 → 必须在空闲超时后取消并写失败记录
+    /// （长时间无进展仍要能及时失败，不能无限等待）。
+    /// </summary>
+    [Fact]
+    public async Task SendFileAsync_StalledAfterProgress_TimesOutByIdleTimeout()
+    {
+        var filePath = Path.Combine(_tempDir, "stall.bin");
+        await File.WriteAllBytesAsync(filePath, new byte[8 * 1024]); // 8 个 1KB 分片，只在第 4 片后卡死
+        _config.OppChunkSize = 1024;
+        _config.OppSendTimeoutSeconds = 1; // 内部钳制最小 1 秒
+        _config.OppRetryCount = 0;
+        var push = new TransportPushService(new EventBus(), _storage, _config,
+            new StallAfterProgressTransport(continueChunks: 3));
+
+        var sw = Stopwatch.StartNew();
+        var ok = await push.SendFileAsync(TestAddr, filePath);
+        sw.Stop();
+
+        Assert.False(ok);
+        Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(900),
+            $"卡死后应在约 1s 空闲超时处失败，实际 {sw.Elapsed.TotalSeconds:0.00}s");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(20), $"不应长时间挂起，实际 {sw.Elapsed.TotalSeconds:0.00}s");
+        var record = Assert.Single(_storage.GetRecords(peerAddr: TestAddr));
+        Assert.Equal(TransferConst.StatusFailed, record.Status);
+        Assert.Contains("超时", record.Note);
     }
 }

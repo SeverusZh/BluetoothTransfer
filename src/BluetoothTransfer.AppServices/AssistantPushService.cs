@@ -27,6 +27,7 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
     private readonly OppDiscoveryService _discovery;
     private readonly TransferJournal _journal;
     private readonly PendingPackageStore _packages;
+    private readonly DeviceInfoCache _deviceCache;
     private int _maintenanceDone;
 
     public AssistantPushService(
@@ -35,13 +36,16 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         AppConfig config,
         OppDiscoveryService? discovery = null,
         TransferJournal? journal = null,
-        PendingPackageStore? packages = null)
+        PendingPackageStore? packages = null,
+        DeviceInfoCache? deviceCache = null)
     {
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _discovery = discovery ?? new OppDiscoveryService(events);
         _packages = packages ?? new PendingPackageStore();
+        // 默认给每个服务实例独立缓存（TTL 60s）：同一发送队列连续推多个文件时只解析一次设备。
+        _deviceCache = deviceCache ?? new DeviceInfoCache();
         // 默认 journal 以本服务的产物目录作为清理器，删除条目时同步删除打包产物。
         _journal = journal ?? new TransferJournal(
             new FileTransferJournalStore(FileTransferJournalStore.DefaultPath), packages: _packages);
@@ -69,17 +73,22 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
                 _events.Publish(new LogEvent("ERROR", $"文件打包失败：{ex.Message}"));
                 return false;
             }
+            // 记录保持 Type=file + 原文件路径（待续传 zip 只是协议载荷，原文件才是复制目标）。
             return await SendPreparedAsync(deviceAddr, payload, name + ".zip", filePath,
-                TransferJournalKind.FileZip, producedPackage: true, sourcePath: filePath, cancelledByPause, ct);
+                TransferConst.TypeFile, "", "", TransferJournalKind.FileZip, producedPackage: true,
+                sourcePath: filePath, cancelledByPause, ct);
         }
         return await SendPreparedAsync(deviceAddr, filePath, name, filePath,
-            TransferJournalKind.File, producedPackage: false, sourcePath: filePath, cancelledByPause, ct);
+            TransferConst.TypeFile, "", "", TransferJournalKind.File, producedPackage: false,
+            sourcePath: filePath, cancelledByPause, ct);
     }
 
     public async Task<bool> SendTextAsync(string deviceAddr, string text, string? name = null, CancellationToken ct = default,
         Func<bool>? cancelledByPause = null)
     {
         var fileName = string.IsNullOrWhiteSpace(name) ? _config.PushTextFileName : name;
+        // 文本记录：Type=text + 正文入 content 列（发送后临时 .txt 会被清理，靠正文才能复制）。
+        var (content, contentNote) = PushSendHelper.PrepareTextRecordContent(text);
         string payload;
         try
         {
@@ -91,7 +100,8 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
             return false;
         }
         return await SendPreparedAsync(deviceAddr, payload, fileName, payload,
-            TransferJournalKind.Text, producedPackage: true, sourcePath: "", cancelledByPause, ct);
+            TransferConst.TypeText, content, contentNote, TransferJournalKind.Text, producedPackage: true,
+            sourcePath: "", cancelledByPause, ct);
     }
 
     public async Task<bool> SendFolderAsync(string deviceAddr, string folderPath, CancellationToken ct = default,
@@ -114,8 +124,10 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
             _events.Publish(new LogEvent("ERROR", $"文件夹打包失败：{ex.Message}"));
             return false;
         }
+        // 记录 Type=folder + 原始文件夹路径（待续传 zip 发送成功后删除，原始文件夹才是复制目标）。
         return await SendPreparedAsync(deviceAddr, payload, folderName + ".zip", folderPath,
-            TransferJournalKind.Folder, producedPackage: true, sourcePath: folderPath, cancelledByPause, ct);
+            TransferConst.TypeFolder, "", "", TransferJournalKind.Folder, producedPackage: true,
+            sourcePath: folderPath, cancelledByPause, ct);
     }
 
     /// <summary>
@@ -127,7 +139,12 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         ArgumentNullException.ThrowIfNull(entry);
         var (device, error) = await ResolveDeviceAsync(entry.PeerAddr, ct);
         if (device == null) return JournalSendOutcome.Failure(error);
-        if (!device.IsPaired) return JournalSendOutcome.Failure("设备未配对");
+        if (!device.IsPaired)
+        {
+            // 配对状态可能已变化：失效缓存，下次恢复/发送重新解析，避免复用旧的“未配对”结论。
+            _deviceCache.Invalidate(entry.PeerAddr);
+            return JournalSendOutcome.Failure("设备未配对");
+        }
         return await RunTransferAsync(device, entry, ct);
     }
 
@@ -137,6 +154,9 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         string payloadPath,
         string displayName,
         string localPathForRecord,
+        string recordType,
+        string recordContent,
+        string recordNote,
         string kind,
         bool producedPackage,
         string sourcePath,
@@ -145,19 +165,39 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
     {
         EnsureMaintenance();
 
-        var (device, resolveError) = await ResolveDeviceAsync(deviceAddr, ct);
+        // 与 OPP 通道一致：先启动 SHA-256（读盘/CPU），再解析设备（OPP 发现/SDP 枚举），两者并行后统一 await，
+        // 大文件与多文件连续发送时能减少“首字节”前的串行等待；取消经 WaitAsync 立即传播
+        //（FileChecksum 无取消重载，被放弃的哈希会在后台自然读完，异常由 CleanupAfterTask 观察）。
+        var checksumTask = FileChecksum.ComputeSha256Async(payloadPath);
+
+        OppDeviceInfo? device;
+        string resolveError;
+        try
+        {
+            (device, resolveError) = await ResolveDeviceAsync(deviceAddr, ct);
+        }
+        catch
+        {
+            // 保持异常向上传播（取消/调用方统一处理）；哈希可能仍在读打包产物，等其结束后再清理。
+            PushSendHelper.CleanupAfterTask(checksumTask, () => DeleteProduced(payloadPath, producedPackage));
+            throw;
+        }
+
         if (device == null)
         {
-            DeleteProduced(payloadPath, producedPackage);
-            WriteFailedRecord("", deviceAddr, displayName, 0, resolveError);
+            // 哈希可能仍在读打包产物：等它结束后再删除，避免 Windows 文件占用导致产物滞留。
+            PushSendHelper.CleanupAfterTask(checksumTask, () => DeleteProduced(payloadPath, producedPackage));
+            WriteFailedRecord("", deviceAddr, displayName, 0, resolveError, recordType);
             return false;
         }
         if (!device.IsPaired)
         {
+            // 配对状态可能刚变化（用户刚配对/解除配对）：不缓存该结论，下次发送重新解析。
+            _deviceCache.Invalidate(deviceAddr);
+            PushSendHelper.CleanupAfterTask(checksumTask, () => DeleteProduced(payloadPath, producedPackage));
             var message = $"设备未配对：{device.Name}（{device.AddrDisplay}），请先在应用内或系统设置中完成配对";
             _events.Publish(new LogEvent("ERROR", message));
-            DeleteProduced(payloadPath, producedPackage);
-            WriteFailedRecord(device.Name, device.Addr, displayName, 0, "设备未配对");
+            WriteFailedRecord(device.Name, device.Addr, displayName, 0, "设备未配对", recordType);
             return false;
         }
 
@@ -166,13 +206,20 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         try
         {
             totalLength = new FileInfo(payloadPath).Length;
-            checksum = await FileChecksum.ComputeSha256Async(payloadPath);
+            checksum = await checksumTask.WaitAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            PushSendHelper.CleanupAfterTask(checksumTask, () => DeleteProduced(payloadPath, producedPackage));
+            _events.Publish(new LogEvent("WARN", $"助手推送已取消：{displayName}"));
+            WriteFailedRecord(device.Name, device.Addr, displayName, 0, "用户取消", recordType);
+            return false;
         }
         catch (Exception ex)
         {
+            PushSendHelper.CleanupAfterTask(checksumTask, () => DeleteProduced(payloadPath, producedPackage));
             _events.Publish(new LogEvent("ERROR", $"计算校验和失败：{ex.Message}"));
-            DeleteProduced(payloadPath, producedPackage);
-            WriteFailedRecord(device.Name, device.Addr, displayName, 0, ex.Message);
+            WriteFailedRecord(device.Name, device.Addr, displayName, 0, ex.Message, recordType);
             return false;
         }
 
@@ -224,7 +271,8 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
             var resumeNote = outcome.ResumeOffset > 0 ? $"（从偏移 {outcome.ResumeOffset} 续传）" : "";
             _events.Publish(new LogEvent("INFO",
                 $"助手推送成功：{displayName} -> {device.Name}（{device.AddrDisplay}，{outcome.BytesSent} 字节{resumeNote}）"));
-            WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, outcome.BytesSent, resumeNote);
+            WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, outcome.BytesSent,
+                resumeNote, recordType, recordContent, recordNote);
             return true;
         }
 
@@ -241,7 +289,7 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
                 // 用户取消（或取消全部）：清理 journal 与打包产物。
                 SafeJournal(() => _journal.Remove(active.Id));
                 DeleteProduced(active.PayloadPath, active.IsProducedPackage);
-                WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消");
+                WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消", recordType);
                 _events.Publish(new LogEvent("WARN", $"助手推送已取消：{displayName}"));
             }
             return false;
@@ -250,7 +298,7 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         // 可恢复失败（对端不可达/超时/被中断）：保留条目与打包产物，下次启动或重试从偏移续传。
         SafeJournal(() => _journal.Release(active.Id, outcome.Error));
         _events.Publish(new LogEvent("ERROR", $"助手推送失败：{displayName}（{outcome.Error}）"));
-        WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, outcome.Error);
+        WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, outcome.Error, recordType);
         return false;
     }
 
@@ -276,7 +324,9 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
                 var transport = await SocketAsstTransport.ConnectAsync(service, level, ct);
                 await using var client = new AssistantClient(transport);
                 using var fs = new FileStream(entry.PayloadPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                var hello = new AsstHello(entry.Sha256, entry.DisplayName, entry.Size, _config.OppChunkSize, entry.Sha256);
+                // 助手通道分片使用配置 AssistantChunkSize（默认 256 KB，clamp 到单帧上限内）；
+                // 旧接收端只校验帧上限，因此大分片向后兼容，主要收益是减少 DATA/ACK 往返次数。
+                var hello = new AsstHello(entry.Sha256, entry.DisplayName, entry.Size, _config.AssistantChunkSize, entry.Sha256);
                 var result = await client.SendAsync(hello, (offset, buffer, token) =>
                 {
                     fs.Seek(offset, SeekOrigin.Begin);
@@ -298,7 +348,7 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
                             _events.Publish(new LogEvent("WARN",
                                 $"接收端忙（{entry.DisplayName}）：{delay.TotalSeconds:0} 秒后第 {attempt + 1}/{retryPolicy.MaxAttempts} 次重试"));
                             attempt++;
-                            if (!await TryDelayAsync(delay, ct)) return JournalSendOutcome.CancelledOutcome();
+                            if (!await PushSendHelper.TryDelayAsync(delay, ct)) return JournalSendOutcome.CancelledOutcome();
                             continue;
                         }
                         return JournalSendOutcome.Failure($"接收端忙（已重试 {attempt - 1} 次）");
@@ -331,13 +381,30 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
                 service?.Dispose();
             }
 
+            // 连接/传输失败可能意味着缓存的 WinRT 设备 Id/服务条目已失效（重启蓝牙、重新配对会更换 Id）：
+            // 先失效缓存；允许重试时在退避后重新解析一次，解析失败则沿用上次结果。
+            _deviceCache.Invalidate(device.Addr);
+
             if (retryPolicy.ShouldRetry(attempt, lastError))
             {
                 var delay = retryPolicy.NextDelay(attempt);
                 _events.Publish(new LogEvent("WARN",
                     $"助手推送失败（{entry.DisplayName}）：{lastError}；{delay.TotalSeconds:0} 秒后第 {attempt + 1}/{retryPolicy.MaxAttempts} 次重试（将从偏移续传）"));
                 attempt++;
-                if (!await TryDelayAsync(delay, ct)) return JournalSendOutcome.CancelledOutcome();
+                if (!await PushSendHelper.TryDelayAsync(delay, ct)) return JournalSendOutcome.CancelledOutcome();
+                try
+                {
+                    var (fresh, _) = await ResolveDeviceAsync(entry.PeerAddr, ct);
+                    if (fresh != null) device = fresh;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return JournalSendOutcome.CancelledOutcome();
+                }
+                catch (Exception ex)
+                {
+                    _events.Publish(new LogEvent("WARN", $"重试前重新解析设备失败，沿用上次解析结果：{ex.Message}"));
+                }
                 continue;
             }
 
@@ -346,34 +413,64 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         }
     }
 
+    /// <summary>
+    /// 解析设备：先查 <see cref="DeviceInfoCache"/>（TTL 60s，避免每个文件都做 OPP 全量发现/SDP 枚举）；
+    /// 未命中时按「OPP 发现 → 已配对设备列表兜底」解析，成功才写缓存。
+    /// 解析失败不缓存否定结论，连接/传输失败时由上层显式失效后重试。
+    /// </summary>
     private async Task<(OppDeviceInfo? Device, string Error)> ResolveDeviceAsync(string deviceAddr, CancellationToken ct)
     {
+        if (_deviceCache.TryGet(deviceAddr, out var cached))
+        {
+            _events.Publish(new LogEvent("DEBUG", $"命中设备解析缓存：{cached.Name}（{cached.Addr}）"));
+            return (new OppDeviceInfo
+            {
+                Id = cached.Id,
+                Addr = cached.Addr,
+                Name = cached.Name,
+                IsPaired = cached.IsPaired
+            }, "");
+        }
+
         OppDeviceInfo? device = null;
         try
         {
             device = await _discovery.FindByAddressAsync(deviceAddr, ct);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _events.Publish(new LogEvent("WARN", $"OPP 设备发现失败（尝试按已配对设备解析）：{ex.Message}"));
         }
-        if (device != null) return (device, "");
+        if (device != null)
+        {
+            _deviceCache.Set(device.Addr, device.Id, device.Name, device.IsPaired);
+            return (device, "");
+        }
 
         // 接收端只运行助手（不广播 OPP）时，OPP 发现找不到设备，回退到已配对设备列表
         var paired = await AssistantDetector.FindPairedDeviceAsync(deviceAddr, ct);
         if (paired == null)
         {
+            // 解析失败：清掉可能残留的旧条目，下一次发送重新解析。
+            _deviceCache.Invalidate(deviceAddr);
             var message = $"未找到蓝牙设备：{deviceAddr}（请先扫描并确认设备已配对）";
             _events.Publish(new LogEvent("ERROR", message));
             return (null, message);
         }
-        return (new OppDeviceInfo
+
+        var resolved = new OppDeviceInfo
         {
             Id = paired.DeviceId,
             Addr = paired.Addr,
             Name = paired.Name,
             IsPaired = true
-        }, "");
+        };
+        _deviceCache.Set(resolved.Addr, resolved.Id, resolved.Name, resolved.IsPaired);
+        return (resolved, "");
     }
 
     /// <summary>每个进程只做一次 journal 维护：TTL/上限清理 + 孤儿打包产物清理（CLI 场景同样收敛）。</summary>
@@ -388,19 +485,6 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         catch
         {
             // 维护失败不影响发送
-        }
-    }
-
-    private static async Task<bool> TryDelayAsync(TimeSpan delay, CancellationToken ct)
-    {
-        try
-        {
-            await Task.Delay(delay, ct);
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            return false;
         }
     }
 
@@ -422,15 +506,19 @@ public sealed class AssistantPushService : IAssistantPushService, IJournalEntryS
         _packages.Delete(payloadPath);
     }
 
-    private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent, string resumeNote = "")
+    private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum,
+        string localPath, long bytesSent, string resumeNote = "",
+        string recordType = TransferConst.TypeFile, string recordContent = "", string recordNote = "")
     {
         PushSendHelper.WriteOkRecord(_storage, TransferConst.ChannelAssistant,
-            device.Name, device.Addr, displayName, size, checksum, localPath, bytesSent, resumeNote);
+            device.Name, device.Addr, displayName, size, checksum, localPath, bytesSent,
+            resumeNote: resumeNote, type: recordType, content: recordContent, extraNote: recordNote);
     }
 
-    private void WriteFailedRecord(string peerName, string peerAddr, string displayName, long size, string note)
+    private void WriteFailedRecord(string peerName, string peerAddr, string displayName, long size,
+        string note, string recordType = TransferConst.TypeFile)
     {
-        PushSendHelper.WriteFailedRecord(_storage, TransferConst.ChannelAssistant, peerName, peerAddr, displayName, size, note);
+        PushSendHelper.WriteFailedRecord(_storage, TransferConst.ChannelAssistant, peerName, peerAddr, displayName, size, note, recordType);
     }
 
     /// <summary>

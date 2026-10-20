@@ -11,7 +11,7 @@ public static partial class Commands
 
     public static int Records(Args a)
     {
-        if (RejectOnOptionError(a, "btcli records [--direction send|recv] [--type text|file] [--status ok|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]"))
+        if (RejectOnOptionError(a, "btcli records [--direction send|recv] [--type text|file|folder] [--status ok|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]"))
             return 2;
         using var session = NewSession(a, quiet: true);
         var sub = (a.Get(1) ?? "").ToLowerInvariant();
@@ -233,7 +233,7 @@ public static partial class Commands
             }
             if (!SetConfigValue(session.Config, key, value))
             {
-                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel/TransferMode）");
+                Error($"未知配置项：{key}（可选 OppChunkSize/OppConnectTimeout/OppSendTimeout/PushTextFileName/OppAuthPassword/OppNameUseBom/OppProtectionLevel/AssistantChunkSize/TransferMode）");
                 return 2;
             }
             session.Config.Save();
@@ -243,7 +243,8 @@ public static partial class Commands
 
         Info($"OPP 分块       OppChunkSize          = {session.Config.OppChunkSize}");
         Info($"OPP 连接超时    OppConnectTimeout     = {session.Config.OppConnectTimeoutSeconds} 秒");
-        Info($"OPP 发送超时    OppSendTimeout        = {session.Config.OppSendTimeoutSeconds} 秒");
+        Info($"OPP 发送空闲超时 OppSendTimeout       = {session.Config.OppSendTimeoutSeconds} 秒");
+        Info($"助手分块        AssistantChunkSize    = {session.Config.AssistantChunkSize}（范围 {AppConfig.MinAssistantChunkSize}..{AppConfig.MaxAssistantChunkSize}）");
         Info($"OPP 文本文件名  PushTextFileName       = {session.Config.PushTextFileName}");
         Info($"OPP 认证密码    OppAuthPassword       = {(string.IsNullOrEmpty(session.Config.OppAuthPassword) ? "（未设置）" : "***")}");
         Info($"OPP Name BOM    OppNameUseBom         = {session.Config.OppNameUseBom}");
@@ -267,6 +268,11 @@ public static partial class Commands
             case "oppsendtimeout":
                 if (!int.TryParse(value, out var sendTimeout) || sendTimeout <= 0) return false;
                 config.OppSendTimeoutSeconds = sendTimeout;
+                return true;
+            case "assistantchunksize" or "assistantchunk":
+                if (!int.TryParse(value, out var assistantChunk)) return false;
+                // 越界值由 AppConfig.AssistantChunkSize 自动钳制到 [4 KB, 单帧上限-帧头-12]。
+                config.AssistantChunkSize = assistantChunk;
                 return true;
             case "pushtextfilename":
                 if (string.IsNullOrWhiteSpace(value)) return false;

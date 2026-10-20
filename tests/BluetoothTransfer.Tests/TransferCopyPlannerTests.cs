@@ -185,6 +185,110 @@ public class TransferCopyPlannerTests : IDisposable
         Assert.Contains("过大", plan.Error);
     }
 
+    // ---------------------------------------------------------------- 通用复制：schema v2 正文（Content）
+
+    [Fact]
+    public void PlanCopy_TextRecordWithContent_UsesContentWithoutReadingFile()
+    {
+        // 发送文本记录：临时 .txt 已被清理，但仍可用入库正文复制（本次数据模型的核心目的）。
+        var record = new TransferRecord
+        {
+            Type = TransferConst.TypeText,
+            Name = "bt-note.txt",
+            LocalPath = Path.Combine(_dir, "已被清理的临时文件.txt"),
+            Content = "记录里的正文"
+        };
+
+        var plan = TransferCopyPlanner.PlanCopy(record);
+
+        Assert.True(plan.IsSuccess);
+        Assert.Equal(TransferCopyKind.Text, plan.Kind);
+        Assert.Equal("记录里的正文", plan.Payload);
+    }
+
+    [Fact]
+    public void PlanCopy_TextRecordWithContent_PrefersContentOverLocalFile()
+    {
+        var path = WriteText("local.txt", "文件里的旧内容", new UTF8Encoding(false));
+        var record = new TransferRecord
+        {
+            Type = TransferConst.TypeText,
+            Name = "local.txt",
+            LocalPath = path,
+            Content = "记录里的新内容"
+        };
+
+        var plan = TransferCopyPlanner.PlanCopy(record);
+
+        Assert.Equal(TransferCopyKind.Text, plan.Kind);
+        Assert.Equal("记录里的新内容", plan.Payload);
+    }
+
+    [Fact]
+    public void PlanCopy_TextRecordWithContent_OverLimitFailsWithoutCopying()
+    {
+        var record = new TransferRecord
+        {
+            Type = TransferConst.TypeText,
+            Name = "huge.txt",
+            Content = new string('正', 64)
+        };
+
+        var plan = TransferCopyPlanner.PlanCopy(record, maxTextBytes: 32);
+
+        Assert.False(plan.IsSuccess);
+        Assert.Contains("过大", plan.Error);
+    }
+
+    [Fact]
+    public void PlanCopy_TextRecordWithoutContent_FallsBackToLocalPathFile()
+    {
+        // 旧库/旧记录没有 content 列：保持既有行为，读取 LocalPath 指向的文本文件。
+        var path = WriteText("legacy.txt", "旧记录正文", new UTF8Encoding(false));
+        var record = new TransferRecord { Type = TransferConst.TypeText, Name = "legacy.txt", LocalPath = path };
+
+        var plan = TransferCopyPlanner.PlanCopy(record);
+
+        Assert.True(plan.IsSuccess);
+        Assert.Equal(TransferCopyKind.Text, plan.Kind);
+        Assert.Equal("旧记录正文", plan.Payload);
+    }
+
+    [Fact]
+    public void PlanCopy_TextRecordWithoutContentAndMissingFile_GivesContentHint()
+    {
+        // 正文超限未入库（或旧版记录）且临时文件已被清理：提示中要说明“未保存正文”，而不是只说文件不存在。
+        var record = new TransferRecord
+        {
+            Type = TransferConst.TypeText,
+            Name = "超长文本.txt",
+            LocalPath = Path.Combine(_dir, "not-exists.txt")
+        };
+
+        var plan = TransferCopyPlanner.PlanCopy(record);
+
+        Assert.False(plan.IsSuccess);
+        Assert.Contains("本地文件已不存在", plan.Error);
+        Assert.Contains("未保存正文", plan.Error);
+        Assert.Contains("上限", plan.Error);
+    }
+
+    [Fact]
+    public void PlanCopy_FolderRecordWithMissingDirectory_FailsWithChineseReason()
+    {
+        var record = new TransferRecord
+        {
+            Type = TransferConst.TypeFolder,
+            Name = "docs.zip",
+            LocalPath = Path.Combine(_dir, "已删除的文件夹")
+        };
+
+        var plan = TransferCopyPlanner.PlanCopy(record);
+
+        Assert.False(plan.IsSuccess);
+        Assert.Contains("不存在", plan.Error);
+    }
+
     // ---------------------------------------------------------------- 通用复制：文件 / 图片 / 文件夹
 
     [Fact]

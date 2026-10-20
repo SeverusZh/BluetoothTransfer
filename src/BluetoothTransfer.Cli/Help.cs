@@ -32,8 +32,10 @@ public static class Help
                                     一键发布接收助手（自包含 + 框架依赖，可选压缩包）
 
             记录 / 配置
-              records [--direction send|recv] [--type text|file] [--status ok|failed]
+              records [--direction send|recv] [--type text|file|folder] [--status ok|failed]
                       [--peer 地址] [--search 关键词] [--limit 数量] [--json] [--db 路径]
+                                    查看传输记录（--type 支持 text/file/folder；
+                                    JSON 输出与导出格式不含文本正文 content）
               records clear [--yes] [--db 路径]
               export <csv|json> <输出文件> [--db 路径]
               stats [--json] [--db 路径]
@@ -42,7 +44,8 @@ public static class Help
               devices alias <地址> <别名> [--db 路径]
               config                                   查看配置
               config set <key> <value>                 修改配置并保存
-                      （OppChunkSize / OppConnectTimeout / OppSendTimeout /
+                      （OppChunkSize / OppConnectTimeout / OppSendTimeout（发送空闲超时）/
+                        AssistantChunkSize（助手通道分片，默认 262144，越界自动钳制）/
                         PushTextFileName / OppAuthPassword / OppNameUseBom /
                         OppProtectionLevel / OppRetryCount / OppRetryDelaySeconds /
                         TransferMode（auto/assistant/opp））

@@ -18,13 +18,17 @@ public class OppPushService : IOppPushService
     private readonly StorageService _storage;
     private readonly AppConfig _config;
     private readonly OppDiscoveryService _discovery;
+    private readonly DeviceInfoCache _deviceCache;
 
-    public OppPushService(EventBus events, StorageService storage, AppConfig config, OppDiscoveryService? discovery = null)
+    public OppPushService(EventBus events, StorageService storage, AppConfig config,
+        OppDiscoveryService? discovery = null, DeviceInfoCache? deviceCache = null)
     {
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _storage = storage ?? throw new ArgumentNullException(nameof(storage));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _discovery = discovery ?? new OppDiscoveryService(events);
+        // 默认给每个服务实例独立缓存（TTL 60s）：同一发送队列连续推多个文件时只解析一次设备。
+        _deviceCache = deviceCache ?? new DeviceInfoCache();
     }
 
     public async Task<bool> SendFileAsync(string deviceAddr, string filePath, bool zip = false, CancellationToken ct = default)
@@ -43,24 +47,33 @@ public class OppPushService : IOppPushService
         if (zip)
         {
             // 打包 → 发送 → 清理临时 zip 的流程与助手通道共用，见 PushSendHelper。
+            // 记录保持 Type=file + 原文件路径（临时 zip 会被清理，原文件才是可复制目标）。
             return await PushSendHelper.SendFileZipAsync(_events, filePath, "bt_opp",
-                (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "application/zip", lp, token), ct);
+                (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "application/zip", lp, token,
+                    TransferConst.TypeFile), ct);
         }
-        return await SendSourceAsync(deviceAddr, filePath, info.Name, MimeForName(info.Name), filePath, ct);
+        return await SendSourceAsync(deviceAddr, filePath, info.Name, MimeForName(info.Name), filePath, ct,
+            TransferConst.TypeFile);
     }
 
     public async Task<bool> SendTextAsync(string deviceAddr, string text, string? name = null, CancellationToken ct = default)
     {
+        // 文本记录：Type=text + 正文入 content 列，复制时无需再依赖发送后即被清理的临时 .txt。
+        var (content, contentNote) = PushSendHelper.PrepareTextRecordContent(text);
         // 写临时 .txt → 发送 → 清理临时文件的流程与助手通道共用，见 PushSendHelper。
         return await PushSendHelper.SendTextAsync(_events, _config, text, name, "bt_opp",
-            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "text/plain", lp, token), ct);
+            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "text/plain", lp, token,
+                TransferConst.TypeText, content, contentNote), ct);
     }
 
     public async Task<bool> SendFolderAsync(string deviceAddr, string folderPath, CancellationToken ct = default)
     {
         // 打包 → 发送 → 清理临时 zip 的流程与助手通道共用，见 PushSendHelper。
+        // 记录 Type=folder + 原始文件夹路径（PushSendHelper 会把 folderPath 作为记录本地路径传入；
+        // 临时 zip 发送后即删除，原始文件夹才是复制目标）。
         return await PushSendHelper.SendFolderZipAsync(_events, folderPath, "bt_opp",
-            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "application/zip", lp, token), ct);
+            (src, dn, lp, token) => SendSourceAsync(deviceAddr, src, dn, "application/zip", lp, token,
+                TransferConst.TypeFolder), ct);
     }
 
     /// <summary>按地址解析设备（测试可通过子类覆写注入假设备）。</summary>
@@ -69,6 +82,29 @@ public class OppPushService : IOppPushService
         var device = await _discovery.FindByAddressAsync(deviceAddr, ct);
         if (device == null)
             throw new ObexException($"未找到支持 OPP 的蓝牙设备：{deviceAddr}（请先扫描并确认设备已配对）");
+        return device;
+    }
+
+    /// <summary>
+    /// 带缓存的设备解析：TTL 内直接复用上次解析结果，避免每个文件都做一次全量 OPP 发现/SDP 枚举。
+    /// 解析失败不缓存；连接/发送失败由调用方 <see cref="DeviceInfoCache.Invalidate"/> 后重试时重新解析。
+    /// </summary>
+    private async Task<OppDeviceInfo> ResolveDeviceWithCacheAsync(string deviceAddr, CancellationToken ct)
+    {
+        if (_deviceCache.TryGet(deviceAddr, out var cached))
+        {
+            _events.Publish(new LogEvent("DEBUG", $"命中设备解析缓存：{cached.Name}（{cached.Addr}）"));
+            return new OppDeviceInfo
+            {
+                Id = cached.Id,
+                Addr = cached.Addr,
+                Name = cached.Name,
+                IsPaired = cached.IsPaired
+            };
+        }
+
+        var device = await ResolveDeviceAsync(deviceAddr, ct);
+        _deviceCache.Set(device.Addr, device.Id, device.Name, device.IsPaired);
         return device;
     }
 
@@ -190,57 +226,82 @@ public class OppPushService : IOppPushService
 
     private async Task<bool> SendSourceAsync(
         string deviceAddr, string sourcePath, string displayName, string mimeType,
-        string localPathForRecord, CancellationToken ct)
+        string localPathForRecord, CancellationToken ct = default,
+        string recordType = TransferConst.TypeFile, string recordContent = "", string recordNote = "")
     {
+        // 并行启动 SHA-256（读盘/CPU）与设备解析（OPP 发现/SDP 枚举）：两者互不依赖，
+        // 大文件与多文件连续发送时能明显减少“首字节”前的串行等待。取消经 WaitAsync 立即传播；
+        // FileChecksum 无取消重载，被放弃的哈希会在后台自然读完（异常由 ObserveFault 观察）。
+        var hashTask = FileChecksum.ComputeSha256Async(sourcePath);
+
         OppDeviceInfo device;
         try
         {
-            device = await ResolveDeviceAsync(deviceAddr, ct);
+            device = await ResolveDeviceWithCacheAsync(deviceAddr, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            PushSendHelper.ObserveFault(hashTask);
+            _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
+            WriteFailedRecord("", deviceAddr, displayName, 0, "用户取消", recordType);
+            return false;
         }
         catch (Exception ex)
         {
+            PushSendHelper.ObserveFault(hashTask);
             _events.Publish(new LogEvent("ERROR", ex.Message));
-            WriteFailedRecord("", deviceAddr, displayName, 0, ex.Message);
+            WriteFailedRecord("", deviceAddr, displayName, 0, ex.Message, recordType);
             return false;
         }
 
         if (!device.IsPaired)
         {
+            // 配对状态可能刚变化（用户刚配对/解除配对）：不缓存该结论，下次发送重新解析。
+            _deviceCache.Invalidate(deviceAddr);
+            PushSendHelper.ObserveFault(hashTask);
             var message = $"设备未配对：{device.Name}（{device.AddrDisplay}），请先在应用内或系统设置中完成配对";
             _events.Publish(new LogEvent("ERROR", message));
-            WriteFailedRecord(device.Name, device.Addr, displayName, 0, "设备未配对");
+            WriteFailedRecord(device.Name, device.Addr, displayName, 0, "设备未配对", recordType);
             return false;
         }
 
-        var taskId = (uint)Random.Shared.Next();
         long totalLength;
         string checksum;
         try
         {
             totalLength = new FileInfo(sourcePath).Length;
-            checksum = await FileChecksum.ComputeSha256Async(sourcePath);
+            checksum = await hashTask.WaitAsync(ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            PushSendHelper.ObserveFault(hashTask);
+            _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
+            WriteFailedRecord(device.Name, device.Addr, displayName, 0, "用户取消", recordType);
+            return false;
         }
         catch (Exception ex)
         {
             _events.Publish(new LogEvent("ERROR", $"计算校验和失败：{ex.Message}"));
-            WriteFailedRecord(device.Name, device.Addr, displayName, 0, ex.Message);
+            WriteFailedRecord(device.Name, device.Addr, displayName, 0, ex.Message, recordType);
             return false;
         }
 
         var retryPolicy = new OppRetryPolicy(_config.OppRetryCount, _config.OppRetryDelaySeconds);
+        var taskId = (uint)Random.Shared.Next();
         var attempt = 1;
         string? lastError = null;
         while (true)
         {
             try
             {
-                await PushOnceAsync(device, sourcePath, displayName, mimeType, totalLength, checksum, localPathForRecord, taskId, ct);
+                await PushOnceAsync(device, sourcePath, displayName, mimeType, totalLength, checksum,
+                    localPathForRecord, taskId, ct, recordType, recordContent, recordNote);
                 return true;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
-                WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消");
+                WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消", recordType);
                 return false;
             }
             catch (OperationCanceledException)
@@ -252,28 +313,43 @@ public class OppPushService : IOppPushService
                 lastError = FormatError(ex);
             }
 
+            // 连接/发送失败可能意味着缓存的 WinRT 设备 Id/服务条目已失效（重启蓝牙、重新配对会更换 Id）：
+            // 先失效缓存，若允许重试则在退避后重新解析一次；重新解析失败时沿用上次结果，
+            // 避免把“可重试的传输错误”直接变成“解析失败”。
+            _deviceCache.Invalidate(deviceAddr);
+
             if (retryPolicy.ShouldRetry(attempt, lastError))
             {
                 var delay = retryPolicy.NextDelay(attempt);
                 _events.Publish(new LogEvent("WARN",
                     $"OPP 推送失败（{displayName}）：{lastError}；{delay.TotalSeconds:0} 秒后第 {attempt + 1}/{retryPolicy.MaxAttempts} 次重试"));
                 attempt++;
-                try
-                {
-                    await Task.Delay(delay, ct);
-                }
-                catch (OperationCanceledException)
+                if (!await PushSendHelper.TryDelayAsync(delay, ct))
                 {
                     _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
-                    WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消");
+                    WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消", recordType);
                     return false;
+                }
+                try
+                {
+                    device = await ResolveDeviceWithCacheAsync(deviceAddr, ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    _events.Publish(new LogEvent("WARN", $"OPP 推送已取消：{displayName}"));
+                    WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, "用户取消", recordType);
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    _events.Publish(new LogEvent("WARN", $"重试前重新解析设备失败，沿用上次解析结果：{ex.Message}"));
                 }
                 continue;
             }
 
             var note = attempt > 1 ? $"{lastError}（已重试 {attempt - 1} 次）" : lastError;
             _events.Publish(new LogEvent("ERROR", $"OPP 推送失败：{displayName}（{note}）"));
-            WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, note ?? "未知错误");
+            WriteFailedRecord(device.Name, device.Addr, displayName, totalLength, note ?? "未知错误", recordType);
             return false;
         }
     }
@@ -281,20 +357,33 @@ public class OppPushService : IOppPushService
     /// <summary>单次推送尝试：连接 → CONNECT → 流式 PUT → DISCONNECT，成功后写成功记录。</summary>
     private async Task PushOnceAsync(
         OppDeviceInfo device, string sourcePath, string displayName, string mimeType,
-        long totalLength, string checksum, string localPathForRecord, uint taskId, CancellationToken ct)
+        long totalLength, string checksum, string localPathForRecord, uint taskId, CancellationToken ct,
+        string recordType = TransferConst.TypeFile, string recordContent = "", string recordNote = "")
     {
+        // 连接阶段：仍使用一次性连接超时（OppConnectTimeoutSeconds），与发送阶段相互独立。
         using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         connectCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _config.OppConnectTimeoutSeconds)));
         await using var transport = await OpenTransportAsync(device, connectCts.Token);
         await using var client = new ObexClient(transport, new ObexOptions { NameUseBom = _config.OppNameUseBom }, _events, _config.OppAuthPassword);
         await client.ConnectAsync(connectCts.Token);
+        // 连接阶段完成：停掉连接计时器，后续发送阶段只受下面的“空闲超时”约束，避免长传输期间
+        // 连接超时定时器无谓触发（当前已无调用点使用该令牌，此处显式停表表明阶段边界）。
+        connectCts.CancelAfter(Timeout.InfiniteTimeSpan);
 
+        // 发送阶段：OppSendTimeoutSeconds 的语义是「空闲超时」，不是「整次发送总超时」。
+        // 不再对整段 PushAsync 一次性 CancelAfter；改为先启动计时，然后 PushAsync 在读取/发送
+        // 每一个分片前都会回调下面的 readChunk，在回调里重置计时（CancelAfter）。
+        // 效果：只要对端持续响应、传输持续有进展，>100 MB 的大文件不会在 300 秒处被整体判死；
+        // 而连接静默/卡住（长时间读不到响应、无任何分片进展）仍会在空闲超时后失败。
+        var idleTimeout = TimeSpan.FromSeconds(Math.Max(1, _config.OppSendTimeoutSeconds));
         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        sendCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _config.OppSendTimeoutSeconds)));
+        sendCts.CancelAfter(idleTimeout);
         using var fs = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         var result = await client.PushAsync(displayName, mimeType, totalLength,
             async (offset, buffer, count, token) =>
             {
+                // 每分片读取前重置空闲计时（首包/头包阶段由上面的初始 CancelAfter 覆盖）。
+                sendCts.CancelAfter(idleTimeout);
                 fs.Seek(offset, SeekOrigin.Begin);
                 var n = await fs.ReadAsync(buffer.AsMemory(0, count), token);
                 _events.Publish(new TransferProgressEvent(taskId.ToString(), offset + n, totalLength, 0));
@@ -323,18 +412,23 @@ public class OppPushService : IOppPushService
         });
         _events.Publish(new LogEvent("INFO",
             $"OPP 推送成功：{displayName} -> {device.Name}（{device.AddrDisplay}，{result.BytesSent} 字节）"));
-        WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, result.BytesSent);
+        WriteOkRecord(device, displayName, totalLength, checksum, localPathForRecord, result.BytesSent,
+            recordType, recordContent, recordNote);
     }
 
-    private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum, string localPath, long bytesSent)
+    private void WriteOkRecord(OppDeviceInfo device, string displayName, long size, string checksum,
+        string localPath, long bytesSent, string recordType = TransferConst.TypeFile,
+        string recordContent = "", string recordNote = "")
     {
         PushSendHelper.WriteOkRecord(_storage, TransferConst.ChannelOpp,
-            device.Name, device.Addr, displayName, size, checksum, localPath, bytesSent);
+            device.Name, device.Addr, displayName, size, checksum, localPath, bytesSent,
+            type: recordType, content: recordContent, extraNote: recordNote);
     }
 
-    private void WriteFailedRecord(string peerName, string peerAddr, string displayName, long size, string note)
+    private void WriteFailedRecord(string peerName, string peerAddr, string displayName, long size,
+        string note, string recordType = TransferConst.TypeFile)
     {
-        PushSendHelper.WriteFailedRecord(_storage, TransferConst.ChannelOpp, peerName, peerAddr, displayName, size, note);
+        PushSendHelper.WriteFailedRecord(_storage, TransferConst.ChannelOpp, peerName, peerAddr, displayName, size, note, recordType);
     }
 
     private static string MimeForName(string fileName)
@@ -382,15 +476,19 @@ internal static class PushSendHelper
     /// <summary>
     /// 成功记录写入模板：通道（Channel 字段值）作为参数传入，OOP/助手各自映射到自己的常量。
     /// resumeNote 仅助手通道用于标记续传偏移，缺省为空以保持 OPP 记录格式不变。
+    /// type/content 为第二阶段新增（默认 Type=file + 无正文，保持单文件/--zip 记录格式不变）：
+    /// 文本记录传 Type=text + 正文；文件夹记录传 Type=folder；正文超限时由调用方传空 content + extraNote 说明。
     /// </summary>
     internal static void WriteOkRecord(
         StorageService storage, string channel, string peerName, string peerAddr,
-        string displayName, long size, string checksum, string localPath, long bytesSent, string resumeNote = "")
+        string displayName, long size, string checksum, string localPath, long bytesSent,
+        string resumeNote = "", string type = TransferConst.TypeFile, string content = "",
+        string extraNote = "")
     {
         storage.AddRecord(new TransferRecord
         {
             Direction = TransferConst.DirSend,
-            Type = TransferConst.TypeFile,
+            Type = string.IsNullOrEmpty(type) ? TransferConst.TypeFile : type,
             PeerName = peerName,
             PeerAddr = peerAddr,
             Name = displayName,
@@ -399,19 +497,20 @@ internal static class PushSendHelper
             Checksum = checksum,
             Channel = channel,
             LocalPath = localPath,
-            Note = $"已发送 {bytesSent} 字节{resumeNote}"
+            Content = content ?? "",
+            Note = $"已发送 {bytesSent} 字节{resumeNote}{extraNote}"
         });
     }
 
-    /// <summary>失败记录写入模板：通道作为参数传入。</summary>
+    /// <summary>失败记录写入模板：通道作为参数传入；type 用于让文本/文件夹的失败记录保持正确类型显示。</summary>
     internal static void WriteFailedRecord(
         StorageService storage, string channel, string peerName, string peerAddr,
-        string displayName, long size, string note)
+        string displayName, long size, string note, string type = TransferConst.TypeFile)
     {
         storage.AddRecord(new TransferRecord
         {
             Direction = TransferConst.DirSend,
-            Type = TransferConst.TypeFile,
+            Type = string.IsNullOrEmpty(type) ? TransferConst.TypeFile : type,
             PeerName = peerName,
             PeerAddr = peerAddr,
             Name = displayName,
@@ -420,6 +519,56 @@ internal static class PushSendHelper
             Channel = channel,
             Note = note
         });
+    }
+
+    /// <summary>
+    /// 准备文本记录的正文与附注：正文按 UTF-8 字节数校验
+    /// <see cref="TransferConst.MaxRecordContentLength"/> 上限，超限时正文留空并返回中文附注
+    /// （写入记录 Note，复制该记录时由规划器给出中文提示），避免超大文本撑大 SQLite 记录。
+    /// </summary>
+    internal static (string Content, string Note) PrepareTextRecordContent(string? text)
+    {
+        var value = text ?? "";
+        var byteCount = Encoding.UTF8.GetByteCount(value);
+        if (byteCount <= TransferConst.MaxRecordContentLength) return (value, "");
+        return ("", $"（正文 {byteCount} 字节，超过 {TransferConst.MaxRecordContentLength} 字节的记录内容上限，未保存正文）");
+    }
+
+    /// <summary>观察（并吞掉）一个可能被提前放弃的 Task 的异常，避免未观察异常：仅用于并行哈希等旁路任务。</summary>
+    internal static void ObserveFault(Task task)
+    {
+        _ = task.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// 等旁路任务（如并行 SHA-256）结束后再执行清理，并观察其异常。
+    /// 用于「哈希仍在读打包产物时提前返回失败」的路径：立即删除会因 Windows 文件共享限制失败，
+    /// 产物要滞留到孤儿清理（7 天）才被回收。
+    /// </summary>
+    internal static void CleanupAfterTask(Task task, Action cleanup)
+    {
+        _ = task.ContinueWith(t =>
+        {
+            _ = t.Exception; // 观察异常，避免未观察任务异常
+            try { cleanup(); }
+            catch { /* 清理失败不改变发送结果，由孤儿清理兜底 */ }
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>可取消的退避等待：被取消返回 false（两条推送通道共用，保持取消语义一致）。</summary>
+    internal static async Task<bool> TryDelayAsync(TimeSpan delay, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(delay, ct);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -456,6 +605,8 @@ internal static class PushSendHelper
     /// <summary>
     /// 文件夹 zip 推送骨架：校验文件夹 → 打包为临时 .zip → sendAsync 发送 → 清理临时 zip。
     /// 打包错误文案与 OPP/助手两通道原先保持一致。
+    /// 注意 sendAsync 的第三个参数（记录本地路径）传<b>原始文件夹路径</b>而不是临时 zip：
+    /// 临时 zip 发送后即被清理，只有原始文件夹能在发送后继续用于「复制到剪贴板」。
     /// </summary>
     internal static async Task<bool> SendFolderZipAsync(
         EventBus events, string folderPath, string tempPrefix,
@@ -473,7 +624,7 @@ internal static class PushSendHelper
         try
         {
             await Task.Run(() => ZipFile.CreateFromDirectory(folderPath, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false), ct);
-            return await sendAsync(zipPath, folderName + ".zip", zipPath, ct);
+            return await sendAsync(zipPath, folderName + ".zip", folderPath, ct);
         }
         catch (Exception ex)
         {

@@ -59,7 +59,8 @@ public sealed class TransferCopyPlan
 /// <summary>
 /// 传输记录「复制」纯逻辑规划器：只做路径/扩展名/存在性判断与有大小上限的文本读取，不依赖 WPF，便于单元测试。
 /// 两类入口对应界面上两个图标：
-/// 1. <see cref="PlanCopy"/> 通用复制：文本记录→文本；图片文件→图片；其它文件/文件夹→文件剪贴板；
+/// 1. <see cref="PlanCopy"/> 通用复制：文本记录→正文（优先 <see cref="TransferRecord.Content"/>，
+///    旧记录回退读取 LocalPath 文件）；图片文件→图片；其它文件/文件夹→文件剪贴板；
 /// 2. <see cref="PlanContentCopy"/> 单文件专属「复制内容」：文本类扩展名→文本；图片扩展名→图片；
 ///    其余格式回退复制文件本身（<see cref="TransferCopyPlan.Note"/> 说明原因）；文件缺失/无路径时返回中文 Error。
 /// 真正的图片解码与剪贴板写入由 GUI 层 WpfClipboardWriter 完成，本类可在后台线程安全调用。
@@ -99,13 +100,31 @@ public static class TransferCopyPlanner
 
     /// <summary>
     /// 通用复制规划：把「传输对象」放进剪贴板。
-    /// 文本记录→文本（读取 LocalPath 指向的文本文件）；文件夹/普通文件→文件剪贴板；图片文件→图片。
+    /// 文本记录优先使用随记录保存的正文（<see cref="TransferRecord.Content"/>，schema v2 起写入）；
+    /// 无正文的旧记录回退读取 LocalPath 指向的文本文件；
+    /// 文件夹/普通文件→文件剪贴板；图片文件→图片。
     /// </summary>
     public static TransferCopyPlan PlanCopy(TransferRecord? record, long maxTextBytes = MaxTextBytes)
     {
         if (record == null) return TransferCopyPlan.Fail("复制失败：未指定传输记录");
-        if (!TryResolvePath(record, "无法复制", out var path, out var error)) return TransferCopyPlan.Fail(error);
 
+        // schema v2：发送文本记录直接携带正文，不再依赖发送后即被清理的临时 .txt。
+        if (record.Type == TransferConst.TypeText && record.HasContent)
+        {
+            var contentBytes = Encoding.UTF8.GetByteCount(record.Content);
+            if (contentBytes > maxTextBytes) return TooLargePlan("文本", contentBytes, maxTextBytes);
+            return TransferCopyPlan.Text(record.Content);
+        }
+
+        if (!TryResolvePath(record, "无法复制", out var path, out var error))
+        {
+            // 文本记录可能既无正文（旧版本记录/正文超过入库上限）又没有可读的本地文件：
+            // 给出可操作的中文说明，而不是笼统的“文件不存在”。
+            return record.Type == TransferConst.TypeText && !record.HasContent
+                ? TransferCopyPlan.Fail($"{error}；该文本记录未保存正文（旧版本记录，或正文超过 " +
+                    $"{FormatSize(TransferConst.MaxRecordContentLength)} 入库上限）")
+                : TransferCopyPlan.Fail(error);
+        }
         // 文件夹任务记录（或指向目录的路径）直接进文件剪贴板：资源管理器可粘贴出整个文件夹。
         if (Directory.Exists(path)) return TransferCopyPlan.File(path);
         // 文本记录按正文复制；其余文件记录保持「文件」语义（.txt 文件记录也仍是文件，只有 Type=text 才是文本）。

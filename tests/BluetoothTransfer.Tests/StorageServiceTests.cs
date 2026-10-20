@@ -169,50 +169,247 @@ public class StorageServiceTests : IDisposable
         return (long)cmd.ExecuteScalar()!;
     }
 
-    [Fact]
-    public void InitDb_NewDatabase_SetsUserVersionToOne()
+    /// <summary>v1 基础表结构（第二阶段迁移前），用于模拟旧库。</summary>
+    private const string V1Schema = """
+        CREATE TABLE transfer_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            type TEXT NOT NULL,
+            peer_name TEXT,
+            peer_addr TEXT,
+            name TEXT,
+            size INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'ok',
+            checksum TEXT,
+            channel TEXT DEFAULT 'ble',
+            local_path TEXT,
+            note TEXT
+        );
+        CREATE TABLE devices (
+            addr TEXT PRIMARY KEY,
+            name TEXT,
+            alias TEXT,
+            favorite INTEGER DEFAULT 0,
+            last_seen TEXT,
+            last_connected TEXT
+        );
+        """;
+
+    /// <summary>手工建一个 v1 旧库（可指定 user_version 与是否已提前加过 content 列）。</summary>
+    private void CreateV1Database(long? userVersion = null, bool withContentColumn = false)
     {
-        var storage = new StorageService(_dbPath);
-        Assert.Equal(1, ReadUserVersion(_dbPath));
-        Assert.Empty(storage.GetRecords()); // 表可用
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = _dbPath }.ToString());
+        conn.Open();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = withContentColumn
+                ? V1Schema + "\nALTER TABLE transfer_records ADD COLUMN content TEXT;"
+                : V1Schema;
+            cmd.ExecuteNonQuery();
+        }
+        if (userVersion.HasValue)
+        {
+            using var version = conn.CreateCommand();
+            // 测试内固定整数常量，无外部输入。
+            version.CommandText = $"PRAGMA user_version = {userVersion.Value};";
+            version.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>向当前库插入一条 v1 格式的旧记录（不带 content 列）。</summary>
+    private void InsertLegacyRecord(string name = "旧记录.txt", string type = TransferConst.TypeText)
+    {
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_dbPath}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO transfer_records (created_at, direction, type, peer_name, peer_addr, name, size, status, channel, local_path, note)
+            VALUES ('2024-01-01T00:00:00.0000000Z', 'send', @type, '旧设备', '00:11:22:33:44:55', @name, 12, 'ok', 'opp', '', '旧版记录')
+            """;
+        cmd.Parameters.AddWithValue("@type", type);
+        cmd.Parameters.AddWithValue("@name", name);
+        cmd.ExecuteNonQuery();
     }
 
     [Fact]
-    public void InitDb_OldDatabaseWithoutUserVersion_MigratesToVersionOne()
+    public void InitDb_NewDatabase_MigratesToLatestVersionAndCreatesTables()
     {
-        // 手工建一张没有 user_version 的旧库（复制迁移前的表结构），InitDb 应能把它升级到版本 1，
-        // 并在不破坏已有表的前提下补齐索引/设备表。
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection(
-                   new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = _dbPath }.ToString()))
-        {
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE transfer_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at TEXT NOT NULL,
-                    direction TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    peer_name TEXT,
-                    peer_addr TEXT,
-                    name TEXT,
-                    size INTEGER DEFAULT 0,
-                    status TEXT DEFAULT 'ok',
-                    checksum TEXT,
-                    channel TEXT DEFAULT 'ble',
-                    local_path TEXT,
-                    note TEXT
-                );
-                """;
-            cmd.ExecuteNonQuery();
-        }
-        Assert.Equal(0, ReadUserVersion(_dbPath));
+        var storage = new StorageService(_dbPath);
+        Assert.Equal(2L, ReadUserVersion(_dbPath));
+        Assert.Empty(storage.GetRecords()); // 表可用
+        Assert.Empty(storage.GetDevices());
+    }
+
+    [Fact]
+    public void InitDb_OldDatabaseWithoutUserVersion_MigratesSequentiallyToLatestVersion()
+    {
+        // 手工建一张没有 user_version 的旧库（复制迁移前的表结构），InitDb 应按 0→1→2 顺序升级，
+        // 并在不破坏已有表的前提下补齐索引/设备表/content 列。
+        CreateV1Database(userVersion: null);
+        Assert.Equal(0L, ReadUserVersion(_dbPath));
 
         var storage = new StorageService(_dbPath);
-        Assert.Equal(1, ReadUserVersion(_dbPath));
-        // 旧库表已存在，升级后仍可用；设备表由迁移补建。
+
+        Assert.Equal(2L, ReadUserVersion(_dbPath));
         Assert.Empty(storage.GetRecords());
         Assert.Empty(storage.GetDevices());
+    }
+
+    [Fact]
+    public void InitDb_VersionOneDatabase_MigratesToTwoAndPreservesLegacyRows()
+    {
+        // 第二阶段（v1）真实用户库：已有记录但没有 content 列。升级后旧记录仍可读，
+        // 新增字段为 NULL → Content = ""（复制时回退 LocalPath 文件）。
+        CreateV1Database(userVersion: 1);
+        InsertLegacyRecord();
+
+        var storage = new StorageService(_dbPath);
+
+        Assert.Equal(2L, ReadUserVersion(_dbPath));
+        var legacy = Assert.Single(storage.GetRecords());
+        Assert.Equal("旧记录.txt", legacy.Name);
+        Assert.Equal(TransferConst.TypeText, legacy.Type);
+        Assert.Equal("", legacy.Content);
+        Assert.False(legacy.HasContent);
+        Assert.Equal("旧版记录", legacy.Note);
+    }
+
+    [Fact]
+    public void InitDb_ReopenMigratedDatabase_IsIdempotentAndKeepsContent()
+    {
+        var first = new StorageService(_dbPath);
+        first.AddRecord(new TransferRecord
+        {
+            Direction = TransferConst.DirSend,
+            Type = TransferConst.TypeText,
+            Name = "note.txt",
+            Size = 6,
+            Status = TransferConst.StatusOk,
+            Channel = TransferConst.ChannelOpp,
+            Content = "第一段正文"
+        });
+
+        // 重复打开（模拟应用多次启动）不应重复执行 ALTER / 报错，旧数据与正文保持不变。
+        _ = new StorageService(_dbPath);
+        var third = new StorageService(_dbPath);
+
+        Assert.Equal(2L, ReadUserVersion(_dbPath));
+        var record = Assert.Single(third.GetRecords());
+        Assert.Equal("第一段正文", record.Content);
+        Assert.True(record.HasContent);
+    }
+
+    [Fact]
+    public void InitDb_VersionOneButContentColumnAlreadyPresent_CompletesWithoutDuplicateColumnError()
+    {
+        // 防御性覆盖：假设上次迁移已完成 ALTER 但 user_version 落盘前被强杀，
+        // 再次打开库时不得因 duplicate column 崩溃，且应把版本补齐到 2。
+        CreateV1Database(userVersion: 1, withContentColumn: true);
+        InsertLegacyRecord();
+
+        var storage = new StorageService(_dbPath);
+
+        Assert.Equal(2L, ReadUserVersion(_dbPath));
+        Assert.Single(storage.GetRecords());
+    }
+
+    [Fact]
+    public void AddRecord_ContentRoundTrips_AndIsEmptyForRecordsWithoutContent()
+    {
+        var storage = new StorageService(_dbPath);
+        storage.AddRecord(new TransferRecord
+        {
+            Direction = TransferConst.DirSend,
+            Type = TransferConst.TypeText,
+            Name = "你好.txt",
+            Size = 18,
+            Status = TransferConst.StatusOk,
+            Channel = TransferConst.ChannelAssistant,
+            Content = "你好，蓝牙 😀\n第二行"
+        });
+        storage.AddRecord(SampleRecord());
+
+        var records = storage.GetRecords();
+        Assert.Equal(2, records.Count);
+        var text = records.Single(r => r.Type == TransferConst.TypeText);
+        Assert.Equal("你好，蓝牙 😀\n第二行", text.Content);
+        Assert.True(text.HasContent);
+        var file = records.Single(r => r.Type == TransferConst.TypeFile);
+        Assert.Equal("", file.Content);
+        Assert.False(file.HasContent);
+    }
+
+    [Fact]
+    public void GetRecords_TypeFolderFilter_Works()
+    {
+        var storage = new StorageService(_dbPath);
+        storage.AddRecord(new TransferRecord
+        {
+            Direction = TransferConst.DirSend,
+            Type = TransferConst.TypeFolder,
+            Name = "docs.zip",
+            Size = 1024,
+            Status = TransferConst.StatusOk,
+            Channel = TransferConst.ChannelOpp,
+            LocalPath = Path.Combine(Path.GetTempPath(), "docs")
+        });
+        storage.AddRecord(SampleRecord());
+
+        var folders = storage.GetRecords(type: TransferConst.TypeFolder);
+
+        var folder = Assert.Single(folders);
+        Assert.Equal(TransferConst.TypeFolder, folder.Type);
+        Assert.Equal("文件夹", folder.TypeDisplay);
+        Assert.Single(storage.GetRecords(type: TransferConst.TypeFile));
+    }
+
+    [Fact]
+    public void Export_DoesNotContainContent_LegacyFormatUnchanged()
+    {
+        var storage = new StorageService(_dbPath);
+        storage.AddRecord(new TransferRecord
+        {
+            Direction = TransferConst.DirSend,
+            Type = TransferConst.TypeText,
+            Name = "secret.txt",
+            Size = 20,
+            Status = TransferConst.StatusOk,
+            Channel = TransferConst.ChannelOpp,
+            Content = "绝密正文ABC-不应出现在导出中"
+        });
+        var records = storage.GetRecords();
+
+        var jsonPath = Path.Combine(Path.GetTempPath(), $"bt_export_{Guid.NewGuid():N}.json");
+        var csvPath = Path.Combine(Path.GetTempPath(), $"bt_export_{Guid.NewGuid():N}.csv");
+        try
+        {
+            var json = File.ReadAllText(ExportService.ExportJson(records, jsonPath));
+            var csv = File.ReadAllText(ExportService.ExportCsv(records, csvPath));
+
+            // JsonIgnore：正文与 HasContent 都不进入 JSON 导出（保持 v1 格式与体积）。
+            Assert.DoesNotContain("绝密正文ABC", json);
+            Assert.DoesNotContain("\"Content\"", json);
+            Assert.DoesNotContain("\"HasContent\"", json);
+            // JSON 仍按原字段集导出。
+            Assert.Contains("\"Name\": \"secret.txt\"", json);
+            // CSV 显式列举列，本身就不含 content。
+            Assert.DoesNotContain("绝密正文ABC", csv);
+            Assert.StartsWith("Id,CreatedAt,Direction,Type,PeerName,PeerAddr,Name,Size,Status,Checksum,Channel,LocalPath,Note", csv);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(jsonPath)) File.Delete(jsonPath);
+                if (File.Exists(csvPath)) File.Delete(csvPath);
+            }
+            catch
+            {
+                // 清理失败不影响断言
+            }
+        }
     }
 
     [Fact]

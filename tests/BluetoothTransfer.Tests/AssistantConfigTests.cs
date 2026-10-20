@@ -1,4 +1,5 @@
 using BluetoothTransfer.Core.Discovery;
+using BluetoothTransfer.Core.Protocol;
 using BluetoothTransfer.Models;
 using Xunit;
 
@@ -17,6 +18,77 @@ public class AssistantConfigTests
     {
         Assert.Equal("助手", new TransferRecord { Channel = TransferConst.ChannelAssistant }.ChannelDisplay);
         Assert.Equal("OPP", new TransferRecord { Channel = TransferConst.ChannelOpp }.ChannelDisplay);
+    }
+
+    // ---------------------------------------------------------------- AssistantChunkSize（速度调优）
+
+    [Fact]
+    public void AssistantChunkSize_DefaultsTo256KB()
+    {
+        Assert.Equal(262144, AppConfig.DefaultAssistantChunkSize);
+        Assert.Equal(262144, new AppConfig().AssistantChunkSize);
+    }
+
+    [Fact]
+    public void AssistantChunkSize_MaxRespectsFrameLimit()
+    {
+        // 上限 = 单帧上限 - 帧头 - DATA 载荷内的偏移(8)/长度(4) 字段：整帧必须 ≤ MaxFrameSize。
+        var expected = AsstConst.MaxFrameSize - AsstFrame.HeaderSize - 12;
+        Assert.Equal(expected, AppConfig.MaxAssistantChunkSize);
+        Assert.Equal(4096, AppConfig.MinAssistantChunkSize);
+        Assert.True(AppConfig.MaxAssistantChunkSize < AsstConst.MaxFrameSize);
+    }
+
+    [Theory]
+    [InlineData(0, 4096)]
+    [InlineData(-1, 4096)]
+    [InlineData(1024, 4096)]
+    [InlineData(4096, 4096)]
+    [InlineData(262144, 262144)]
+    public void AssistantChunkSize_OutOfRange_IsClamped(int input, int expected)
+    {
+        var config = new AppConfig { AssistantChunkSize = input };
+        Assert.Equal(expected, config.AssistantChunkSize);
+    }
+
+    [Fact]
+    public void AssistantChunkSize_AboveMaximum_IsClampedToFrameLimit()
+    {
+        var config = new AppConfig { AssistantChunkSize = int.MaxValue };
+        Assert.Equal(AppConfig.MaxAssistantChunkSize, config.AssistantChunkSize);
+    }
+
+    [Fact]
+    public void AssistantChunkSize_Deserialization_ClampsToValidRange()
+    {
+        // 手改配置文件的越界值在反序列化（setter）阶段即被钳制，发送端不会把非法分片写入 HELLO。
+        var config = System.Text.Json.JsonSerializer.Deserialize<AppConfig>("{\"AssistantChunkSize\": 99999999}");
+        Assert.NotNull(config);
+        Assert.Equal(AppConfig.MaxAssistantChunkSize, config!.AssistantChunkSize);
+    }
+
+    // ---------------------------------------------------------------- 记录类型显示 / 正文语义
+
+    [Fact]
+    public void TypeDisplay_MapsFolder()
+    {
+        Assert.Equal("文件夹", new TransferRecord { Type = TransferConst.TypeFolder }.TypeDisplay);
+        Assert.Equal("文本", new TransferRecord { Type = TransferConst.TypeText }.TypeDisplay);
+        Assert.Equal("文件", new TransferRecord { Type = TransferConst.TypeFile }.TypeDisplay);
+    }
+
+    [Fact]
+    public void HasContent_ReflectsContentField()
+    {
+        Assert.False(new TransferRecord().HasContent);
+        Assert.False(new TransferRecord { Content = "" }.HasContent);
+        Assert.True(new TransferRecord { Content = "正文" }.HasContent);
+    }
+
+    [Fact]
+    public void MaxRecordContentLength_IsOneMegabyte()
+    {
+        Assert.Equal(1024 * 1024, TransferConst.MaxRecordContentLength);
     }
 }
 
