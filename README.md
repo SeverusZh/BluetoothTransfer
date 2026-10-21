@@ -4,7 +4,7 @@
 
 **轻量级 Windows 桌面应用：通用蓝牙推送 + Windows 双向互传**
 
-[![Version](https://img.shields.io/badge/version-1.4.1-0B6BCB)](https://github.com/SeverusZh/BluetoothTransfer/releases)
+[![Version](https://img.shields.io/badge/version-1.5.0-0B6BCB)](https://github.com/SeverusZh/BluetoothTransfer/releases)
 [![.NET](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%2F%20Windows%2011-0078D4?logo=windows)](https://www.microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -21,7 +21,7 @@
 - 通过标准蓝牙 **OBEX Object Push Profile（OPP）** 把文件、文本、文件夹推送给任意支持「蓝牙文件接收」的设备（Android 手机/平板、Windows 电脑、功能机等），**接收端无需安装任何软件**；
 - 两台 Windows 电脑之间可走**接收助手通道**（完整 GUI 内置接收面板，或独立极简接收端 `btrecv`）：断点续传、SHA-256 校验、可管理的传输队列；发送前自动探测——助手在线走私有通道，离线自动回退 OPP。
 
-> ℹ️ v1.2 起聚焦「通用推送 + 接收助手」双通道；v1.3 引入 Windows 对 Windows 断点续传通道；**v1.4 全面加固**：续传可靠性修复、队列并发修复、协议输入硬化、安全默认值（接收默认询问）、可测试性改造与 184 项自动化测试。**v1.4.1** 完成整套 GUI 视觉重设计：Fluent 极简主题、两栏主界面、统一控件资源体系与接收端极简一屏，功能与协议不变。
+> ℹ️ v1.2 起聚焦「通用推送 + 接收助手」双通道；v1.3 引入 Windows 对 Windows 断点续传通道；**v1.4 全面加固**：续传可靠性修复、队列并发修复、协议输入硬化、安全默认值（接收默认询问）、可测试性改造与 184 项自动化测试。**v1.4.1** 完成整套 GUI 视觉重设计：Fluent 极简主题、两栏主界面、统一控件资源体系与接收端极简一屏，功能与协议不变。**v1.5.0** 加入资源管理器右键菜单与单实例载荷转发（`--send`/`--send-text` + 待发送队列）、传输记录 schema v2（正文/文件夹路径可回看与一键复制）、OPP 发送空闲超时与蓝牙通道调优，并为全部自包含产物启用单文件压缩。
 
 ## 📖 目录
 
@@ -206,7 +206,7 @@ btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
 - 单文件上限 4GB（OBEX 协议约束），建议不超过 2GB
 - Android 同时只接受一个 OPP 传输：对端已有待确认传输时新推送会被拒绝（0xC3 Forbidden），应用会自动重试
 
-## 📦 发布产物 v1.4.1
+## 📦 发布产物 v1.5.0
 
 每个产物提供两种形态：**含运行时**（自包含单文件，目标机无需安装 .NET 8）与**不含运行时**（框架依赖，目标机需安装 .NET 8 桌面运行时，体积更小）。
 

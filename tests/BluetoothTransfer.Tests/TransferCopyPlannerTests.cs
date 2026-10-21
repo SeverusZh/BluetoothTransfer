@@ -74,7 +74,10 @@ public class TransferCopyPlannerTests : IDisposable
 
         Assert.True(plan.IsSuccess);
         Assert.Equal("带 BOM 的文本", plan.Payload);
-        Assert.DoesNotContain("\uFEFF", plan.Payload);
+        // 必须用序数比较（Ordinal）：xUnit 的双参数字符串 DoesNotContain 走 CurrentCulture，
+        // 而 zh-CN 等排序规则把 U+FEFF 视为可忽略字符（"带 BOM 的文本".IndexOf("\uFEFF",
+        // StringComparison.CurrentCulture) == 0），会让本断言在中文系统上假失败。
+        Assert.DoesNotContain("\uFEFF", plan.Payload, StringComparison.Ordinal);
     }
 
     [Fact]
