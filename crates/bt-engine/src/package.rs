@@ -214,16 +214,15 @@ enum ZipMode {
     Folder,
 }
 
-fn write_zip(target: &Path, sources: &[PathBuf], mode: ZipMode) -> Result<(), BtError> {
-    if let Some(parent) = target.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-    let mut writer = ZipWriter {
-        file: File::create(target)?,
-        entries: Vec::new(),
-    };
+const ZIP32_MAX: u64 = u32::MAX as u64;
+
+struct ZipItem {
+    source: PathBuf,
+    name: String,
+}
+
+fn collect_zip_items(sources: &[PathBuf], mode: &ZipMode) -> Result<Vec<ZipItem>, BtError> {
+    let mut items = Vec::new();
     match mode {
         ZipMode::File => {
             for source in sources {
@@ -231,17 +230,90 @@ fn write_zip(target: &Path, sources: &[PathBuf], mode: ZipMode) -> Result<(), Bt
                     .file_name()
                     .map(|value| value.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "file".to_string());
-                writer.add_file(source, &paths::sanitize_file_name(&name))?;
+                items.push(ZipItem {
+                    source: source.clone(),
+                    name: paths::sanitize_file_name(&name),
+                });
             }
         }
         ZipMode::Folder => {
             for source in sources {
-                writer.add_tree(source)?;
+                let mut files = Vec::new();
+                collect_files(source, source, &mut files)?;
+                files.sort();
+                for (path, relative) in files {
+                    items.push(ZipItem {
+                        source: path,
+                        name: relative.to_string_lossy().replace('\\', "/"),
+                    });
+                }
             }
         }
     }
-    writer.finish()?;
+    Ok(items)
+}
+
+/// ZIP32 字段上限检查：单文件与累计未压缩大小必须小于 4 GiB。
+fn check_zip32_limits(items: &[ZipItem]) -> Result<(), BtError> {
+    if items.len() > u16::MAX as usize {
+        return Err(BtError::unsupported(format!(
+            "zip 条目数 {} 超过 ZIP32 上限；请拆分文件夹",
+            items.len()
+        )));
+    }
+    let mut total = 0u64;
+    for item in items {
+        if item.name.len() > u16::MAX as usize {
+            return Err(BtError::invalid("zip 条目名过长"));
+        }
+        let metadata = std::fs::metadata(&item.source).map_err(|error| {
+            let message = format!("文件不可读：{}（{error}）", item.source.display());
+            match error.kind() {
+                std::io::ErrorKind::PermissionDenied => BtError::permission(message),
+                _ => BtError::not_found(message),
+            }
+        })?;
+        let size = metadata.len();
+        if size > ZIP32_MAX {
+            return Err(BtError::unsupported(format!(
+                "{} 大小 {size} 字节，超过单文件 zip 的 4 GiB 上限；请直接发送或先拆分文件",
+                item.source.display()
+            )));
+        }
+        total = total.saturating_add(size);
+        if total > ZIP32_MAX {
+            return Err(BtError::unsupported(format!(
+                "待打包内容累计 {total} 字节，超过 ZIP32 的 4 GiB 上限；请拆分文件夹或改用不打包发送"
+            )));
+        }
+    }
     Ok(())
+}
+
+fn write_zip(target: &Path, sources: &[PathBuf], mode: ZipMode) -> Result<(), BtError> {
+    let items = collect_zip_items(sources, &mode)?;
+    check_zip32_limits(&items)?;
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let result = write_zip_items(target, &items);
+    if result.is_err() {
+        let _ = std::fs::remove_file(target);
+    }
+    result
+}
+
+fn write_zip_items(target: &Path, items: &[ZipItem]) -> Result<(), BtError> {
+    let mut writer = ZipWriter {
+        file: File::create(target)?,
+        entries: Vec::new(),
+    };
+    for item in items {
+        writer.add_file(&item.source, &item.name)?;
+    }
+    writer.finish()
 }
 
 struct EntryRecord {
@@ -260,10 +332,20 @@ struct ZipWriter {
 impl ZipWriter {
     fn add_file(&mut self, source: &Path, name: &str) -> Result<(), BtError> {
         let header_offset = self.file.stream_position()?;
+        if header_offset > ZIP32_MAX {
+            return Err(BtError::unsupported("zip 数据偏移超出 ZIP32 上限，已停止打包"));
+        }
         let mut input = File::open(source)?;
+        let size = input.metadata()?.len();
+        if size > ZIP32_MAX {
+            return Err(BtError::unsupported(format!(
+                "{} 大小 {size} 字节，超过单文件 zip 的 4 GiB 上限；请直接发送或先拆分文件",
+                source.display()
+            )));
+        }
         let crc = streaming_crc32(&mut input)?;
         input.seek(SeekFrom::Start(0))?;
-        let uncompressed = input.metadata()?.len().min(u32::MAX as u64) as u32;
+        let uncompressed = size as u32;
         let name_bytes = name.as_bytes().to_vec();
         if name_bytes.len() > u16::MAX as usize {
             return Err(BtError::invalid("zip 条目名过长"));
@@ -292,7 +374,14 @@ impl ZipWriter {
         }
         encoder.finish()?;
         let data_end = self.file.stream_position()?;
-        let compressed = (data_end - header_offset - 30 - name_bytes.len() as u64).min(u32::MAX as u64) as u32;
+        if data_end > ZIP32_MAX {
+            return Err(BtError::unsupported("zip 数据总量超出 ZIP32 上限，已停止打包"));
+        }
+        let compressed_size = data_end - header_offset - 30 - name_bytes.len() as u64;
+        if compressed_size > ZIP32_MAX {
+            return Err(BtError::unsupported("压缩后条目大小超出 ZIP32 上限，已停止打包"));
+        }
+        let compressed = compressed_size as u32;
         self.file.seek(SeekFrom::Start(header_offset + 14))?;
         self.file.write_all(&crc.to_le_bytes())?;
         self.file.write_all(&compressed.to_le_bytes())?;
@@ -308,19 +397,14 @@ impl ZipWriter {
         Ok(())
     }
 
-    fn add_tree(&mut self, root: &Path) -> Result<(), BtError> {
-        let mut files = Vec::new();
-        collect_files(root, root, &mut files)?;
-        files.sort();
-        for (path, relative) in files {
-            let name = relative.to_string_lossy().replace('\\', "/");
-            self.add_file(&path, &name)?;
-        }
-        Ok(())
-    }
-
     fn finish(mut self) -> Result<(), BtError> {
-        let start = self.file.stream_position()? as u32;
+        let start = self.file.stream_position()?;
+        if start > ZIP32_MAX {
+            return Err(BtError::unsupported("zip 中央目录偏移超出 ZIP32 上限，已停止打包"));
+        }
+        if self.entries.len() > u16::MAX as usize {
+            return Err(BtError::unsupported("zip 条目数超出 ZIP32 上限，已停止打包"));
+        }
         for entry in &self.entries {
             self.file.write_all(&0x0201_4b50u32.to_le_bytes())?;
             self.file.write_all(&20u16.to_le_bytes())?;
@@ -341,15 +425,18 @@ impl ZipWriter {
             self.file.write_all(&entry.offset.to_le_bytes())?;
             self.file.write_all(&entry.name)?;
         }
-        let end = self.file.stream_position()? as u32;
+        let end = self.file.stream_position()?;
+        if end > ZIP32_MAX {
+            return Err(BtError::unsupported("zip 总大小超出 ZIP32 上限，已停止打包"));
+        }
         let count = self.entries.len() as u16;
         self.file.write_all(&0x0605_4b50u32.to_le_bytes())?;
         self.file.write_all(&0u16.to_le_bytes())?;
         self.file.write_all(&0u16.to_le_bytes())?;
         self.file.write_all(&count.to_le_bytes())?;
         self.file.write_all(&count.to_le_bytes())?;
-        self.file.write_all(&(end - start).to_le_bytes())?;
-        self.file.write_all(&start.to_le_bytes())?;
+        self.file.write_all(&((end - start) as u32).to_le_bytes())?;
+        self.file.write_all(&(start as u32).to_le_bytes())?;
         self.file.write_all(&0u16.to_le_bytes())?;
         self.file.sync_all()?;
         Ok(())
@@ -505,6 +592,89 @@ mod tests {
     fn missing_folder_is_reported() {
         let error = plan_folder_package(Path::new("/nonexistent/bt-pack-folder")).unwrap_err();
         assert_eq!(error.kind(), bt_core::BtErrorKind::NotFound);
+    }
+
+    fn sparse_file(path: &Path, size: u64) {
+        let file = File::create(path).unwrap();
+        file.set_len(size).unwrap();
+    }
+
+    #[test]
+    fn zip32_size_boundaries_accept_below_and_reject_at_limit() {
+        const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024;
+        let dir = TempDir::new("zip32-limits");
+        let below = dir.0.join("below.bin");
+        let at = dir.0.join("at.bin");
+        sparse_file(&below, FOUR_GIB - 1);
+        sparse_file(&at, FOUR_GIB);
+
+        let items = collect_zip_items(std::slice::from_ref(&below), &ZipMode::File).unwrap();
+        assert!(check_zip32_limits(&items).is_ok(), "4 GiB 减 1 字节应允许打包");
+
+        let items = collect_zip_items(std::slice::from_ref(&at), &ZipMode::File).unwrap();
+        let error = check_zip32_limits(&items).unwrap_err();
+        assert_eq!(error.kind(), bt_core::BtErrorKind::Unsupported);
+        assert!(error.message().contains("4 GiB"));
+    }
+
+    #[test]
+    fn file_at_4gib_is_rejected_without_artifact() {
+        const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024;
+        let dir = TempDir::new("zip32-file");
+        let source = dir.0.join("huge.bin");
+        sparse_file(&source, FOUR_GIB);
+        let target = dir.0.join("out.zip");
+        let error = package_file(&source, &target).unwrap_err();
+        assert_eq!(error.kind(), bt_core::BtErrorKind::Unsupported);
+        assert!(!target.exists(), "超限不得产出 zip 产物");
+    }
+
+    #[test]
+    fn folder_cumulative_size_at_4gib_is_rejected_without_artifact() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        let dir = TempDir::new("zip32-folder");
+        let folder = dir.0.join("big_folder");
+        std::fs::create_dir_all(&folder).unwrap();
+        sparse_file(&folder.join("a.bin"), 3 * GIB);
+        sparse_file(&folder.join("b.bin"), GIB);
+        let target = dir.0.join("folder.zip");
+        let error = package_folder(&folder, &target).unwrap_err();
+        assert_eq!(error.kind(), bt_core::BtErrorKind::Unsupported);
+        assert!(
+            error.message().contains("累计"),
+            "错误需说明累计大小：{}",
+            error.message()
+        );
+        assert!(!target.exists(), "超限不得产出 zip 产物");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_zip_source_maps_to_permission() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("zip-permission");
+        let source = dir.0.join("secret.bin");
+        std::fs::write(&source, b"secret").unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&source).is_ok() {
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+            return;
+        }
+        let target = dir.0.join("out.zip");
+        let error = package_file(&source, &target).unwrap_err();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(error.kind(), bt_core::BtErrorKind::Permission);
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn failed_zip_removes_partial_target() {
+        let dir = TempDir::new("zip-cleanup");
+        let source = dir.0.join("not-a-file");
+        std::fs::create_dir_all(&source).unwrap();
+        let target = dir.0.join("out.zip");
+        assert!(write_zip(&target, std::slice::from_ref(&source), ZipMode::File).is_err());
+        assert!(!target.exists(), "打包失败后不得残留半成品");
     }
 
     fn read_zip_entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
