@@ -756,6 +756,18 @@ mod tests {
     }
 
     #[test]
+    fn clear_records_counts_failed_rows() {
+        let store = Store::open_in_memory().unwrap();
+        store.insert_record(&sample_record()).unwrap();
+        let mut failed = sample_record();
+        failed.status = RecordStatus::Failed;
+        failed.error = Some("对端断开".into());
+        store.insert_record(&failed).unwrap();
+        assert_eq!(store.clear_records().unwrap(), 2);
+        assert_eq!(store.stats().unwrap().total, 0);
+    }
+
+    #[test]
     fn content_over_limit_is_not_stored() {
         let store = Store::open_in_memory().unwrap();
         let mut record = sample_record();
