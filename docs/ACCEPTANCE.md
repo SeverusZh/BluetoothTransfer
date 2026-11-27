@@ -131,7 +131,7 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | --- | --- | --- |
 | cli-only 发布体积 | 8 MB | 已验证：`bt` 3,607,088 字节、`btrecv` 3,350,000 字节（本机 release，无 GUI 特性） |
 | GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,173,528 字节 |
-| .deb | 20 MB | 已验证：重建实测约 5.60 MB（5,603,710–5,603,902 字节，方法与波动说明见 docs/RELEASE.md） |
+| .deb | 20 MB | 已验证：重建实测约 5.60 MB（5,603,710–5,603,912 字节，方法与波动说明见 docs/RELEASE.md） |
 | NSIS 安装器 | 15 MB | 未生成：本机无 makensis 与 Windows 链接器 |
 | 接收最终文件额外字节 | 0 | 已验证：bt-app e2e 断言落盘长度等于载荷 |
 | 半成品 sidecar | 64 字节 | 已验证：53 字节 |
