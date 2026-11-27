@@ -56,13 +56,7 @@ impl CliError {
     }
 
     pub fn exit_code(&self) -> u8 {
-        match self.kind {
-            BtErrorKind::InvalidArgument => EXIT_USAGE,
-            BtErrorKind::NotFound => EXIT_NOT_FOUND,
-            BtErrorKind::Permission => EXIT_PERMISSION,
-            BtErrorKind::Busy => EXIT_RUNNING,
-            _ => EXIT_FAILED,
-        }
+        exit_code_for(self.kind)
     }
 
     fn hint_text(&self) -> Option<&str> {
@@ -124,7 +118,29 @@ impl From<BtError> for CliError {
 
 impl From<std::io::Error> for CliError {
     fn from(error: std::io::Error) -> Self {
-        Self::new(BtErrorKind::Io, format!("读写失败：{error}"))
+        let kind = match error.kind() {
+            std::io::ErrorKind::PermissionDenied => BtErrorKind::Permission,
+            _ => BtErrorKind::Io,
+        };
+        Self::new(kind, format!("读写失败：{error}"))
+    }
+}
+
+/// 错误分类到退出码的唯一映射点。
+pub fn exit_code_for(kind: BtErrorKind) -> u8 {
+    match kind {
+        BtErrorKind::InvalidArgument => EXIT_USAGE,
+        BtErrorKind::NotFound => EXIT_NOT_FOUND,
+        BtErrorKind::Permission | BtErrorKind::Locked => EXIT_PERMISSION,
+        BtErrorKind::Busy => EXIT_RUNNING,
+        BtErrorKind::Unsupported
+        | BtErrorKind::NotImplemented
+        | BtErrorKind::Io
+        | BtErrorKind::Protocol
+        | BtErrorKind::Timeout
+        | BtErrorKind::Canceled
+        | BtErrorKind::Storage
+        | BtErrorKind::Internal => EXIT_FAILED,
     }
 }
 
@@ -135,6 +151,7 @@ fn default_hint(kind: BtErrorKind) -> Option<&'static str> {
             Some("先用 bt devices scan 或 bt devices list 确认设备；记录编号用 bt records list 查看")
         }
         BtErrorKind::Permission => Some("检查配置、数据、接收目录权限；不要用 sudo 运行图形界面"),
+        BtErrorKind::Locked => Some("另一进程正持有配置、journal 或单实例锁；稍后重试"),
         BtErrorKind::Busy => Some("已有实例或任务占用；等待任务结束或停止旧实例后重试"),
         BtErrorKind::Unsupported | BtErrorKind::NotImplemented => {
             Some("当前平台或后端不支持该能力；运行 bt selftest 查看后端状态")
@@ -156,9 +173,40 @@ mod tests {
         assert_eq!(CliError::usage("x").exit_code(), EXIT_USAGE);
         assert_eq!(CliError::new(BtErrorKind::NotFound, "x").exit_code(), EXIT_NOT_FOUND);
         assert_eq!(CliError::new(BtErrorKind::Permission, "x").exit_code(), EXIT_PERMISSION);
+        assert_eq!(CliError::new(BtErrorKind::Locked, "x").exit_code(), EXIT_PERMISSION);
         assert_eq!(CliError::new(BtErrorKind::Busy, "x").exit_code(), EXIT_RUNNING);
         assert_eq!(CliError::failed("x").exit_code(), EXIT_FAILED);
         assert_eq!(CliError::canceled("x").exit_code(), EXIT_FAILED);
         assert_eq!(CliError::unsupported("x").exit_code(), EXIT_FAILED);
+    }
+
+    #[test]
+    fn every_error_kind_maps_to_a_single_exit_code() {
+        let expected = [
+            (BtErrorKind::InvalidArgument, EXIT_USAGE),
+            (BtErrorKind::NotFound, EXIT_NOT_FOUND),
+            (BtErrorKind::Permission, EXIT_PERMISSION),
+            (BtErrorKind::Locked, EXIT_PERMISSION),
+            (BtErrorKind::Busy, EXIT_RUNNING),
+            (BtErrorKind::Unsupported, EXIT_FAILED),
+            (BtErrorKind::NotImplemented, EXIT_FAILED),
+            (BtErrorKind::Io, EXIT_FAILED),
+            (BtErrorKind::Protocol, EXIT_FAILED),
+            (BtErrorKind::Timeout, EXIT_FAILED),
+            (BtErrorKind::Canceled, EXIT_FAILED),
+            (BtErrorKind::Storage, EXIT_FAILED),
+            (BtErrorKind::Internal, EXIT_FAILED),
+        ];
+        for (kind, code) in expected {
+            assert_eq!(exit_code_for(kind), code, "{kind}");
+            assert_eq!(CliError::new(kind, "x").exit_code(), code);
+        }
+    }
+
+    #[test]
+    fn io_permission_denied_maps_to_permission() {
+        let error = CliError::from(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝"));
+        assert_eq!(error.kind(), BtErrorKind::Permission);
+        assert_eq!(error.exit_code(), EXIT_PERMISSION);
     }
 }

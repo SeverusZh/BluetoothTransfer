@@ -88,6 +88,22 @@ pub enum Command {
     Stats,
 }
 
+impl Command {
+    /// 打开后端时是否自动恢复 journal；只有会发起传输的流程才允许。
+    pub fn auto_resumes_journal(&self) -> bool {
+        matches!(
+            self,
+            Self::Send { .. }
+                | Self::Recv(_)
+                | Self::Gui
+                | Self::OppSendFile(_)
+                | Self::OppSendFiles(_)
+                | Self::OppSendText(_)
+                | Self::OppSendFolder(_)
+        )
+    }
+}
+
 impl Cli {
     pub fn command_name(&self) -> &'static str {
         match &self.command {
@@ -511,4 +527,46 @@ pub enum BtrecvCommand {
     Help,
     #[command(hide = true)]
     Version,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn auto_resume(args: &[&str]) -> bool {
+        let cli = Cli::try_parse_from(std::iter::once("bt".to_string()).chain(args.iter().map(|arg| arg.to_string())))
+            .unwrap_or_else(|error| panic!("{args:?} 解析失败：{error}"));
+        cli.command.as_ref().is_some_and(Command::auto_resumes_journal)
+    }
+
+    #[test]
+    fn only_transfer_commands_auto_resume_the_journal() {
+        for args in [
+            vec!["devices", "list"],
+            vec!["devices", "scan"],
+            vec!["devices", "detect", "AA:BB:CC:00:00:01"],
+            vec!["records", "list"],
+            vec!["records", "stats"],
+            vec!["stats"],
+            vec!["export", "csv", "out.csv"],
+            vec!["config", "list"],
+            vec!["config", "set", "mode", "opp"],
+            vec!["resume", "list"],
+            vec!["resume", "run"],
+            vec!["resume", "cancel"],
+            vec!["migrate"],
+            vec!["selftest"],
+        ] {
+            assert!(!auto_resume(&args), "{args:?} 不得自动恢复 journal");
+        }
+        for args in [
+            vec!["send", "text", "AA:BB:CC:00:00:01", "hi"],
+            vec!["send", "file", "AA:BB:CC:00:00:01", "/tmp/a"],
+            vec!["recv"],
+            vec!["opp-send-file", "AA:BB:CC:00:00:01", "/tmp/a"],
+            vec!["gui"],
+        ] {
+            assert!(auto_resume(&args), "{args:?} 应自动恢复 journal");
+        }
+    }
 }

@@ -20,6 +20,12 @@ impl OutputMode {
         }
     }
 
+    /// 参数解析失败时仍要遵守输出模式；只认全局布尔开关。
+    pub fn from_args(args: &[String]) -> Self {
+        let has = |flag: &str| args.iter().any(|arg| arg == flag);
+        Self::from_flags(has("--json"), has("--events"))
+    }
+
     pub fn is_human(self) -> bool {
         self == Self::Human
     }
@@ -222,6 +228,18 @@ pub fn event_to_json(event: &bt_api::Event) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_mode_is_detected_before_parsing() {
+        let args = |items: &[&str]| items.iter().map(|item| item.to_string()).collect::<Vec<_>>();
+        assert_eq!(OutputMode::from_args(&args(&["send", "--events"])), OutputMode::Events);
+        assert_eq!(OutputMode::from_args(&args(&["send", "--json"])), OutputMode::Json);
+        assert_eq!(
+            OutputMode::from_args(&args(&["--events", "--json"])),
+            OutputMode::Events
+        );
+        assert_eq!(OutputMode::from_args(&args(&["send"])), OutputMode::Human);
+    }
 
     #[test]
     fn cjk_width_counts_two_columns() {

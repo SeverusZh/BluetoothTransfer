@@ -3,13 +3,15 @@ use std::io::{BufRead, IsTerminal, Write};
 use clap::Parser;
 
 use crate::backend::Context;
+use crate::clap_message;
 use crate::cli::{Cli, Command};
+use crate::error::CliError;
 use crate::output::OutputMode;
 use crate::signal;
 
 pub fn run(cli: &Cli) -> i32 {
     let mode = OutputMode::from_flags(cli.json, cli.events);
-    let mut ctx = match Context::open(mode) {
+    let mut ctx = match Context::open_without_resume(mode) {
         Ok(ctx) => ctx,
         Err(error) => return i32::from(error.report(mode, "repl")),
     };
@@ -48,10 +50,18 @@ pub fn run(cli: &Cli) -> i32 {
         if tokens.is_empty() {
             continue;
         }
+        let line_mode = OutputMode::from_args(&tokens);
         let parsed = match Cli::try_parse_from(std::iter::once("bt".to_string()).chain(tokens)) {
             Ok(parsed) => parsed,
             Err(error) => {
-                eprintln!("{error}");
+                let output_mode = if line_mode.is_human() { mode } else { line_mode };
+                if output_mode.is_human() {
+                    eprintln!("{error}");
+                } else {
+                    let _ = CliError::usage(clap_message(&error))
+                        .with_hint("在 repl 中输入 help 查看命令")
+                        .report(output_mode, "bt");
+                }
                 continue;
             }
         };
@@ -65,20 +75,32 @@ pub fn run(cli: &Cli) -> i32 {
         let inner_mode = OutputMode::from_flags(parsed.json, parsed.events);
         let name = parsed.command_name();
         let Some(command) = parsed.command.take() else {
-            eprintln!("未指定子命令；输入 help 查看命令");
+            if mode.is_human() {
+                eprintln!("未指定子命令；输入 help 查看命令");
+            } else {
+                let _ = CliError::usage("未指定子命令")
+                    .with_hint("在 repl 中输入 help 查看命令")
+                    .report(inner_mode, "bt");
+            }
             continue;
         };
         match &command {
             Command::Repl => {
-                eprintln!("已在 repl 中，不能再次启动 repl");
+                let _ = CliError::usage("已在 repl 中，不能再次启动 repl")
+                    .with_hint("输入 quit 退出后重新运行 bt repl")
+                    .report(inner_mode, name);
                 continue;
             }
             Command::Gui => {
-                eprintln!("repl 中不能启动图形界面；退出后运行 bt gui");
+                let _ = CliError::usage("repl 中不能启动图形界面")
+                    .with_hint("输入 quit 退出后运行 bt gui")
+                    .report(inner_mode, name);
                 continue;
             }
             Command::Recv(_) => {
-                eprintln!("repl 中不能启动阻塞接收；退出后运行 bt recv 或 btrecv");
+                let _ = CliError::usage("repl 中不能启动阻塞接收")
+                    .with_hint("输入 quit 退出后运行 bt recv 或 btrecv")
+                    .report(inner_mode, name);
                 continue;
             }
             _ => {}

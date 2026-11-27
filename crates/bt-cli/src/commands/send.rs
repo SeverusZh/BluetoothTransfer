@@ -110,7 +110,14 @@ fn file_item(ctx: &Context, path: &Path, zip_enabled: bool, owned: &mut OwnedFil
             .with_hint("确认路径；发送多个文件时每个路径都必须存在"));
     }
     if zip_enabled {
-        let packed = bt_app::pack_zip_file_in(&ctx.paths, path).map_err(CliError::from)?;
+        let packed = bt_app::pack_zip_file_in(&ctx.paths, path).map_err(|error| {
+            let error = CliError::from(error);
+            if error.kind() == BtErrorKind::Unsupported {
+                error.with_hint("单文件 zip 不支持 4 GiB 及以上内容；去掉 --zip 直接发送，或先拆分文件")
+            } else {
+                error
+            }
+        })?;
         if packed.owned {
             owned.push(packed.path.clone());
         }

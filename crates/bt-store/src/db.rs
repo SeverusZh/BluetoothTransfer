@@ -470,6 +470,14 @@ fn epoch_of(text: &str) -> Result<i64, BtError> {
 }
 
 fn storage_error(error: rusqlite::Error) -> BtError {
+    if let rusqlite::Error::SqliteFailure(code, _) = &error {
+        if matches!(
+            code.code,
+            rusqlite::ffi::ErrorCode::PermissionDenied | rusqlite::ffi::ErrorCode::ReadOnly
+        ) {
+            return BtError::permission(format!("记录库不可写：{error}"));
+        }
+    }
     BtError::storage(format!("记录库错误：{error}"))
 }
 
@@ -837,5 +845,25 @@ mod tests {
     fn send_source_display_name_is_used_by_records() {
         let source = SendSource::Text("hello".into());
         assert_eq!(source.display_name(), "hello");
+    }
+
+    #[test]
+    fn readonly_storage_errors_map_to_permission() {
+        for code in [
+            rusqlite::ffi::SQLITE_READONLY,
+            rusqlite::ffi::SQLITE_PERM,
+            rusqlite::ffi::SQLITE_CANTOPEN,
+        ] {
+            let error = storage_error(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                Some("拒绝".to_string()),
+            ));
+            let expected = if code == rusqlite::ffi::SQLITE_CANTOPEN {
+                bt_core::BtErrorKind::Storage
+            } else {
+                bt_core::BtErrorKind::Permission
+            };
+            assert_eq!(error.kind(), expected);
+        }
     }
 }

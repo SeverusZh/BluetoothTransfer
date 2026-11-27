@@ -13,6 +13,7 @@ pub enum BtErrorKind {
     Canceled,
     Busy,
     Permission,
+    Locked,
     Storage,
     Internal,
 }
@@ -30,6 +31,7 @@ impl BtErrorKind {
             Self::Canceled => "canceled",
             Self::Busy => "busy",
             Self::Permission => "permission",
+            Self::Locked => "locked",
             Self::Storage => "storage",
             Self::Internal => "internal",
         }
@@ -102,6 +104,10 @@ impl BtError {
         Self::new(BtErrorKind::Permission, message)
     }
 
+    pub fn locked(message: impl Into<String>) -> Self {
+        Self::new(BtErrorKind::Locked, message)
+    }
+
     pub fn storage(message: impl Into<String>) -> Self {
         Self::new(BtErrorKind::Storage, message)
     }
@@ -113,7 +119,11 @@ impl BtError {
 
 impl From<std::io::Error> for BtError {
     fn from(error: std::io::Error) -> Self {
-        Self::new(BtErrorKind::Io, error.to_string())
+        let kind = match error.kind() {
+            std::io::ErrorKind::PermissionDenied => BtErrorKind::Permission,
+            _ => BtErrorKind::Io,
+        };
+        Self::new(kind, error.to_string())
     }
 }
 
@@ -130,8 +140,15 @@ mod tests {
     }
 
     #[test]
-    fn io_error_maps_to_io_kind() {
+    fn io_error_maps_permission_denied_to_permission() {
         let error: BtError = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝").into();
+        assert_eq!(error.kind(), BtErrorKind::Permission);
+    }
+
+    #[test]
+    fn io_error_keeps_other_kinds_as_io() {
+        let error: BtError = std::io::Error::new(std::io::ErrorKind::NotFound, "缺失").into();
         assert_eq!(error.kind(), BtErrorKind::Io);
+        assert_eq!(BtErrorKind::Locked.as_str(), "locked");
     }
 }

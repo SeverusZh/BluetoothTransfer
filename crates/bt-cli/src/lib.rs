@@ -22,10 +22,10 @@ use crate::output::OutputMode;
 /// bt 进程入口。
 pub fn main_entry(args: Vec<String>) -> i32 {
     signal::install();
-    let wants_json = args.iter().any(|arg| arg == "--json");
+    let mode = OutputMode::from_args(&args);
     let parsed = match Cli::try_parse_from(std::iter::once("bt".to_string()).chain(args)) {
         Ok(cli) => cli,
-        Err(error) => return clap_failure("bt", &error, wants_json),
+        Err(error) => return clap_failure("bt", &error, mode),
     };
     run_cli(parsed)
 }
@@ -45,10 +45,11 @@ fn run_cli(cli: Cli) -> i32 {
             Err(error) => i32::from(error.report(mode, name)),
         };
     }
-    let ctx = if matches!(&cli.command, Some(Command::Resume { .. })) {
-        Context::open_without_resume(mode)
-    } else {
+    let auto_resume = cli.command.as_ref().is_some_and(Command::auto_resumes_journal);
+    let ctx = if auto_resume {
         Context::open(mode)
+    } else {
+        Context::open_without_resume(mode)
     };
     let ctx = match ctx {
         Ok(ctx) => ctx,
@@ -69,10 +70,10 @@ fn run_cli(cli: Cli) -> i32 {
 /// btrecv 进程入口：无参即监听，其余参数与 bt recv 一致。
 pub fn recv_entry(args: Vec<String>) -> i32 {
     signal::install();
-    let wants_json = args.iter().any(|arg| arg == "--json");
+    let mode = OutputMode::from_args(&args);
     let parsed = match BtrecvCli::try_parse_from(std::iter::once("btrecv".to_string()).chain(args)) {
         Ok(cli) => cli,
-        Err(error) => return clap_failure("btrecv", &error, wants_json),
+        Err(error) => return clap_failure("btrecv", &error, mode),
     };
     if let Some(command) = &parsed.command {
         match command {
@@ -134,35 +135,29 @@ fn run_gui() -> Result<u8, CliError> {
     }
 }
 
-fn clap_failure(program: &str, error: &clap::Error, wants_json: bool) -> i32 {
+fn clap_failure(program: &str, error: &clap::Error, mode: OutputMode) -> i32 {
     let code = clap_error_code(error);
     if code == 0 {
         let _ = error.print();
         return 0;
     }
-    if wants_json {
-        let message = error
-            .to_string()
-            .lines()
-            .next()
-            .unwrap_or("用法错误")
-            .trim_start_matches("error: ")
-            .to_string();
-        let body = serde_json::json!({
-            "ok": false,
-            "command": program,
-            "type": "error",
-            "error": {
-                "kind": "invalid_argument",
-                "message": message,
-                "hint": format!("运行 {program} --help 查看用法"),
-            }
-        });
-        println!("{body}");
-    } else {
+    if mode.is_human() {
         let _ = error.print();
+        return code;
     }
-    code
+    let error = CliError::usage(clap_message(error)).with_hint(format!("运行 {program} --help 查看用法"));
+    i32::from(error.report(mode, program))
+}
+
+/// 取 clap 错误首行，去掉 clap 自带的错误前缀。
+pub(crate) fn clap_message(error: &clap::Error) -> String {
+    error
+        .to_string()
+        .lines()
+        .next()
+        .unwrap_or("用法错误")
+        .trim_start_matches("error: ")
+        .to_string()
 }
 
 fn clap_error_code(error: &clap::Error) -> i32 {
