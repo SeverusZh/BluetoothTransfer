@@ -1,0 +1,11 @@
+[package]
+name = "bt-transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "蓝牙传输抽象：发现、配对、RFCOMM 连接与服务广播"
+
+[dependencies]
+bt-core.workspace = true
+
