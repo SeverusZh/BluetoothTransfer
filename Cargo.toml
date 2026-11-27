@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+bt-core = { path = "crates/bt-core", version = "2.0.0" }
+bt-api = { path = "crates/bt-api", version = "2.0.0" }
+bt-transport = { path = "crates/bt-transport", version = "2.0.0" }
+bt-store = { path = "crates/bt-store", version = "2.0.0" }
+bt-engine = { path = "crates/bt-engine", version = "2.0.0" }
+bt-app = { path = "crates/bt-app", version = "2.0.0" }
+bt-platform = { path = "crates/bt-platform", version = "2.0.0" }
+bt-gui = { path = "crates/bt-gui", version = "2.0.0" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
