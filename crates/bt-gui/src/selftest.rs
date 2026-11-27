@@ -1,6 +1,7 @@
 //! 无显示环境自检：构造全部页面状态并用内存后端驱动事件与动作。
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,9 +32,15 @@ pub fn self_check() -> SelftestReport {
     let mut report = SelftestReport::default();
     let backend = seeded_backend();
     let config = backend.config();
-    let temp_dir = std::env::temp_dir().join(format!("bt-gui-selftest-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    let _ = std::fs::create_dir_all(&temp_dir);
+    let temp_dir = unique_temp_dir();
+    if let Err(error) = std::fs::create_dir_all(&temp_dir) {
+        report.push(
+            "tempdir",
+            false,
+            format!("无法创建自检临时目录 {}：{error}", temp_dir.display()),
+        );
+        return report;
+    }
     let app_paths = bt_app::AppPaths::under(&temp_dir);
     let mut state = UiState::new(
         backend.clone(),
@@ -121,8 +128,25 @@ pub fn self_check() -> SelftestReport {
     let log_check = log_round_trip(&temp_dir);
     report.push("log", log_check.0, log_check.1);
 
-    let _ = std::fs::remove_dir_all(&temp_dir);
+    if let Some(detail) = remove_temp_dir(&temp_dir) {
+        report.push_skip("tempdir", detail);
+    }
     report
+}
+
+static TEMP_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn unique_temp_dir() -> PathBuf {
+    let seq = TEMP_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("bt-gui-selftest-{}-{seq}", std::process::id()))
+}
+
+fn remove_temp_dir(path: &Path) -> Option<String> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => Some(format!("自检临时目录清理失败 {}：{error}", path.display())),
+    }
 }
 
 fn seeded_backend() -> Arc<MockBackend> {
@@ -411,5 +435,18 @@ mod tests {
     fn all_pages_render() {
         let report = self_check();
         assert!(report.checks.iter().any(|check| check.name == "pages" && check.ok));
+    }
+
+    #[test]
+    fn selftest_is_stable_when_repeated_and_parallel() {
+        for _ in 0..2 {
+            let report = self_check();
+            assert!(report.passed(), "{:?}", report.checks);
+        }
+        let handles: Vec<_> = (0..2).map(|_| std::thread::spawn(self_check)).collect();
+        for handle in handles {
+            let report = handle.join().expect("自检线程不应 panic");
+            assert!(report.passed(), "{:?}", report.checks);
+        }
     }
 }
