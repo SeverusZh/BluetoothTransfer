@@ -59,7 +59,7 @@ impl CliError {
         exit_code_for(self.kind)
     }
 
-    fn hint_text(&self) -> Option<&str> {
+    pub(crate) fn hint_text(&self) -> Option<&str> {
         self.hint.as_deref().or_else(|| default_hint(self.kind))
     }
 

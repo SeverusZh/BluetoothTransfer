@@ -129,14 +129,24 @@ fn default_command(mode: OutputMode) -> i32 {
 fn run_gui() -> Result<u8, CliError> {
     #[cfg(feature = "gui")]
     {
-        bt_gui::main_entry(Vec::new())
-            .map_err(|error| CliError::from(error).with_hint("无显示环境时无法打开窗口；请改用 CLI 子命令"))
+        bt_gui::main_entry(Vec::new()).map_err(gui_error)
     }
     #[cfg(not(feature = "gui"))]
     {
         Err(CliError::failed("当前构建为 cli-only，未启用图形界面")
             .with_hint("安装带 GUI 的发行包，或使用 bt --help 查看命令行能力"))
     }
+}
+
+#[cfg(feature = "gui")]
+fn gui_error(error: bt_core::BtError) -> CliError {
+    let error = CliError::from(error);
+    let hint = if error.kind() == bt_core::BtErrorKind::Busy {
+        "已有实例在运行；关闭旧窗口后重试，或直接使用 CLI 子命令"
+    } else {
+        "无显示环境时无法打开窗口；请改用 CLI 子命令"
+    };
+    error.with_hint(hint)
 }
 
 fn clap_failure(program: &str, error: &clap::Error, mode: OutputMode) -> i32 {
@@ -168,5 +178,21 @@ fn clap_error_code(error: &clap::Error) -> i32 {
     match error.kind() {
         clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => 0,
         _ => 2,
+    }
+}
+
+#[cfg(all(test, feature = "gui"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_error_hint_follows_error_kind() {
+        let busy = gui_error(bt_core::BtError::busy("已有实例在运行，但无法转交启动参数"));
+        assert_eq!(busy.kind(), bt_core::BtErrorKind::Busy);
+        let hint = busy.hint_text().unwrap_or_default();
+        assert!(hint.contains("已有实例"), "busy hint 不得写无显示环境：{hint}");
+
+        let window = gui_error(bt_core::BtError::internal("窗口创建失败"));
+        assert!(window.hint_text().unwrap_or_default().contains("显示环境"));
     }
 }
