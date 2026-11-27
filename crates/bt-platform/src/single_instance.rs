@@ -127,6 +127,8 @@ mod platform {
     use super::InstanceMessage;
     use crate::paths;
 
+    const MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
+
     pub struct Guard {
         thread: Option<JoinHandle<()>>,
         stop: Arc<AtomicBool>,
@@ -169,11 +171,11 @@ mod platform {
                     if thread_stop.load(Ordering::SeqCst) {
                         break;
                     }
-                    let Ok(mut stream) = stream else {
+                    let Ok(stream) = stream else {
                         continue;
                     };
                     let mut payload = String::new();
-                    let _ = stream.read_to_string(&mut payload);
+                    let _ = stream.take(MAX_MESSAGE_BYTES).read_to_string(&mut payload);
                     if !payload.trim().is_empty() {
                         let message = InstanceMessage::decode(&payload);
                         if sender.send(message).is_err() {
