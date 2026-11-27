@@ -51,13 +51,13 @@
 
 | 现状 | 代码位置 | 对右键菜单的影响 |
 |---|---|---|
-| GUI 是 `WinExe`（无控制台窗口） | `src/BluetoothTransfer/BluetoothTransfer.csproj`（`<OutputType>WinExe</OutputType>`） | ✅ 适合做 Shell 目标，不会闪黑框 |
-| `App.xaml` 使用 `StartupUri="MainWindow.xaml"`，**无任何命令行参数处理** | `src/BluetoothTransfer/App.xaml`、`App.xaml.cs` | ❌ 需要新增 `--send` 入口；`StartupUri` 会先建窗，参数入口需在 `OnStartup` 之前/之中接管 |
-| 有独立 CLI `btcli`（`opp-send-file/files/text/folder`，支持 `--mode auto\|assistant\|opp`） | `src/BluetoothTransfer.Cli/` | ⚠️ 命令签名为 `<设备地址> <文件>`，**必须先知道设备地址**；`OutputType=Exe` 会弹控制台；不适合直接作为 Shell 命令 |
+| GUI 是 `WinExe`（无控制台窗口） | `legacy/dotnet/src/BluetoothTransfer/BluetoothTransfer.csproj`（`<OutputType>WinExe</OutputType>`） | ✅ 适合做 Shell 目标，不会闪黑框 |
+| `App.xaml` 使用 `StartupUri="MainWindow.xaml"`，**无任何命令行参数处理** | `legacy/dotnet/src/BluetoothTransfer/App.xaml`、`App.xaml.cs` | ❌ 需要新增 `--send` 入口；`StartupUri` 会先建窗，参数入口需在 `OnStartup` 之前/之中接管 |
+| 有独立 CLI `btcli`（`opp-send-file/files/text/folder`，支持 `--mode auto\|assistant\|opp`） | `legacy/dotnet/src/BluetoothTransfer.Cli/` | ⚠️ 命令签名为 `<设备地址> <文件>`，**必须先知道设备地址**；`OutputType=Exe` 会弹控制台；不适合直接作为 Shell 命令 |
 | 主窗口已支持**拖放文件/文件夹**发送（`OnDragOver`/`OnFileDrop` → `OppViewModel.SendDroppedAsync`） | `MainWindow.xaml.cs:64-80`、`OppViewModel.cs:677-702` | ✅ 可复用「路径 → 发送队列」的现成逻辑 |
 | 发送前必须已选中设备：`SendDroppedAsync` 在 `SelectedDevice == null` 时只提示「请先在设备列表中选中目标设备」 | `OppViewModel.cs:678-683` | ❌ 右键发送没有设备上下文，需要新增「待发送项 + 选择设备」交互 |
 | 文件/文件夹分类已存在：`Directory.Exists(p)` → folder（zip），否则 file | `OppViewModel.cs:684-699` | ✅ 复用 |
-| 单实例守卫（Slice C，工作区进行中，未提交）：命名 Mutex + 命名事件，**只激活窗口、不携带参数** | `src/BluetoothTransfer.AppServices/SingleInstanceGuard.cs`（工作区新增） | ⚠️ 需要扩展「带载荷转发」（见 §5.2） |
+| 单实例守卫（Slice C，工作区进行中，未提交）：命名 Mutex + 命名事件，**只激活窗口、不携带参数** | `legacy/dotnet/src/BluetoothTransfer.AppServices/SingleInstanceGuard.cs`（工作区新增） | ⚠️ 需要扩展「带载荷转发」（见 §5.2） |
 | 应用图标已配置 | `BluetoothTransfer.csproj` `<ApplicationIcon>Assets\app.ico</ApplicationIcon>` | ✅ 静态 Verb 的 `Icon` 可直接指 exe `,0` |
 | 目标框架 `net8.0-windows10.0.19041.0`、`SupportedOSPlatformVersion=10.0.19041.0` | 各 csproj | 支持 Windows 10 2004+ / Windows 11 |
 
@@ -161,11 +161,11 @@ BluetoothTransfer.exe --send --kind=folder "C:\data\docs"     # 可选，显式�
 
 | 文件 | 改动 |
 |---|---|
-| `src/BluetoothTransfer/App.xaml` | 移除 `StartupUri`（Slice C 已做） |
-| `src/BluetoothTransfer/App.xaml.cs` | 在 `OnStartup` 最前面解析 `e.Args`；构造 `PendingSendRequest`；先处理单实例转发，再建窗 |
-| 新增 `src/BluetoothTransfer/Services/ShellSendRequest.cs`（建议） | 纯逻辑解析/校验 `--send`/`--send-text`（可单测，不依赖 WPF） |
-| `src/BluetoothTransfer/MainWindow.xaml.cs` | 暴露 `HandleExternalSendRequest(PendingSendRequest)`（与 Slice C 的 `ActivateFromSecondInstance` 并列） |
-| `src/BluetoothTransfer/ViewModels/OppViewModel.cs` | 新增 `EnqueueExternalSendAsync(IReadOnlyList<string> paths, ExternalSendKind kind)`；无设备时进入「待发送」状态；新增 `SendPendingExternalCommand` 或「选择设备后自动发送」逻辑 |
+| `legacy/dotnet/src/BluetoothTransfer/App.xaml` | 移除 `StartupUri`（Slice C 已做） |
+| `legacy/dotnet/src/BluetoothTransfer/App.xaml.cs` | 在 `OnStartup` 最前面解析 `e.Args`；构造 `PendingSendRequest`；先处理单实例转发，再建窗 |
+| 新增 `legacy/dotnet/src/BluetoothTransfer/Services/ShellSendRequest.cs`（建议） | 纯逻辑解析/校验 `--send`/`--send-text`（可单测，不依赖 WPF） |
+| `legacy/dotnet/src/BluetoothTransfer/MainWindow.xaml.cs` | 暴露 `HandleExternalSendRequest(PendingSendRequest)`（与 Slice C 的 `ActivateFromSecondInstance` 并列） |
+| `legacy/dotnet/src/BluetoothTransfer/ViewModels/OppViewModel.cs` | 新增 `EnqueueExternalSendAsync(IReadOnlyList<string> paths, ExternalSendKind kind)`；无设备时进入「待发送」状态；新增 `SendPendingExternalCommand` 或「选择设备后自动发送」逻辑 |
 | `AppConfig.cs` | 可选：`LastDeviceAddr`（记住上次设备，供 `--send` 无交互自动发送的「快速通道」） |
 
 ### 5.2 单实例转发（与第 4 项 Slice C 协同）——**当前实现的最大缺口**

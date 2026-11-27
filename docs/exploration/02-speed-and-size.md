@@ -71,9 +71,9 @@
   - 助手通道：`Core/Client/AssistantClient.cs`、`Core/Server/AssistantServer.cs`、`AsstFileSink.cs`、`AsstHash.cs`、`IO/SocketAsstTransport.cs`、`Server/AsstRfcommService.cs`
   - OPP 通道：`AppServices/ObexClient.cs`、`ObexPacket.cs`、`SocketObexTransport.cs`、`OppPushService.cs`
   - 编排/队列/配置：`OppSendQueue.cs`、`AssistantPushService.cs`、`SendResumeService.cs`、`TransferJournal.cs`、`PendingPackageStore.cs`、`FileChecksum.cs`、`TransferSpeedTracker.cs`、`AppConfig.cs`、`AssistantDetector.cs`、`OppDiscoveryService.cs`
-  - 发布：`src/*/*.csproj`、`tools/publish-*.ps1`
+  - 发布：`legacy/dotnet/src/*/*.csproj`、`legacy/dotnet/tools/publish-*.ps1`
 - **本地产物实测**（工作区 Release 交叉编译输出，非我本人运行构建）：
-  - `src/BluetoothTransfer/bin/Release/net8.0-windows10.0.19041.0/` 目录合计 **50MB**；
+  - `legacy/dotnet/src/BluetoothTransfer/bin/Release/net8.0-windows10.0.19041.0/` 目录合计 **50MB**；
   - `Microsoft.Windows.SDK.NET.dll` = **24,877,600 B（23.7MiB）**，`WinRT.Runtime.dll` = 528,944 B；
   - `Microsoft.Data.Sqlite.dll` = 173,088 B；`SQLitePCLRaw.*` 托管 ≈92KB；`e_sqlite3.dll`（win-x64 原生）= **1,691,648 B**；`Hardcodet.NotifyIcon.Wpf.dll` = 103,424 B；
   - 该目录含 `runtimes/` 下 **19 个 RID** 的 SQLite 原生库（框架依赖、未指定 RID 的构建特点）；`dotnet publish -r win-x64` 只会带 win-x64 一份。
@@ -152,7 +152,7 @@
 - 依据：`AsstHello.ChunkSize` 由发送端决定（`AssistantPushService.cs:279` 用 `OppChunkSize`），接收端按 DATA.Offset 顺序校验（`AssistantServer.cs:126-136`）；`AsstConst.MaxFrameSize=1MB`（`AsstConst.cs:18-19`）。
 - 收益：停等次数 `N` 降 4–8×，同时减少 fsync/文件 open-close 次数。R_asst≈20–30ms（含 fsync）时，100MB 由 3200×25ms=80s 降到 800×25ms=20s → **总时间约 -10%**；若用 512KB–1MB 再降，但内存与单帧风险上升。
 - 代价/风险：单帧内存峰值（1MB×2 方向）、对端旧版本是否接受大 chunk（HELLO 已带 ChunkSize，接收端当前实现按自身缓冲区读，理论上兼容；但旧接收端 `AsstFrame.MaxFrameSize=1MB` 相同）；断线时丢失量增大 → 续传重传窗口变大（当前逐块 ACK，掉线最多丢 1 块；大块掉线丢一整块，可接受）。
-- 验证：Linux harness 已有内存传输测试可先验证正确性（`tests/...MemoryAsstTransportTests` 等）；真机 A/B 吞吐。
+- 验证：Linux harness 已有内存传输测试可先验证正确性（`legacy/dotnet/tests/...MemoryAsstTransportTests` 等）；真机 A/B 吞吐。
 
 **S3. 队列级设备解析/探测缓存 + 连接复用**
 
@@ -312,7 +312,7 @@
 
 | 文件/目录 | 大小 | 说明 |
 |---|---|---|
-| `src/BluetoothTransfer/bin/Release/net8.0-windows10.0.19041.0/` 合计 | **≈50MB** | 框架依赖、未指定 RID 的 build 输出（含 19 个 RID 的 SQLite 原生库） |
+| `legacy/dotnet/src/BluetoothTransfer/bin/Release/net8.0-windows10.0.19041.0/` 合计 | **≈50MB** | 框架依赖、未指定 RID 的 build 输出（含 19 个 RID 的 SQLite 原生库） |
 | `Microsoft.Windows.SDK.NET.dll` | **24,877,600 B（≈23.7MiB）** | WinRT 投影（`net8.0-windows10.0.19041.0` 隐含，所有引用 Core 的项目都会带） |
 | `WinRT.Runtime.dll` | 528,944 B | CsWinRT 运行时 |
 | `Microsoft.Data.Sqlite.dll` | 173,088 B | 托管 |
@@ -320,7 +320,7 @@
 | `runtimes/win-x64/native/e_sqlite3.dll` | **1,691,648 B** | 仅 win-x64 一份；build 目录里另有 18 个 RID 副本 |
 | `Hardcodet.NotifyIcon.Wpf.dll` | 103,424 B | 托盘 |
 | 应用自身 dll（GUI/Core/AppServices） | ≈0.45MB | — |
-| `src/BluetoothTransfer.Receiver/bin/.../` 合计 | **≈25MB** | btrecv（无 SQLite）几乎全是 WinRT 投影 |
+| `legacy/dotnet/src/BluetoothTransfer.Receiver/bin/.../` 合计 | **≈25MB** | btrecv（无 SQLite）几乎全是 WinRT 投影 |
 
 **未实测、按公开数据估算的部分**
 
@@ -334,7 +334,7 @@
 | `btrecv-cli-only.zip` | 约 6MB（README 数据） | 已 `PublishTrimmed=true`，裁剪掉绝大部分 WinRT 投影 |
 | `btrecv-cli-only` + 单文件压缩 | **≈3–4MB（估算）** | 6MB 中主要为托管程序集，压缩率 50–60% |
 
-**发布脚本现状（`tools/publish-gui.ps1`、`tools/publish-receiver.ps1`）**
+**发布脚本现状（`legacy/dotnet/tools/publish-gui.ps1`、`legacy/dotnet/tools/publish-receiver.ps1`）**
 
 - GUI：自包含 / 框架依赖两种，均只加 `-p:PublishSingleFile=true`；**没有** `EnableCompressionInSingleFile`、**没有** `IncludeNativeLibrariesForSelfExtract`、没有 R2R、没有裁剪（WPF 也不能裁）。
   - **代码事实修正**：README 称自包含产物为「单文件」，但脚本未设 `IncludeNativeLibrariesForSelfExtract=true`，因此输出实际是「exe + 若干原生 DLL（WPF 原生库、e_sqlite3 等）」的目录，不是真正单文件。若追求真单文件需加该参数（代价见 §4.2）。
@@ -463,7 +463,7 @@
 
 | 主题 | 位置 |
 |---|---|
-| OPP 分片/停等/包长上限 | `src/BluetoothTransfer.AppServices/ObexClient.cs:118-165, 204-228`；`ObexPacket.cs:194-228` |
+| OPP 分片/停等/包长上限 | `legacy/dotnet/src/BluetoothTransfer.AppServices/ObexClient.cs:118-165, 204-228`；`ObexPacket.cs:194-228` |
 | OPP 每次发送重连/超时 | `OppPushService.cs:282-327`（发送）、`:230-279`（重试）、`:198`（设备解析）、`:103-136`（SDP 预检）、`:286-294`（超时） |
 | 助手通道停等/ACK/fsync | `Core/Client/AssistantClient.cs:49-74`；`Core/Server/AssistantServer.cs:121-143`；`Core/Server/AsstFileSink.cs:72-109` |
 | 助手通道建连/探测 | `AppServices/AssistantPushService.cs:261-347`；`Core/Discovery/AssistantDetector.cs:120-247` |
@@ -471,8 +471,8 @@
 | 哈希/Journal 恢复 | `AppServices/FileChecksum.cs`；`Core/Server/AsstHash.cs`；`TransferJournal.cs:445-469` |
 | zip 打包 | `AppServices/OppPushService.cs`（`PushSendHelper` 类）`:429-487`；`PendingPackageStore.cs:28-82` |
 | 队列/配置 | `OppSendQueue.cs:83-297`；`AppConfig.cs:8-45`；`TransferSpeedTracker.cs` |
-| 发布脚本 | `tools/publish-gui.ps1`、`tools/publish-receiver.ps1` |
-| 项目依赖 | `src/BluetoothTransfer/BluetoothTransfer.csproj`、`AppServices/…csproj`、`Receiver/…csproj`、`Cli/…csproj`、`tests/…csproj` |
+| 发布脚本 | `legacy/dotnet/tools/publish-gui.ps1`、`legacy/dotnet/tools/publish-receiver.ps1` |
+| 项目依赖 | `legacy/dotnet/src/BluetoothTransfer/BluetoothTransfer.csproj`、`AppServices/…csproj`、`Receiver/…csproj`、`Cli/…csproj`、`legacy/dotnet/tests/…csproj` |
 
 ### 6.2 参考链接
 
