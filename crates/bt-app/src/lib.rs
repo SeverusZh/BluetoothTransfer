@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use bt_api::{Backend, Device, EventBus, MockBackend, SharedBackend};
 use bt_core::{now_rfc3339, AssistantState, BtError, Channel, DeviceId};
-use bt_engine::{Journal, JournalState, PackedSource, PendingPackageStore};
+use bt_engine::{ArtifactCleaner, Journal, JournalState, PackedSource, PendingPackageStore};
 
 /// 后端装配选项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,7 @@ pub fn list_resume(paths: &AppPaths) -> Result<Vec<ResumeInfo>, BtError> {
     if !paths.journal_file.is_file() {
         return Ok(Vec::new());
     }
-    let journal = Journal::new(&paths.journal_file).with_base(&paths.pending_dir);
+    let journal = journal_for(paths);
     let entries = journal.read_all()?;
     Ok(entries.into_iter().map(|entry| resume_info(&entry)).collect())
 }
@@ -119,7 +119,7 @@ pub fn resume_plan(paths: &AppPaths) -> Result<ResumePlan, BtError> {
     if !paths.journal_file.is_file() {
         return Ok(ResumePlan::default());
     }
-    let journal = Journal::new(&paths.journal_file).with_base(&paths.pending_dir);
+    let journal = journal_for(paths);
     let recovery = journal.plan_recovery()?;
     let all = journal.read_all()?;
     let mut plan = ResumePlan::default();
@@ -174,18 +174,33 @@ pub fn drop_resume(paths: &AppPaths, ids: &[String]) -> Result<usize, BtError> {
     if ids.is_empty() || !paths.journal_file.is_file() {
         return Ok(0);
     }
-    Journal::new(&paths.journal_file)
-        .with_base(&paths.pending_dir)
-        .apply_abandoned(ids)
+    journal_for(paths).apply_abandoned(ids)
 }
 
 pub fn cancel_resume(paths: &AppPaths, id: &str) -> Result<bool, BtError> {
     if !paths.journal_file.is_file() {
         return Ok(false);
     }
+    journal_for(paths).cancel(id)
+}
+
+/// journal 删除自产条目时同步清理 pending/ 下的打包产物。
+fn journal_for(paths: &AppPaths) -> Journal {
     Journal::new(&paths.journal_file)
         .with_base(&paths.pending_dir)
-        .cancel(id)
+        .with_cleaner(Arc::new(PendingArtifactCleaner {
+            packages: PendingPackageStore::new(&paths.pending_dir),
+        }))
+}
+
+struct PendingArtifactCleaner {
+    packages: PendingPackageStore,
+}
+
+impl ArtifactCleaner for PendingArtifactCleaner {
+    fn delete(&self, path: &Path) -> bool {
+        self.packages.delete(path)
+    }
 }
 
 fn resume_info(entry: &bt_engine::JournalEntry) -> ResumeInfo {

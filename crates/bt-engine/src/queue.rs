@@ -213,9 +213,17 @@ impl QueueManager {
     }
 
     pub fn cancel_all(&mut self) -> Vec<JobSnapshot> {
+        self.cancel_unfinished_except(None)
+    }
+
+    /// 取消未完成任务但保留指定活动任务，交由发送线程写入终态与 journal。
+    pub fn cancel_unfinished_except(&mut self, except: Option<JobId>) -> Vec<JobSnapshot> {
         let now = now_rfc3339();
         let mut changed = Vec::new();
         for job in &mut self.jobs {
+            if Some(job.id) == except {
+                continue;
+            }
             if !job.is_terminal() {
                 job.state = JobState::Canceled;
                 job.error = Some("用户取消".to_string());
@@ -429,6 +437,17 @@ mod tests {
         let changed = queue.cancel_all();
         assert_eq!(changed.len(), 2);
         assert!(queue.is_idle());
+    }
+
+    #[test]
+    fn cancel_all_can_leave_the_active_job_to_the_worker() {
+        let mut queue = QueueManager::new();
+        let first = queue.enqueue(&device(), "Pixel", item(), Some(Channel::Opp));
+        let second = queue.enqueue(&device(), "Pixel", item(), Some(Channel::Opp));
+        let changed = queue.cancel_unfinished_except(Some(first));
+        assert!(changed.iter().any(|job| job.id == second));
+        assert_eq!(queue.get(first).unwrap().state, JobState::Queued);
+        assert_eq!(queue.get(second).unwrap().state, JobState::Canceled);
     }
 
     #[test]

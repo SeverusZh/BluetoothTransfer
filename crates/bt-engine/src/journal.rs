@@ -680,6 +680,22 @@ impl Journal {
         })
     }
 
+    /// 续租并记录进度：一次加锁内刷新租约到期与已确认偏移。
+    pub fn heartbeat(&self, id: &str, offset: u64) -> Result<bool, BtError> {
+        self.mutate(|entries, now| {
+            let Some(entry) = entries
+                .iter_mut()
+                .find(|entry| entry.id_hex() == id && entry.state == JournalState::Sending)
+            else {
+                return false;
+            };
+            entry.lease_until = now + LEASE.as_secs();
+            entry.resume_offset = offset.min(entry.size);
+            entry.updated = clamp_u32(now);
+            true
+        })
+    }
+
     pub fn mark_progress(&self, id: &str, offset: u64) -> Result<bool, BtError> {
         self.mutate(|entries, now| {
             let Some(entry) = entries.iter_mut().find(|entry| entry.id_hex() == id) else {
@@ -935,7 +951,7 @@ fn lock_journal<T>(path: &Path, action: impl FnOnce() -> Result<T, BtError>) -> 
             break;
         }
         if Instant::now() >= deadline {
-            return Err(BtError::busy("journal 跨进程锁等待超时"));
+            return Err(BtError::locked("journal 跨进程锁等待超时"));
         }
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -1331,6 +1347,35 @@ mod tests {
         let plan = journal.plan_recovery().unwrap();
         assert!(plan.recoverable.is_empty());
         assert!(plan.abandoned[0].reason.contains("已尝试"));
+    }
+
+    #[test]
+    fn heartbeat_extends_lease_and_records_progress() {
+        let dir = TempDir::new("heartbeat");
+        let payload = write_payload(&dir, "a.bin", b"0123456789");
+        let now = std::sync::Arc::new(Mutex::new(1_000u64));
+        let clock = {
+            let now = now.clone();
+            Arc::new(move || *now.lock().unwrap())
+        };
+        let journal = Journal::new(dir.0.join("send-journal.bin"))
+            .with_liveness(Arc::new(FixedLiveness(true)))
+            .with_clock(clock)
+            .with_process(4242, 99);
+        let id = journal.begin(entry(&dir, payload, "a.bin")).unwrap().entry.id_hex();
+        let first = journal.read_all().unwrap()[0].lease_until;
+        assert_eq!(first, 1_000 + LEASE.as_secs());
+
+        *now.lock().unwrap() = 1_000 + 5 * 60;
+        assert!(journal.heartbeat(&id, 4).unwrap());
+        let renewed = journal.read_all().unwrap()[0].clone();
+        assert_eq!(renewed.lease_until, 1_000 + 5 * 60 + LEASE.as_secs());
+        assert_eq!(renewed.resume_offset, 4);
+        assert_eq!(renewed.updated, 1_300);
+
+        assert!(journal.pause(&id).unwrap());
+        *now.lock().unwrap() = 1_000 + 10 * 60;
+        assert!(!journal.heartbeat(&id, 8).unwrap(), "暂停条目不应续租");
     }
 
     #[test]

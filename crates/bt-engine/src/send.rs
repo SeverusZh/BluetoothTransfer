@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bt_api::{JobId, JobSnapshot, JobState, SendItem};
 use bt_core::{
@@ -13,7 +13,7 @@ use bt_transport::BluetoothTransport;
 use crate::cancel::CancelFlag;
 use crate::client::send_file;
 use crate::detect::{PresenceTracker, ProbeResult, ProbeStrategy};
-use crate::journal::{Journal, JournalEntry, JournalKind};
+use crate::journal::{Journal, JournalEntry, JournalKind, RENEW};
 use crate::opp::{mime_for_name, push_file_with_retry, sleep_cancelable, OppOptions, OppRetryPolicy};
 use crate::package::PendingPackageStore;
 use crate::protocol::{Hello, MAX_CHUNK_SIZE};
@@ -160,7 +160,32 @@ enum JournalFinal {
     Complete,
     Release,
     Pause,
-    Cancel,
+}
+
+struct LeaseHeartbeat<'a> {
+    journal: &'a Journal,
+    id: &'a str,
+    interval: Duration,
+    last: Instant,
+}
+
+impl<'a> LeaseHeartbeat<'a> {
+    fn new(journal: &'a Journal, id: &'a str) -> Self {
+        Self {
+            journal,
+            id,
+            interval: RENEW,
+            last: Instant::now(),
+        }
+    }
+
+    fn observe(&mut self, now: Instant, offset: u64) -> Result<bool, BtError> {
+        if now.saturating_duration_since(self.last) < self.interval {
+            return Ok(false);
+        }
+        self.last = now;
+        self.journal.heartbeat(self.id, offset)
+    }
 }
 
 /// 顺序发送引擎：通道选择、助手断点续传、OPP 重试与逐任务控制。
@@ -319,10 +344,11 @@ impl SendEngine {
     pub fn cancel_all_jobs(&self) -> Result<(), BtError> {
         let snapshots = {
             let mut state = self.state.lock().map_err(|_| BtError::internal("发送队列被投毒"))?;
+            let active = state.active.as_ref().map(|(id, _)| *id);
             if let Some((_, control)) = state.active.as_ref() {
                 control.stop(JobState::Canceled);
             }
-            state.queue.cancel_all()
+            state.queue.cancel_unfinished_except(active)
         };
         for snapshot in snapshots {
             self.emit(SendEvent::JobState(snapshot));
@@ -754,6 +780,7 @@ impl SendEngine {
                     None
                 }
             };
+            let mut lease = journal_id.as_deref().map(|id| LeaseHeartbeat::new(&self.journal, id));
             let mut stream = match self.transport.connect_service(&job.device, ASSISTANT_SERVICE_UUID) {
                 Ok(stream) => stream,
                 Err(error) => {
@@ -768,6 +795,15 @@ impl SendEngine {
                 tracker.add_sample(base + sent.min(payload.size));
                 if let Some(snapshot) = engine.update_progress(job_id, base + sent.min(payload.size), tracker.bps()) {
                     engine.emit(SendEvent::JobProgress(snapshot));
+                }
+                if let Some(lease) = lease.as_mut() {
+                    match lease.observe(Instant::now(), sent.min(payload.size)) {
+                        Ok(_) => {}
+                        Err(error) => engine.emit(SendEvent::Log {
+                            level: "WARN",
+                            message: format!("journal 续租失败：{error}"),
+                        }),
+                    }
                 }
             };
             let result = send_file(
@@ -790,11 +826,7 @@ impl SendEngine {
                     });
                 }
                 Ok(outcome) if outcome.canceled => {
-                    let final_action = match control.desired() {
-                        Some(JobState::Paused) => JournalFinal::Pause,
-                        _ => JournalFinal::Cancel,
-                    };
-                    self.finalize_journal(journal_id.as_deref(), final_action);
+                    self.finalize_journal(journal_id.as_deref(), JournalFinal::Pause);
                     return Ok(PayloadOutcome::canceled(journal_id.is_some()));
                 }
                 Ok(outcome) => {
@@ -825,10 +857,7 @@ impl SendEngine {
                 Err(error) => {
                     let stopped = control.cancel.is_canceled() || error.kind() == BtErrorKind::Canceled;
                     let action = if stopped {
-                        match control.desired() {
-                            Some(JobState::Paused) => JournalFinal::Pause,
-                            _ => JournalFinal::Cancel,
-                        }
+                        JournalFinal::Pause
                     } else {
                         JournalFinal::Release
                     };
@@ -904,7 +933,6 @@ impl SendEngine {
             JournalFinal::Complete => self.journal.complete(id),
             JournalFinal::Release => self.journal.release(id, true),
             JournalFinal::Pause => self.journal.pause(id),
-            JournalFinal::Cancel => self.journal.cancel(id),
         };
         if let Err(error) = result {
             self.emit(SendEvent::Log {
@@ -986,7 +1014,7 @@ fn file_size(path: &std::path::Path) -> Result<u64, BtError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::journal::Journal;
+    use crate::journal::{Journal, JournalState, LEASE};
     use crate::package::PendingPackageStore;
     use bt_api::SendItem;
     use bt_core::SendSource;
@@ -1092,5 +1120,75 @@ mod tests {
             engine.snapshot(id)
         );
         engine.shutdown();
+    }
+
+    #[test]
+    fn cancel_preserves_paused_journal_entry() {
+        let (engine, transport, dir, _source) = make_engine("cancel-journal");
+        let gate = transport.gate_next_connect();
+        let item = SendItem::from_source(SendSource::Text("resume me".to_string()));
+        let id = engine
+            .enqueue(
+                &DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
+                "Pixel",
+                vec![item],
+                Some(Channel::Assistant),
+            )
+            .unwrap()[0];
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let entries = engine.resume_entries().unwrap();
+            if entries.len() == 1 && entries[0].state == JournalState::Sending {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "journal 条目未写入");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        engine.cancel_all_jobs().unwrap();
+        gate.release();
+        assert!(wait_state(&engine, id, JobState::Canceled));
+        let entries = engine.resume_entries().unwrap();
+        assert_eq!(entries.len(), 1, "取消后必须保留 journal 条目");
+        assert_eq!(entries[0].state, JournalState::Paused);
+        assert!(entries[0].payload.is_file(), "取消后必须保留可续传载荷");
+        assert!(entries[0].validate_payload().is_ok(), "取消后的条目必须可续传");
+        let journal = Journal::new(dir.0.join("send-journal.bin"));
+        assert_eq!(journal.read_all().unwrap().len(), 1);
+        engine.shutdown();
+    }
+
+    #[test]
+    fn lease_heartbeat_renews_after_interval() {
+        let dir = TempDir::new("heartbeat");
+        let source = dir.0.join("payload.bin");
+        std::fs::write(&source, b"heartbeat-payload").unwrap();
+        let now = Arc::new(Mutex::new(1_000u64));
+        let clock = {
+            let now = now.clone();
+            Arc::new(move || *now.lock().unwrap())
+        };
+        let journal = Journal::new(dir.0.join("send-journal.bin")).with_clock(clock);
+        let content = std::fs::read(&source).unwrap();
+        let entry = JournalEntry::new(
+            DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
+            "payload.bin",
+            source,
+            bt_core::sha256(&content),
+            content.len() as u64,
+            JournalKind::File,
+            false,
+        );
+        let id = journal.begin(entry).unwrap().entry.id_hex();
+        let mut heartbeat = LeaseHeartbeat::new(&journal, &id);
+        let base = Instant::now();
+        assert!(!heartbeat
+            .observe(base + Duration::from_secs(RENEW.as_secs() - 1), 10)
+            .unwrap());
+        assert_eq!(journal.read_all().unwrap()[0].lease_until, 1_000 + LEASE.as_secs());
+        *now.lock().unwrap() = 1_000 + RENEW.as_secs();
+        assert!(heartbeat.observe(base + RENEW + Duration::from_secs(1), 10).unwrap());
+        let stored = journal.read_all().unwrap()[0].clone();
+        assert_eq!(stored.resume_offset, 10);
+        assert_eq!(stored.lease_until, 1_000 + RENEW.as_secs() + LEASE.as_secs());
     }
 }
