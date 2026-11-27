@@ -342,3 +342,100 @@
 ### 7.5 最终结论
 
 **有条件放行。** T7 对 R-01、R-03、R-04、R-05（核心错误路径）、R-06、R-25 的修复经独立复现成立；R-02 的引擎/journal 语义也已修复。剩余必修项只有 **R-26**：CLI/GUI 单文件 zip 取消后仍删除自产 zip，使“取消后 resume run”在该路径不可用，且与 ACCEPTANCE/CLI/ARCH 的声明冲突。R-27 至 R-32 为低风险文档、测试覆盖与残留项，建议在发布前同步，不单独阻断；MSRV 1.95 与真机边界仍需在对应环境实测，不能以本次本机结果替代。
+
+## 8 T10 终审
+
+终审对象：HEAD f206157（T9 提交 b0adfdd..f206157，共 11 个提交；相对 T8 的 f52ed9c 为 36 个文件、+2027/-176 行）。工作树干净，docs/REVIEW.md 已入库。本轮未改源码、未做 git 写操作；只追加本章。
+
+### 8.1 修复项逐条结论
+
+| 编号 | 结论 | 独立验证要点 |
+| --- | --- | --- |
+| R-26 | 部分修复：主链路通过，仍有 R-33 源文件边界 | 真实进程 SIGINT（BT_TEST_TRANSPORT=stall）实测 exit 1、summary.canceled=1、job=canceled、journal=paused、自产 zip 138 B 保留、用户源文件 18 B 保留；显式 resume cancel 删除 zip、保留源文件。脚本化 e2e zip_cancel_keeps_payload_and_resume_run_finishes_it 完成“取消→paused→resume run 完成→journal/payload 清理→source 保留→显式 cancel 清理”；GUI canceled_zip_job_keeps_payload_for_resume 通过。但源文件若位于 pending，会在完成后被 journal cleaner 删除，见 R-33；损坏 journal 下 settle 不保守，见 R-34。 |
+| R-27 | 部分修复（低） | 文档改为约 5.60 MB 并给出重建区间 5,603,710–5,603,912；本次两次重建 5,603,926 与 5,603,842，dist 旧包 5,603,884。区间未覆盖 5,603,926（+14 B），见 R-36。 |
+| R-28 | 已修复 | help、?、:help 在 repl --json 下输出 command=repl.help、ok=true、9 条 commands；--events 下输出 type=result；human 模式仍写 stderr，quit/exit 不输出对象；与 CLI.md 一致。 |
+| R-29 | 已修复 | PROTOCOL、ARCHITECTURE、CHANGELOG 明确“仅进度回调续租；Linux/Windows 进程存活兜底；其他平台 6 分钟无进度可能按租约接管；默认 300 s idle 先超时”。代码 SystemLiveness::reliable 仅 Linux/Windows，与实际一致。 |
+| R-30 | 已修复 | 调试构建 BT_TEST_TRANSPORT=mock 使 selftest transport=“通道 0”、engine 已装配；同一变量在 release 中 transport=“未启用（环境跳过）”，证明 release 空实现。真实 CLI e2e real_backend_resumes_only_for_transfer_commands 通过；手工以 debug 二进制验证 devices list 不改 journal、send 改变 journal。 |
+| R-32 | 已修复 | release 二进制 bt send folder 对 4 GiB 单文件与 3 GiB+1 GiB 累计均 exit 1、type=error、kind=unsupported、hint 含“拆分/4 GiB”，pending 0，源文件完整。 |
+| R-31 | 部分达成 | R-14 的 bt-gui 数量已改 9（实测 8 单测 + 1 集成）；R-16 标题已改；R-19/R-20/R-21/R-22/R-23/R-24 已修或已限定；R-22 无 VERSION 时 NSIS exit 1、有 VERSION 编译成功；R-08 仍是 ok=true + “环境跳过”文本，见 R-37；R-07/R-10/R-12/R-13/R-15/R-17/R-18 按 REVIEW 接受理由保留。 |
+
+### 8.2 全量门禁与体积复测
+
+| 项目 | 命令 | 退出码 | 结果 |
+| --- | --- | --- | --- |
+| 格式化 | cargo fmt --all --check | 0 | 无输出 |
+| 静态检查 | cargo clippy --workspace --all-targets -- -D warnings | 0 | 无警告 |
+| 全量测试 | cargo test --workspace | 0 | 283 passed、0 failed、1 ignored；较 T8 的 273/1 增加 10 个测试 |
+| CLI e2e | cargo test -p bt-cli | 0 | e2e 43、单测 12、pair_pin 3；含真实 SIGINT、zip 取消续传、真实后端 auto_resume、权限用例 |
+| 发布构建 | cargo build --workspace --release | 0 | 完整 bt 11,687,448 B、bt-gui 11,173,528 B、完整 btrecv 3,352,304 B |
+| cli-only | cargo build -p bt-cli --no-default-features --release | 0 | bt 3,607,088 B、btrecv 3,350,000 B；调试构建亦通过 |
+| GUI 自检 | cargo run -p bt-gui -- --selftest | 0 | 16 项全 ok |
+| MSRV | cargo xtask msrv | 0 | workspace=1.95，依赖最高要求=1.95 |
+| Windows target | cargo check -p bt-transport/-platform/-engine --target x86_64-pc-windows-msvc | 0 | 三者通过；store/app/cli/gui 仍 101（lib.exe 缺失），与 T8 相同 |
+| R-01 回归 | 单文件 4 GiB-1 / 4 GiB --zip | 0 / 1 | 4 GiB-1 32 s 成功、无 pending；4 GiB 拒绝、kind unsupported、无 pending |
+| R-22 | NSIS 无/有 VERSION | 1 / 0 | 无 VERSION 按设计失败；有 VERSION 编译成功 |
+
+体积对照：
+
+| 产物 | 文档声明 | 本次实测 | 结论 |
+| --- | --- | --- | --- |
+| cli-only bt | 3,607,088 | 3,607,088 | 相符 |
+| cli-only btrecv | 3,350,000 | 3,350,000 | 相符 |
+| bt-gui | 11,173,528 | 11,173,528 | 相符 |
+| 完整 bt | 11,687,448 | 11,687,448 | 相符 |
+| .deb | 5,603,710–5,603,912 | 重建 5,603,926 / 5,603,842；dist 5,603,884 | 区间略窄，见 R-36 |
+| NSIS | 未生成 | 脚本以 3.10 占位载荷编译成功（无 VERSION 失败） | 安装行为未验证 |
+
+### 8.3 R-26 载荷生命周期与安全边界
+
+已独立验证的通过项：
+
+- 真实进程 SIGINT：BT_TEST_TRANSPORT=stall 下启动真实 bt send file --zip，SIGINT 后 exit 1、job canceled、journal paused、pending zip 保留、源文件保留；显式 resume cancel 删除 zip、源文件仍在。
+- 脚本化 e2e：取消后 zip 146 B 保留；resume run 在带 OFFER/ACK/DONE 的脚本化传输上 completed=1，journal 与 pending 清空，source 保留；再次 resume cancel 清理自产 zip。
+- GUI 集成测试：取消后 journal paused、zip 保留、zip_payloads 已收尾、source 保留。
+- settle_owned_payload：有效 paused journal 引用时返回 false 并保留；journal 锁等待 5 s 后返回 false 并保留；pending 外用户源文件返回 false；pending/../victim.txt 普通外部文件因 canonicalize 在 pending 外而返回 false；pending 内指向外部文件的 symlink 返回 false。
+- 明确记录的边界：pending 内用户源文件会在完成时被删除（R-33）；损坏 journal 会被当成空日志，settle 随后删除 payload（R-34）；pending/../victim-link 形式的悬挂 symlink 会被删除（R-35）。
+
+### 8.4 新发现与剩余缺陷
+
+**R-33 中 必修：用户源文件若位于 pending，会在传输完成时被删除，违反“用户源文件永不被删”**
+- 现象：SendSource::File 的 produced 由 self.packages.is_owned(path) 路径判定（crates/bt-engine/src/send.rs:688）；用户在 pending 目录选择或放置的普通文件会被标记为自产，完成后 Journal::complete 的 cleaner 删除它（journal.rs:555/710、package.rs:138）。CLI/GUI 都没有拒绝 pending 内源文件。
+- 独立复现：用仓库源码另建 harness，把 pending/user-source.txt（19 B）作为 SendSource::File 交给带脚本化 OFFER/ACK/DONE 的引擎；任务 Completed 后 SOURCE_EXISTS=false JOURNAL=0 PENDING_FILES=0，即源文件被删。
+- 期望：用户选择的源文件永不删除，只有明确自产（CLI/GUI 预打包或 journal 恢复载荷）才可清理；至少应拒绝或提示 pending 内源文件。
+- 建议：为 produced 引入显式来源标志（命令层/恢复层传入），不要仅按路径判断；或在 file_item/GUI 入队处拒绝 pending 内源文件并提示移动到其他目录；补“源文件在 pending”回归测试。
+- 影响：违反 R-26 与 CLI.md“用户源文件永不删除”的绝对声明；源文件在应用内部目录才触发，但用户可通过 CLI/文件对话框选择该路径。
+
+**R-34 低：损坏 journal 不满足“不可读时保守保留”**
+- 现象：settle_owned_payload 调用 journal_for(paths).read_all()；journal 损坏时 read_unlocked 改名留证并返回 Ok(Vec::new())（crates/bt-engine/src/journal.rs:470-480），settle 视为“无引用”并删除 pending 载荷。独立测试：损坏 journal + 138 B payload，settle=true、payload 被删、journal 变 .corrupt.<ts>。
+- 期望：若 T9 的“journal 不可读时保守保留”包括损坏文件，应保留并在 quarantine 后提示手工恢复；若设计上损坏=空日志，则应把该表述限定为“读取错误（锁/IO）时保留”，不要承诺损坏也保留。
+- 建议：settle_owned_payload 在读取前后检查 journal 是否被 quarantine/消失，或提供严格读取 API；补损坏 journal 单测。
+
+**R-35 低：settle_owned_payload 可经 pending/../ 删除 pending 外的悬挂 symlink**
+- 现象：PendingPackageStore::is_owned 在 canonicalize 失败时回退为词法路径再 starts_with（crates/bt-engine/src/package.rs:138-148）；对不存在的悬挂 symlink，pending/../victim-link 的 canonicalize 失败，词法上仍在 pending 前缀内，delete 删除该外部 symlink。独立测试：外部 dangling symlink 被删（SETTLE=true），普通外部文件与指向外部文件的 pending symlink 均安全（SETTLE=false）。
+- 期望：只允许删除 pending 内真实路径；拒绝含 .. 的路径或做词法归一化后再校验；Windows 的盘符/大小写/分隔符变体需专项测试。
+- 建议：is_owned 先拒绝 ParentDir 组件或使用与 ensure_within 一致的归一化；settle_owned_payload 只接受已归一化的绝对路径；补 symlink 与 .. 测试。
+
+**R-36 低：.deb 文档区间略窄**
+- 现象：README:153、ARCHITECTURE:114、ACCEPTANCE:134、RELEASE:88/113 写 5,603,710–5,603,912；本次两次重建 5,603,926 与 5,603,842，dist 旧包 5,603,884；上限被突破 14 B。整体“约 5.60 MB”成立。
+- 建议：改为“约 5.60 MB，字节数随打包时间戳在数 KB 内波动”并附命令，不承诺窄区间；或扩大区间并注明采样环境。
+
+**R-37 低：R-08 字体检查仍以 ok=true 呈现**
+- 现象：缺字体时 selftest 输出 [ok] font: 环境跳过...（crates/bt-gui/src/selftest.rs:104），不是失败项；虽已显式标注环境跳过并给出 BT_FONT_PATH，仍与“字体检查”语义有距离。
+- 建议：若接受环境跳过，保留现状并在验收中说明；否则输出独立 skip 状态，避免用户把 ok 理解为字体可用。
+
+**R-38 低：CLI 退出码表仍把单实例锁归到 4**
+- 现象：docs/CLI.md:27 写 4 包含“单实例锁等待超时”，但单实例冲突实际走 BtError::busy→3（bt-gui/src/lib.rs 的 acquire/signal 分支）；当前只有 journal 锁返回 Locked→4。建议改表或明确 3/4 的区分。
+
+### 8.5 未验证项
+
+1. Rust 1.95 实际编译：本机只有 1.96；1.95 未安装，下载尝试在本环境停滞并取消；CI 的 MSRV 作业已接线但未实际运行。需在有 1.95 的机器或 CI 实跑 cargo check --workspace --all-targets。
+2. 真实蓝牙扫描/配对/SDP/RFCOMM/OPP/助手通道、真实长传输 SIGINT 与断线续传；无硬件/BlueZ。
+3. 真实 GUI 窗口/托盘/通知/剪贴板、Windows WinRT、NSIS 安装/升级/卸载、AppImage、GitHub Actions 发布：环境缺失。
+4. .deb 实际安装/卸载；只做重建与 dpkg-deb 检查。
+5. 真实旧 .NET 数据迁移与旧版接收端跨实现互传。
+6. settle_owned_payload 的 Windows 大小写/分隔符/盘符路径变体；本机仅 Linux。
+7. 4 GiB 以上真实蓝牙传输、磁盘满；未变。
+
+### 8.6 最终判定
+
+**有条件放行。** T9 对 R-26 主链路、R-28、R-29、R-30、R-32 的修复经独立复现成立；R-27 为低风险测量表述问题，R-31 的大部分项目已处理或已记录接受理由。剩余必修项只有 **R-33**：用户源文件若位于 pending/ 会在完成时被 journal cleaner 删除，直接违反“用户源文件永不被删”；应在命令层拒绝该来源或改为显式来源标志。R-34 至 R-38 为低风险边界/文档问题，建议发布前处理。MSRV 1.95、真实蓝牙、Windows 安装器、GUI 渲染与 AppImage 仍属未验证边界，不能以本机结果替代。
