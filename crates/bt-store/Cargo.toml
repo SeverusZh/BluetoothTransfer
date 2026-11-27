@@ -1,0 +1,16 @@
+[package]
+name = "bt-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "持久化层：SQLite 记录、TOML 配置、导出与旧格式迁移"
+
+[dependencies]
+bt-core.workspace = true
+bt-api.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+toml = "1.2.3"
+
