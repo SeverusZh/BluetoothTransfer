@@ -1056,6 +1056,66 @@ fn real_backend_resumes_only_for_transfer_commands() {
 
 #[cfg(unix)]
 #[test]
+fn cli_sigint_keeps_zip_payload_for_resume() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let env = Env::new();
+    let source = env.path("sigint-source.txt");
+    std::fs::write(&source, b"sigint zip payload").unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_bt"))
+        .env("BT_HOME", env.home())
+        .env("BT_TEST_TRANSPORT", "stall")
+        .env_remove("BT_BACKEND")
+        .env_remove("APPDATA")
+        .env_remove("LOCALAPPDATA")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .args(["send", "file", PHONE, source.to_str().unwrap(), "--zip", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("启动 bt");
+
+    let paths = bt_app::AppPaths::portable(env.home());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let entries = bt_app::list_resume(&paths).unwrap_or_default();
+        if entries.iter().any(|entry| entry.state == "sending") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "CLI 未进入 sending：{entries:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let signal = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .expect("发送 SIGINT");
+    assert!(signal.success());
+    let output = child.wait_with_output().expect("等待 bt 退出");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("stdout 应为单个 JSON 对象");
+    assert_eq!(value["summary"]["canceled"], 1);
+    assert_eq!(value["jobs"][0]["state"], "canceled");
+
+    let entries = bt_app::list_resume(&paths).unwrap();
+    assert_eq!(entries.len(), 1, "取消后 journal 条目必须保留");
+    assert_eq!(entries[0].state, "paused");
+    assert!(
+        entries[0].payload.is_file(),
+        "SIGINT 取消后自产 zip 必须保留：{}",
+        entries[0].payload.display()
+    );
+    assert!(source.is_file(), "用户源文件不得被删除");
+}
+
+#[cfg(unix)]
+#[test]
 fn permission_errors_exit_4_with_permission_kind() {
     use std::os::unix::fs::PermissionsExt;
 

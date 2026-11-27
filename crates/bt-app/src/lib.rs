@@ -75,8 +75,13 @@ fn scripted_test_transport() -> Option<Arc<dyn bt_transport::BluetoothTransport>
     #[cfg(debug_assertions)]
     {
         let mode = std::env::var("BT_TEST_TRANSPORT").ok()?;
+        let transport = bt_transport::mock::MockTransport::new(Vec::new());
         if mode.eq_ignore_ascii_case("mock") {
-            return Some(Arc::new(bt_transport::mock::MockTransport::new(Vec::new())));
+            return Some(Arc::new(transport));
+        }
+        if mode.eq_ignore_ascii_case("stall") {
+            transport.set_stall(true);
+            return Some(Arc::new(transport));
         }
     }
     None

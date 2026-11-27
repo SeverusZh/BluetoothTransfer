@@ -20,6 +20,7 @@ struct StreamState {
     peer: Option<DeviceId>,
     closed: bool,
     fail_reads: bool,
+    stall: bool,
 }
 
 /// 内存单向流：读取取自预置入站缓冲，写入累积到出站缓冲。
@@ -64,6 +65,13 @@ impl MockStream {
             state.inbound.extend(bytes.iter().copied());
         }
     }
+
+    /// 模拟只建立连接、不返回数据的链路；读取持续 WouldBlock，传输可按取消标志退出。
+    pub fn set_stall(&self, stall: bool) {
+        if let Ok(mut state) = self.state.lock() {
+            state.stall = stall;
+        }
+    }
 }
 
 impl Read for MockStream {
@@ -74,6 +82,11 @@ impl Read for MockStream {
                 std::io::ErrorKind::ConnectionAborted,
                 "模拟连接中断",
             ));
+        }
+        if state.stall && state.inbound.is_empty() {
+            drop(state);
+            std::thread::sleep(Duration::from_millis(10));
+            return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "模拟链路停顿"));
         }
         let count = buffer.len().min(state.inbound.len());
         for slot in buffer.iter_mut().take(count) {
@@ -174,6 +187,7 @@ pub struct MockTransport {
     last_pair_answer: Mutex<Option<PairAnswer>>,
     service_result: Mutex<ServiceResult>,
     gate: Mutex<Option<Arc<ConnectGate>>>,
+    stall: AtomicBool,
 }
 
 impl Default for MockTransport {
@@ -196,6 +210,7 @@ impl Default for MockTransport {
             last_pair_answer: Mutex::new(None),
             service_result: Mutex::new(ServiceResult::Available(3)),
             gate: Mutex::new(None),
+            stall: AtomicBool::new(false),
         }
     }
 }
@@ -251,6 +266,11 @@ impl MockTransport {
     /// 最近一次配对回调返回的应答。
     pub fn last_pair_answer(&self) -> Option<PairAnswer> {
         self.last_pair_answer.lock().ok().and_then(|answer| answer.clone())
+    }
+
+    /// 让新建的连接只保持打开、不返回任何入站数据。
+    pub fn set_stall(&self, stall: bool) {
+        self.stall.store(stall, Ordering::SeqCst);
     }
 
     pub fn set_service_absent(&self) {
@@ -338,6 +358,7 @@ impl MockTransport {
 
     fn open_stream(&self, device: &DeviceId, inbound: Vec<u8>) -> TransportResult<Box<dyn TransportStream>> {
         let stream = MockStream::new(Some(*device), inbound);
+        stream.set_stall(self.stall.load(Ordering::SeqCst));
         if let Ok(mut streams) = self.streams.lock() {
             streams.push(stream.clone());
         }
