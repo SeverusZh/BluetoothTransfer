@@ -169,6 +169,7 @@ Windows：
 ## 版本与发布
 
 - 整个工作区共用单一版本号，当前为 2.0.0，写在根 Cargo.toml 的 workspace.package 中。
+- 构建工具链固定在根 `rust-toolchain.toml`，当前为 1.100.1，含 rustfmt 与 clippy；质量门禁与发布构建使用同一版本。
 - MSRV 当前为 1.95，与 `clippy.toml` 的 `msrv`、README 和 CI 的 MSRV 构建任务一致；`cargo xtask msrv` 校验 workspace 声明不低于依赖要求。
 - 发布标签形如 v2.0.0；标签必须与工作区版本一致，由 CI 校验。
 - CI 矩阵覆盖 ubuntu-latest 与 windows-latest，执行格式化、静态检查、测试、发布构建与 GUI 自检。
@@ -212,7 +213,7 @@ Windows：
 
 开发机与 CI 使用同一组命令：
 
-- `. ./.toolchain/env.sh` 加载仓库内工具链；系统 Rust 1.95 及以上也可直接构建。MSRV 由根 `Cargo.toml` 的 `workspace.package.rust-version` 声明，依据是依赖声明的最高 `rust-version`（当前来自 eframe/egui 0.37 的 1.95），`cargo xtask msrv` 在本地与 CI 校验该一致性。
+- `. ./.toolchain/env.sh` 加载仓库内工具链；`rust-toolchain.toml` 固定为 1.100.1，rustup 按该文件选择工具链，系统 Rust 1.95 及以上也可直接构建。MSRV 由根 `Cargo.toml` 的 `workspace.package.rust-version` 声明，依据是依赖声明的最高 `rust-version`（当前来自 eframe/egui 0.37 的 1.95），`cargo xtask msrv` 在本地与 CI 校验该一致性。
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`

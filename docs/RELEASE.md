@@ -14,6 +14,8 @@
 | Linux x64 | `x86_64-unknown-linux-gnu` | `ubuntu-latest` 原生构建 | `.deb`、AppImage、GUI 单文件 |
 | Linux 交叉检查 | `x86_64-pc-windows-msvc` | `cargo check --target` | 只做类型检查，无链接器 |
 
+构建工具链由根 `rust-toolchain.toml` 固定为 1.100.1，`release.yml` 的 `dtolnay/rust-toolchain` 与质量门禁使用同一版本；MSRV 仍为 1.95，由独立的 MSRV 作业校验。
+
 发布构建使用根 `Cargo.toml` 的 release 配置：`opt-level = "z"`、`lto = true`、`codegen-units = 1`、`panic = "abort"`、`strip = true`。
 
 ## 产物结构
