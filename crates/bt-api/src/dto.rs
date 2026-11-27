@@ -81,10 +81,10 @@ pub struct SendItem {
     pub total_bytes: Option<u64>,
     pub kind: RecordKind,
     /// 是否为本应用生成的待续传载荷；只允许打包或续传路径置真，不进入公开 JSON。
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing, skip_deserializing)]
     pub produced: bool,
     /// 是否从 journal 恢复；恢复载荷允许存放在 pending 内，不进入公开 JSON。
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing, skip_deserializing)]
     pub recovered: bool,
 }
 
@@ -663,8 +663,12 @@ mod tests {
         item.produced = true;
         let json = serde_json::to_value(&item).unwrap();
         assert!(json.get("produced").is_none(), "内部来源标志不进入 JSON");
-        let back: SendItem = serde_json::from_value(json).unwrap();
-        assert!(!back.produced, "缺失字段反序列化为非自产");
+        let mut forged = serde_json::to_value(&item).unwrap();
+        forged["produced"] = serde_json::json!(true);
+        forged["recovered"] = serde_json::json!(true);
+        let back: SendItem = serde_json::from_value(forged).unwrap();
+        assert!(!back.produced, "外部 JSON 不得置位 produced");
+        assert!(!back.recovered, "外部 JSON 不得置位 recovered");
     }
 
     #[test]
