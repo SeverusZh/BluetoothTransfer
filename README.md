@@ -150,7 +150,7 @@ bt selftest --json
 | 助手协议开销 | 0.01% 以内 | 0.00725% |
 | cli-only 发布体积 | 8 MB | `bt` 3,607,088 字节，`btrecv` 3,350,000 字节 |
 | GUI 单文件 | 20 MB | 11,173,528 字节 |
-| .deb | 20 MB | 5,603,710 字节（本次重建实测，打包时间戳可致数 KB 差异） |
+| .deb | 20 MB | 约 5.60 MB（重建实测 5,603,710–5,603,902 字节，打包时间戳可致数 KB 差异） |
 | NSIS 安装器 | 15 MB | 本机无 makensis，未生成 |
 
 体积实测方法与最终数字见 `docs/RELEASE.md` 与 `docs/ARCHITECTURE.md`；协议与导出指标由单元测试固化，CLI 侧实测值见 `docs/ACCEPTANCE.md`。

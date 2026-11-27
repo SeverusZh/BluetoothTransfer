@@ -111,7 +111,7 @@ MockBackend 提供内存实现：可预置设备、事件脚本与配对交互�
 | cli-only btrecv | 8 MB 以内 | 3,350,000 字节 | 同上 |
 | GUI 单文件 bt-gui | 20 MB 以内 | 11,173,528 字节 | strip、LTO、opt-level=z |
 | NSIS 安装器 | 15 MB 以内 | 未生成 | 本机无 makensis 与 Windows 链接器 |
-| .deb | 20 MB 以内 | 5,603,710 字节（重建实测） | 含 GUI、cli-only bt 与 btrecv；dpkg-deb 打包时间戳可致数 KB 差异 |
+| .deb | 20 MB 以内 | 约 5.60 MB（重建实测 5,603,710–5,603,902 字节） | 含 GUI、cli-only bt 与 btrecv；dpkg-deb 打包时间戳可致数 KB 差异 |
 
 测量方法：
 
