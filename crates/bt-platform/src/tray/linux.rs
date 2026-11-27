@@ -27,7 +27,7 @@ impl Tray for LinuxTray {
     fn icon_pixmap(&self) -> Vec<Icon> {
         let (rgba, width, height) = icon_rgba();
         let mut data = Vec::with_capacity(rgba.len());
-        for pixel in rgba.chunks_exact(4) {
+        for pixel in rgba.as_chunks::<4>().0 {
             // SNI 要求 ARGB32 网络字节序。
             data.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
         }

@@ -267,7 +267,12 @@ unsafe fn create_icon() -> Result<HICON, String> {
         return Err(format!("创建托盘位图失败：{}", windows_error()));
     }
     let target = std::slice::from_raw_parts_mut(pixels.cast::<u8>(), rgba.len());
-    for (source, target) in rgba.chunks_exact(4).zip(target.chunks_exact_mut(4)) {
+    for (source, target) in rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(target.as_chunks_mut::<4>().0.iter_mut())
+    {
         target[0] = source[2];
         target[1] = source[1];
         target[2] = source[0];

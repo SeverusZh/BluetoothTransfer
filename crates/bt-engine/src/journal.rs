@@ -1081,7 +1081,7 @@ mod platform {
         // 安全性：句柄来自有效 File，OVERLAPPED 为栈上 C 布局结构。
         let ok = unsafe {
             LockFileEx(
-                file.as_raw_handle() as *mut core::ffi::c_void,
+                file.as_raw_handle(),
                 LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
                 0,
                 !0,
@@ -1104,15 +1104,7 @@ mod platform {
         use std::os::windows::io::AsRawHandle;
         let mut overlapped = overlapped();
         // 安全性：句柄来自有效 File，OVERLAPPED 为栈上 C 布局结构。
-        let ok = unsafe {
-            UnlockFileEx(
-                file.as_raw_handle() as *mut core::ffi::c_void,
-                0,
-                !0,
-                !0,
-                &mut overlapped,
-            )
-        };
+        let ok = unsafe { UnlockFileEx(file.as_raw_handle(), 0, !0, !0, &mut overlapped) };
         if ok != 0 {
             Ok(())
         } else {
