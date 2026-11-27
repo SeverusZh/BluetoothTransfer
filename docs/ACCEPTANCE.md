@@ -49,7 +49,7 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | SND-07 | 助手通道探测与发送 | `devices detect` + `send --mode assistant`；bt-app e2e `assistant_send_end_to_end_uses_journal_and_records_completed` | 协议与引擎已用脚本化传输验证；真实 RFCOMM 未验证 |
 | SND-08 | 断点续传 | `bt resume list/run/cancel`；e2e `resume_list_run_and_cancel_use_the_real_journal`、`resume_run_recovers_paused_entries_and_prunes_missing_payloads` | 契约已验证：BTJ1 journal 计划、paused 恢复与 abandon 清理；真实断线续传未验证 |
 | SND-09 | 顺序队列与逐任务暂停/继续/取消/重试/移除 | 引擎队列单元测试与 GUI 队列页动作 | 已接线；无长传输可验证真实暂停与重试 |
-| SND-10 | Ctrl+C 取消发送并保留续传信息 | e2e `cancel_keeps_resume_entry_and_resume_run_finishes_it`、`zip_cancel_keeps_payload_and_resume_run_finishes_it`：脚本化传输取消后 journal 保持 paused、自产 zip 保留，CLI `resume list/run` 可继续并在完成后清理；引擎单测 `cancel_preserves_paused_journal_entry`、`cancel_keeps_produced_zip_until_journal_terminal_state`、`completed_produced_zip_is_removed_with_journal_entry`；GUI `canceled_zip_job_keeps_payload_for_resume` | 契约已验证；真实长传输 Ctrl+C 未验证 |
+| SND-10 | Ctrl+C 取消发送并保留续传信息 | e2e `cancel_keeps_resume_entry_and_resume_run_finishes_it`、`zip_cancel_keeps_payload_and_resume_run_finishes_it`：脚本化传输取消后 journal 保持 paused、自产 zip 保留，CLI `resume list/run` 可继续并在完成后清理；e2e `cli_sigint_keeps_zip_payload_for_resume` 用真实 CLI 二进制、SIGINT 与停顿链路复现同一路径；引擎单测 `cancel_preserves_paused_journal_entry`、`cancel_keeps_produced_zip_until_journal_terminal_state`、`completed_produced_zip_is_removed_with_journal_entry`；GUI `canceled_zip_job_keeps_payload_for_resume` | 契约已验证（含真实进程 SIGINT）；真实蓝牙长传输未验证 |
 | SND-11 | 进度与速率 | `--events` 的 `job_progress`；e2e `send_events_are_ndjson_with_result_line` | 契约已验证 |
 | SND-12 | 剪贴板与拖放发起 | GUI 发送页动作与平台剪贴板测试 | 已接线；无显示环境未验证真实剪贴板 |
 

@@ -35,7 +35,7 @@
 | --- | --- |
 | `BT_HOME` | 便携根覆盖。设置后配置在 `$BT_HOME/.config/BluetoothTransfer/`，数据在 `$BT_HOME/.local/share/BluetoothTransfer/`，默认接收目录为 `$BT_HOME/Downloads/BluetoothReceive` |
 | `BT_BACKEND` | 值为 `mock` 时使用内存模拟后端；其它值走正式装配 |
-| `BT_TEST_TRANSPORT` | 仅调试构建的测试入口：值为 `mock` 时为真实后端注入内存脚本化传输层；发布构建忽略 |
+| `BT_TEST_TRANSPORT` | 仅调试构建的测试入口：`mock` 为真实后端注入空入站的内存传输层，`stall` 模拟只连接不返回数据的链路（用于取消测试）；发布构建忽略 |
 | `XDG_CONFIG_HOME` / `XDG_DATA_HOME` | Linux 配置根与数据根，未设置时用 `$HOME/.config` 与 `$HOME/.local/share` |
 | `APPDATA` / `LOCALAPPDATA` | Windows 配置根与数据根 |
 

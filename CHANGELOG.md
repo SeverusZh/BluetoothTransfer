@@ -23,7 +23,7 @@ Rust 重写版本，取代原 Windows .NET 8 WPF 实现。
 - 打开后端时只有 `send`、`recv` 与 `gui` 自动恢复 journal；查询、配置、导出与 `resume list` 不再触发发送。
 - MSRV 由 1.85 修正为 1.95，依据 eframe/egui 0.37 的 `rust-version`；`cargo xtask msrv` 与 CI 校验声明一致性。
 - `send folder` 在入队前预检 ZIP32 上限，超限时输出 `error.kind=unsupported` 与拆分建议，而不是仅落到任务错误字符串。
-- CLI e2e 增加真实后端路径：只读命令不改 journal，`send` 触发自动续传。
+- CLI e2e 增加真实后端路径：只读命令不改 journal，`send` 触发自动续传；并用真实进程 SIGINT 与停顿链路验证取消后保留 zip 载荷。
 
 ### 破坏性变更
 
