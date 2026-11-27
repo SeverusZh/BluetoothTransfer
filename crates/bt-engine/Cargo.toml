@@ -9,4 +9,8 @@ description = "传输引擎：协议状态机、队列、续传、journal、打�
 [dependencies]
 bt-core.workspace = true
 bt-api.workspace = true
+bt-transport.workspace = true
+flate2 = "1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

@@ -57,6 +57,8 @@ pub struct MockBackend {
     next_ask: AtomicU64,
     next_pin: AtomicU64,
     next_record: AtomicU64,
+    pair_prompt: Mutex<PinPromptKind>,
+    pending_pair: Mutex<Option<(PinRequestId, PinPromptKind)>>,
 }
 
 impl Default for MockBackend {
@@ -86,7 +88,31 @@ impl MockBackend {
             next_ask: AtomicU64::new(0),
             next_pin: AtomicU64::new(0),
             next_record: AtomicU64::new(0),
+            pair_prompt: Mutex::new(PinPromptKind::Confirm),
+            pending_pair: Mutex::new(None),
         }
+    }
+
+    /// 配置下一次配对请求的交互类型，供无硬件的 PIN 流程测试。
+    pub fn set_pair_prompt(&self, kind: PinPromptKind) {
+        if let Ok(mut current) = self.pair_prompt.lock() {
+            *current = kind;
+        }
+    }
+
+    fn emit_pair_result(&self, ok: bool) -> Result<(), BtError> {
+        let device_id = self
+            .devices
+            .lock()
+            .ok()
+            .and_then(|devices| devices.first().map(|device| device.id))
+            .ok_or_else(|| BtError::not_found("没有待应答的配对请求"))?;
+        self.bus.emit(Event::PairResult {
+            device_id,
+            ok,
+            error: None,
+        });
+        Ok(())
     }
 
     /// 预置后续要广播的事件，`flush_scripted` 或 `subscribe` 之后统一投递。
@@ -262,7 +288,14 @@ impl Backend for MockBackend {
         let found = self.device_or_error(device)?;
         self.push_call("pair", device.to_string());
         let id = PinRequestId(self.next_pin.fetch_add(1, Ordering::SeqCst) + 1);
-        let kind = PinPromptKind::Confirm;
+        let kind = self
+            .pair_prompt
+            .lock()
+            .map(|kind| *kind)
+            .unwrap_or(PinPromptKind::Confirm);
+        if let Ok(mut pending) = self.pending_pair.lock() {
+            *pending = Some((id, kind));
+        }
         let request = PinRequest {
             id,
             device: found.id,
@@ -277,19 +310,60 @@ impl Backend for MockBackend {
     }
 
     fn answer_prompt(&self, request: PinRequestId, accept: bool) -> Result<(), BtError> {
-        self.push_call("answer_prompt", format!("{} accept={accept}", request.0));
-        let device_id = self
-            .devices
+        let pending = self
+            .pending_pair
             .lock()
-            .ok()
-            .and_then(|devices| devices.first().map(|device| device.id))
-            .ok_or_else(|| BtError::not_found("没有待应答的配对请求"))?;
-        self.bus.emit(Event::PairResult {
-            device_id,
-            ok: accept,
-            error: None,
-        });
-        Ok(())
+            .map_err(|_| BtError::internal("配对应答被投毒"))?
+            .take();
+        let Some((id, kind)) = pending else {
+            return Err(BtError::not_found("没有待应答的配对请求"));
+        };
+        if id != request {
+            if let Ok(mut slot) = self.pending_pair.lock() {
+                *slot = Some((id, kind));
+            }
+            return Err(BtError::not_found("配对请求编号不匹配"));
+        }
+        if kind == PinPromptKind::Pin {
+            if let Ok(mut slot) = self.pending_pair.lock() {
+                *slot = Some((id, kind));
+            }
+            return Err(BtError::invalid("PIN 配对请使用 answer_pin"));
+        }
+        self.push_call("answer_prompt", format!("{} accept={accept}", request.0));
+        self.emit_pair_result(accept)
+    }
+
+    fn answer_pin(&self, request: PinRequestId, pin: &str) -> Result<(), BtError> {
+        let pin = pin.trim();
+        if pin.is_empty() {
+            return Err(BtError::invalid("PIN 不能为空"));
+        }
+        if pin.chars().count() > 16 {
+            return Err(BtError::invalid("PIN 最多 16 个字符"));
+        }
+        let pending = self
+            .pending_pair
+            .lock()
+            .map_err(|_| BtError::internal("配对应答被投毒"))?
+            .take();
+        let Some((id, kind)) = pending else {
+            return Err(BtError::not_found("没有待应答的配对请求"));
+        };
+        if id != request {
+            if let Ok(mut slot) = self.pending_pair.lock() {
+                *slot = Some((id, kind));
+            }
+            return Err(BtError::not_found("配对请求编号不匹配"));
+        }
+        if kind != PinPromptKind::Pin {
+            if let Ok(mut slot) = self.pending_pair.lock() {
+                *slot = Some((id, kind));
+            }
+            return Err(BtError::invalid("该配对请求不需要 PIN"));
+        }
+        self.push_call("answer_pin", format!("{} len={}", request.0, pin.chars().count()));
+        self.emit_pair_result(true)
     }
 
     fn set_alias(&self, device: &DeviceId, alias: Option<&str>) -> Result<(), BtError> {
@@ -841,6 +915,41 @@ mod tests {
         let records = backend.records(RecordQuery::default()).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].status, RecordStatus::Completed);
+    }
+
+    #[test]
+    fn pin_pairing_requires_answer_pin_and_redacts_value() {
+        let id = DeviceId::parse("AA:BB:CC:DD:EE:03").unwrap();
+        let backend = MockBackend::new(vec![Device::new(id, "Pixel")]);
+        backend.set_pair_prompt(PinPromptKind::Pin);
+        let events = backend.subscribe();
+        backend.pair(&id).unwrap();
+        let prompt = events.recv().unwrap();
+        let Event::PairPrompt { request, kind, .. } = prompt else {
+            panic!("未收到配对请求");
+        };
+        assert_eq!(kind, PinPromptKind::Pin);
+        assert!(backend.answer_prompt(request.id, true).is_err());
+        backend.answer_pin(request.id, "1234").unwrap();
+        let result = events.recv().unwrap();
+        assert!(matches!(result, Event::PairResult { ok: true, .. }));
+        let calls = backend.take_calls();
+        let pin_call = calls.iter().find(|call| call.method() == "answer_pin").unwrap();
+        assert!(pin_call.detail().contains("len=4"));
+        assert!(!pin_call.detail().contains("1234"));
+    }
+
+    #[test]
+    fn pin_answer_is_rejected_for_confirm_prompts() {
+        let id = DeviceId::parse("AA:BB:CC:DD:EE:04").unwrap();
+        let backend = MockBackend::new(vec![Device::new(id, "Pixel")]);
+        let events = backend.subscribe();
+        backend.pair(&id).unwrap();
+        let Event::PairPrompt { request, .. } = events.recv().unwrap() else {
+            panic!("未收到配对请求");
+        };
+        assert!(backend.answer_pin(request.id, "1234").is_err());
+        backend.answer_prompt(request.id, true).unwrap();
     }
 
     #[test]

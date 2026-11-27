@@ -18,7 +18,7 @@ pub use config::{
 pub use device::DeviceId;
 pub use error::{BtError, BtErrorKind};
 pub use hash::{hex_lower, parse_transfer_id, sha256, sha256_file, short_hex, TransferId};
-pub use record::Record;
+pub use record::{Record, MAX_RECORD_CONTENT_BYTES};
 pub use time::{format_bytes, format_duration, now_rfc3339, parse_rfc3339, rfc3339_from_unix, unix_now};
 pub use transfer::{AssistantState, Channel, Direction, RecordKind, RecordStatus, SendSource};
 

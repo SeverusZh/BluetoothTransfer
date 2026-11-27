@@ -108,6 +108,17 @@ mod tests {
     }
 
     #[test]
+    fn handles_absolute_traversal_and_overlong_names() {
+        assert_eq!(sanitize_file_name("/etc/passwd"), "passwd");
+        assert_eq!(sanitize_file_name("..\\..\\evil.txt"), "evil.txt");
+        assert_eq!(sanitize_file_name("C:\\Windows\\x.dll"), "x.dll");
+        let long = "a".repeat(300);
+        assert_eq!(sanitize_file_name(&long).chars().count(), 180);
+        assert_eq!(sanitize_file_name(".."), "unnamed");
+        assert_eq!(sanitize_file_name("..."), "unnamed");
+    }
+
+    #[test]
     fn neutralizes_windows_reserved_names() {
         assert_eq!(sanitize_file_name("CON"), "CON_");
         assert_eq!(sanitize_file_name("lpt9.txt"), "lpt9.txt_");

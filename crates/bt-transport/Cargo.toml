@@ -9,3 +9,20 @@ description = "蓝牙传输抽象：发现、配对、RFCOMM 连接与服务广�
 [dependencies]
 bt-core.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.5", features = ["blocking-api"] }
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = [
+    "Foundation",
+    "Foundation_Collections",
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_Rfcomm",
+    "Devices_Enumeration",
+    "Networking_Sockets",
+    "Storage_Streams",
+    "Security_Credentials",
+    "Win32_Foundation",
+    "Win32_System_WinRT",
+] }

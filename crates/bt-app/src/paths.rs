@@ -11,11 +11,17 @@ pub struct AppPaths {
     pub receive_dir: PathBuf,
     pub database_file: PathBuf,
     pub journal_dir: PathBuf,
+    pub journal_file: PathBuf,
+    pub pending_dir: PathBuf,
+    pub password_file: PathBuf,
 }
 
 impl AppPaths {
     /// 按当前平台约定解析目录，不创建任何文件。
     pub fn resolve() -> Result<Self, BtError> {
+        if let Some(home) = bt_home() {
+            return Ok(Self::portable(&home));
+        }
         let config_root = config_root().ok_or_else(|| BtError::internal("无法确定配置目录"))?;
         let data_root = data_root().ok_or_else(|| BtError::internal("无法确定数据目录"))?;
         let app_config = config_root.join("BluetoothTransfer");
@@ -28,9 +34,29 @@ impl AppPaths {
             log_dir: app_data.join("logs"),
             database_file: app_data.join("records.db"),
             journal_dir: app_data.join("journal"),
+            journal_file: app_data.join("journal").join("send-journal.bin"),
+            pending_dir: app_data.join("pending"),
+            password_file: app_data.join("auth.token"),
             data_dir: app_data,
             receive_dir,
         })
+    }
+
+    /// 便携根目录：配置、数据与下载都落在同一根下。
+    pub fn portable(root: &Path) -> Self {
+        let app_config = root.join(".config").join("BluetoothTransfer");
+        let app_data = root.join(".local").join("share").join("BluetoothTransfer");
+        Self {
+            config_file: app_config.join("config.toml"),
+            log_dir: app_data.join("logs"),
+            database_file: app_data.join("records.db"),
+            journal_dir: app_data.join("journal"),
+            journal_file: app_data.join("journal").join("send-journal.bin"),
+            pending_dir: app_data.join("pending"),
+            password_file: app_data.join("auth.token"),
+            receive_dir: root.join("Downloads").join("BluetoothReceive"),
+            data_dir: app_data,
+        }
     }
 
     /// 固定根目录下的路径布局，测试与便携模式共用。
@@ -42,6 +68,9 @@ impl AppPaths {
             receive_dir: app.join("receive"),
             database_file: app.join("records.db"),
             journal_dir: app.join("journal"),
+            journal_file: app.join("journal").join("send-journal.bin"),
+            pending_dir: app.join("pending"),
+            password_file: app.join("auth.token"),
             data_dir: app,
         }
     }
@@ -52,6 +81,7 @@ impl AppPaths {
             self.log_dir.as_path(),
             self.receive_dir.as_path(),
             self.journal_dir.as_path(),
+            self.pending_dir.as_path(),
         ] {
             std::fs::create_dir_all(dir)?;
         }
@@ -64,6 +94,12 @@ impl AppPaths {
     pub fn default_config(&self) -> Config {
         Config::default_for(self.receive_dir.clone())
     }
+}
+
+fn bt_home() -> Option<PathBuf> {
+    std::env::var_os("BT_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -116,18 +152,27 @@ mod tests {
             paths.receive_dir,
             Path::new("/tmp/bt-app-test/BluetoothTransfer/receive")
         );
+        assert_eq!(
+            paths.journal_file,
+            Path::new("/tmp/bt-app-test/BluetoothTransfer/journal/send-journal.bin")
+        );
+        assert_eq!(
+            paths.password_file,
+            Path::new("/tmp/bt-app-test/BluetoothTransfer/auth.token")
+        );
         assert_eq!(paths.default_config().receive_dir, paths.receive_dir);
     }
 
     #[test]
     fn create_dirs_materializes_directories() {
-        let root = std::env::temp_dir().join("bt-app-paths-create");
+        let root = std::env::temp_dir().join(format!("bt-app-paths-create-{}", std::process::id()));
         let paths = AppPaths::under(&root);
         paths.create_dirs().unwrap();
         assert!(paths.data_dir.is_dir());
         assert!(paths.log_dir.is_dir());
         assert!(paths.receive_dir.is_dir());
         assert!(paths.journal_dir.is_dir());
+        assert!(paths.pending_dir.is_dir());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

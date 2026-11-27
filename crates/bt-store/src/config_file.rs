@@ -175,7 +175,9 @@ mod tests {
     #[test]
     fn renders_only_non_default_fields() {
         let defaults = Config::default();
-        assert!(render_config(&defaults, &defaults).is_empty());
+        let rendered = render_config(&defaults, &defaults);
+        eprintln!("MEASURE config_default_bytes={}", rendered.len());
+        assert!(rendered.is_empty());
 
         let mut changed = defaults.clone();
         changed.opp_retry_count = 5;

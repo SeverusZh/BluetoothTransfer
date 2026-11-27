@@ -14,12 +14,50 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bt_core::{BtError, Channel, DeviceId};
+use bt_core::{BtError, Channel, DeviceId, ProtectionLevel};
 
 pub type TransportResult<T> = Result<T, BtError>;
 
 /// 服务端接受连接后的回调类型。
 pub type AcceptHandler = Arc<dyn Fn(Box<dyn TransportStream>) + Send + Sync>;
+
+/// 配对交互类型，与上层 DTO 解耦。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairPromptKind {
+    Pin,
+    Confirm,
+    Passkey(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairPrompt {
+    pub device: DeviceId,
+    pub kind: PairPromptKind,
+}
+
+/// 配对交互应答：确认接受、拒绝，或携带用户输入的 PIN。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PairAnswer {
+    Accept,
+    Reject,
+    Pin(String),
+}
+
+impl PairAnswer {
+    pub fn accepted(&self) -> bool {
+        !matches!(self, Self::Reject)
+    }
+
+    pub fn pin(&self) -> Option<&str> {
+        match self {
+            Self::Pin(pin) => Some(pin),
+            _ => None,
+        }
+    }
+}
+
+/// 配对交互回调：返回应答；PIN 类请求必须回填 PIN。
+pub type PromptHandler = Arc<dyn Fn(PairPrompt) -> PairAnswer + Send + Sync>;
 
 /// 扫描结果条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +96,24 @@ pub trait Pairing: Send + Sync {
     fn answer(&self, accept: bool) -> TransportResult<()>;
 
     fn unpair(&self, device: &DeviceId) -> TransportResult<()>;
+
+    fn set_prompt_handler(&self, handler: Option<PromptHandler>);
+}
+
+/// 连接选项：保护级别与连接超时；平台按能力实现，不支持时退化为默认连接。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServiceOptions {
+    pub protection: ProtectionLevel,
+    pub timeout: Option<Duration>,
+}
+
+impl Default for ServiceOptions {
+    fn default() -> Self {
+        Self {
+            protection: ProtectionLevel::Auto,
+            timeout: None,
+        }
+    }
 }
 
 /// RFCOMM 客户端连接。
@@ -66,6 +122,16 @@ pub trait RfcommConnector: Send + Sync {
 
     /// 按 SDP 服务 UUID 连接，跨平台推荐路径。
     fn connect_service(&self, device: &DeviceId, uuid: &str) -> TransportResult<Box<dyn TransportStream>>;
+
+    /// 带保护级别与超时的服务连接；默认实现忽略选项。
+    fn connect_service_with_options(
+        &self,
+        device: &DeviceId,
+        uuid: &str,
+        _options: ServiceOptions,
+    ) -> TransportResult<Box<dyn TransportStream>> {
+        self.connect_service(device, uuid)
+    }
 
     /// 查询服务对应的 RFCOMM 通道号。
     fn find_service(&self, device: &DeviceId, uuid: &str) -> TransportResult<Option<u8>>;
@@ -90,3 +156,6 @@ impl<T> BluetoothTransport for T where T: Discovery + Pairing + RfcommConnector 
 
 /// 标准 OPP 服务的常用 RFCOMM 通道号，仅作 SDP 不可用时的回退。
 pub const OPP_FALLBACK_CHANNEL: u8 = 10;
+
+/// 标准 OPP 服务 UUID。
+pub const OPP_SERVICE_UUID: &str = "00001105-0000-1000-8000-00805F9B34FB";

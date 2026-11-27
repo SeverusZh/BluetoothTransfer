@@ -44,8 +44,16 @@ pub trait Backend: Send + Sync {
     /// 发起配对；需要用户输入的场合通过 `PairPrompt` 回传。
     fn pair(&self, device: &DeviceId) -> Result<(), BtError>;
 
-    /// 应答配对交互。
+    /// 应答确认类配对交互；PIN 类请求必须改用 answer_pin。
     fn answer_prompt(&self, request: PinRequestId, accept: bool) -> Result<(), BtError>;
+
+    /// 应答需要输入的 PIN 配对交互。
+    ///
+    /// 默认实现返回未支持错误，避免无声丢弃 PIN；实现方必须覆盖才能完成 PIN 配对。
+    fn answer_pin(&self, request: PinRequestId, pin: &str) -> Result<(), BtError> {
+        let _ = (request, pin);
+        Err(BtError::unsupported("当前后端不支持 PIN 应答"))
+    }
 
     /// 设置设备别名，传 None 清除别名。
     fn set_alias(&self, device: &DeviceId, alias: Option<&str>) -> Result<(), BtError>;
