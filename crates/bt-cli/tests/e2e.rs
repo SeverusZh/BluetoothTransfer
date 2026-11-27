@@ -828,6 +828,232 @@ fn cancel_keeps_resume_entry_and_resume_run_finishes_it() {
     }
 }
 
+#[test]
+fn zip_cancel_keeps_payload_and_resume_run_finishes_it() {
+    use bt_api::Backend;
+    use bt_cli::backend::Context;
+    use bt_cli::cli::SendPathsArgs;
+    use bt_cli::output::OutputMode;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let env = Env::new();
+    let paths = bt_app::AppPaths::portable(env.home());
+    paths.create_dirs().unwrap();
+    let source = env.path("zip-source.txt");
+    std::fs::write(&source, b"zip-resume-payload").unwrap();
+
+    let transport = Arc::new(bt_transport::mock::MockTransport::new(Vec::new()));
+    let gate = transport.gate_next_connect();
+    let backend = Arc::new(
+        bt_app::RealBackend::open_with_transport_options(paths.clone(), Some(transport.clone()), false).unwrap(),
+    );
+    let shared: bt_api::SharedBackend = backend.clone();
+    let ctx = Context {
+        backend: shared,
+        events: backend.subscribe(),
+        paths: paths.clone(),
+        mode: OutputMode::Json,
+        repl: false,
+    };
+    let args = SendPathsArgs {
+        device: PHONE.to_string(),
+        paths: vec![source.clone()],
+        zip: true,
+        mode: None,
+    };
+    let handle = std::thread::spawn(move || bt_cli::commands::send::file(&ctx, &args));
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let entries = bt_app::list_resume(&paths).unwrap();
+        if entries.iter().any(|entry| entry.state == "sending") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "zip journal 条目未写入：{entries:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    backend.cancel_all_jobs().unwrap();
+    gate.release();
+    assert_eq!(handle.join().unwrap().unwrap(), 1, "取消发送以 1 退出");
+    backend.shutdown();
+
+    let entries = bt_app::list_resume(&paths).unwrap();
+    assert_eq!(entries.len(), 1, "取消后 resume list 必须能看到条目");
+    assert_eq!(entries[0].state, "paused");
+    let payload = entries[0].payload.clone();
+    assert!(payload.is_file(), "取消后自产 zip 必须保留：{}", payload.display());
+    assert!(payload.starts_with(&paths.pending_dir), "自产 zip 位于 pending 目录");
+    assert!(source.is_file(), "用户源文件不得被删除");
+
+    let content = std::fs::read(&payload).unwrap();
+    let sha = bt_core::hex_lower(&bt_core::sha256(&content));
+    let mut inbound = Vec::new();
+    inbound.extend_from_slice(
+        &bt_engine::protocol::encode_offer(&bt_engine::protocol::Offer::accept(0))
+            .unwrap()
+            .encode(),
+    );
+    inbound.extend_from_slice(&bt_engine::protocol::encode_ack(content.len() as i64).unwrap().encode());
+    inbound.extend_from_slice(
+        &bt_engine::protocol::encode_done(&bt_engine::protocol::Done::new(true, sha))
+            .unwrap()
+            .encode(),
+    );
+    let resume_transport = Arc::new(bt_transport::mock::MockTransport::new(Vec::new()));
+    resume_transport.script_connect(inbound);
+    let resume_backend = Arc::new(
+        bt_app::RealBackend::open_with_transport_options(paths.clone(), Some(resume_transport), false).unwrap(),
+    );
+    let shared: bt_api::SharedBackend = resume_backend.clone();
+    let resume_ctx = Context {
+        backend: shared,
+        events: resume_backend.subscribe(),
+        paths: paths.clone(),
+        mode: OutputMode::Json,
+        repl: false,
+    };
+    assert_eq!(
+        bt_cli::commands::resume::run(&resume_ctx).unwrap(),
+        0,
+        "resume run 应完成续传"
+    );
+    resume_backend.shutdown();
+    assert!(bt_app::list_resume(&paths).unwrap().is_empty(), "完成后 journal 清空");
+    assert!(!payload.exists(), "续传完成后删除自产 zip");
+    assert!(source.is_file(), "用户源文件不受影响");
+
+    let packed = bt_app::pack_zip_file_in(&paths, &source).unwrap();
+    let bytes = std::fs::read(&packed.path).unwrap();
+    let entry = bt_engine::JournalEntry::new(
+        bt_core::DeviceId::parse(PHONE).unwrap(),
+        packed.display_name.clone(),
+        packed.path.clone(),
+        bt_core::sha256(&bytes),
+        bytes.len() as u64,
+        bt_engine::JournalKind::FileZip,
+        packed.owned,
+    );
+    let journal = bt_engine::Journal::new(&paths.journal_file).with_base(&paths.pending_dir);
+    let id = journal.begin(entry).unwrap().entry.id_hex();
+    journal.pause(&id).unwrap();
+    let cancel_backend =
+        Arc::new(bt_app::RealBackend::open_with_transport_options(paths.clone(), None, false).unwrap());
+    let shared: bt_api::SharedBackend = cancel_backend.clone();
+    let cancel_ctx = Context {
+        backend: shared,
+        events: cancel_backend.subscribe(),
+        paths: paths.clone(),
+        mode: OutputMode::Json,
+        repl: false,
+    };
+    assert_eq!(bt_cli::commands::resume::cancel(&cancel_ctx).unwrap(), 0);
+    cancel_backend.shutdown();
+    assert!(!packed.path.exists(), "显式 resume cancel 清理自产 zip");
+    assert!(source.is_file());
+}
+
+#[test]
+fn send_folder_rejects_zip32_limit_with_unsupported_error() {
+    let env = Env::new();
+    let folder = env.path("huge-folder");
+    std::fs::create_dir_all(&folder).unwrap();
+    let huge = folder.join("huge.bin");
+    let file = std::fs::File::create(&huge).unwrap();
+    file.set_len(4 * 1024 * 1024 * 1024).unwrap();
+    drop(file);
+
+    let output = run(
+        &env,
+        "bt",
+        &["send", "folder", PHONE, folder.to_str().unwrap(), "--json"],
+    );
+    assert_eq!(code(&output), 1, "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let value = json(&output);
+    assert_eq!(value["type"], "error");
+    assert_eq!(value["error"]["kind"], "unsupported");
+    let hint = value["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains("拆分"), "hint 需给出可操作建议：{hint}");
+    assert!(hint.contains("4 GiB"));
+    let pending = env.path(".local/share/BluetoothTransfer/pending");
+    if pending.is_dir() {
+        assert_eq!(
+            std::fs::read_dir(&pending).unwrap().count(),
+            0,
+            "预检失败不得残留打包产物"
+        );
+    }
+}
+
+#[test]
+fn repl_help_emits_structured_rows() {
+    let env = Env::new();
+    let output = run_with_stdin(&env, "bt", &["repl", "--json"], Some("help\n?\nquit\n"));
+    assert_eq!(code(&output), 0, "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let lines = ndjson(&output);
+    assert_eq!(lines.len(), 2, "help 与 ? 各输出一个对象：{lines:?}");
+    for line in &lines {
+        assert_eq!(line["ok"], true);
+        assert_eq!(line["command"], "repl.help");
+        assert!(line["commands"].as_array().unwrap().len() >= 7);
+    }
+
+    let events = run_with_stdin(&env, "bt", &["repl", "--events"], Some("help\nquit\n"));
+    assert_eq!(code(&events), 0);
+    let lines = ndjson(&events);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["type"], "result");
+    assert_eq!(lines[0]["ok"], true);
+}
+
+fn run_with_scripted_transport(env: &Env, args: &[&str]) -> Output {
+    let mut command = assert_cmd::Command::cargo_bin("bt").expect("二进制存在");
+    command
+        .env("BT_HOME", env.home())
+        .env("BT_TEST_TRANSPORT", "mock")
+        .env_remove("BT_BACKEND")
+        .env_remove("APPDATA")
+        .env_remove("LOCALAPPDATA")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .args(args);
+    command.output().expect("命令可执行")
+}
+
+#[test]
+fn real_backend_resumes_only_for_transfer_commands() {
+    let env = Env::new();
+    let (id, payload) = seed_journal(&env, "real-resume.bin", b"real-journal", false);
+    let journal = env.path(".local/share/BluetoothTransfer/journal/send-journal.bin");
+    let before = std::fs::read(&journal).unwrap();
+
+    let scan = run_with_scripted_transport(&env, &["devices", "scan", "--seconds", "1", "--json"]);
+    assert_eq!(code(&scan), 0, "stderr={}", String::from_utf8_lossy(&scan.stderr));
+    assert_eq!(std::fs::read(&journal).unwrap(), before, "只读命令不得改写 journal");
+
+    let send = run_with_scripted_transport(
+        &env,
+        &["send", "text", PHONE, "resume-trigger", "--mode", "assistant", "--json"],
+    );
+    assert_eq!(code(&send), 1, "脚本化传输无入站数据，发送应失败");
+    assert_ne!(
+        std::fs::read(&journal).unwrap(),
+        before,
+        "send 路径必须触发自动续传并改写 journal"
+    );
+
+    let listed = run_with_scripted_transport(&env, &["resume", "list", "--json"]);
+    assert_eq!(code(&listed), 0);
+    let entries = json(&listed);
+    let entries = entries["entries"].as_array().unwrap();
+    let seeded = entries.iter().find(|entry| entry["id"] == id).expect("续传条目仍在");
+    assert!(
+        seeded["attempts"].as_u64().unwrap() >= 1,
+        "send 应尝试续传原条目：{seeded}"
+    );
+    assert!(payload.is_file(), "续传载荷保持原样");
+}
+
 #[cfg(unix)]
 #[test]
 fn permission_errors_exit_4_with_permission_kind() {
