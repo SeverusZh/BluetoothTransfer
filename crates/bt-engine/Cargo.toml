@@ -1,0 +1,12 @@
+[package]
+name = "bt-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "传输引擎：协议状态机、队列、续传、journal、打包与探测策略"
+
+[dependencies]
+bt-core.workspace = true
+bt-api.workspace = true
+
