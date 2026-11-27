@@ -6,7 +6,7 @@ SetCompressorDictSize 64
 !include "MUI2.nsh"
 
 !ifndef VERSION
-  !define VERSION "2.0.0"
+  !error "VERSION 未定义：使用 /DVERSION=<版本> 传入，版本号以 workspace.package.version 为唯一来源"
 !endif
 !ifndef BUILD_DIR
   !define BUILD_DIR "../../target/release"
