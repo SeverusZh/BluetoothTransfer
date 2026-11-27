@@ -181,7 +181,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - uses: actions/checkout@v4
       - name: 合并校验和
         shell: bash
         run: |
