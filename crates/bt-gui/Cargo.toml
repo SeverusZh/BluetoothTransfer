@@ -1,0 +1,23 @@
+[package]
+name = "bt-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "eframe/egui 桌面界面"
+default-run = "bt-gui"
+
+[[bin]]
+name = "bt-gui"
+path = "src/main.rs"
+
+[dependencies]
+bt-core.workspace = true
+bt-api.workspace = true
+bt-app.workspace = true
+bt-platform.workspace = true
+crossbeam-channel = "0.5"
+eframe = { version = "0.37", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
+
+[dev-dependencies]
+bt-transport.workspace = true

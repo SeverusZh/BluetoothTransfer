@@ -1,0 +1,13 @@
+[package]
+name = "bt-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "蓝牙传输核心模型：设备、通道、配置、记录与错误"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+

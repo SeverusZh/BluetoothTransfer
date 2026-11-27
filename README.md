@@ -1,220 +1,358 @@
-# 🔵 BluetoothTransfer
+# 蓝牙传输
 
-<div align="center">
-
-**轻量级 Windows 桌面应用：通用蓝牙推送 + Windows 双向互传**
-
-[![Version](https://img.shields.io/badge/version-1.4.1-0B6BCB)](https://github.com/SeverusZh/BluetoothTransfer/releases)
-[![.NET](https://img.shields.io/badge/.NET-8-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%202004%2B%20%2F%20Windows%2011-0078D4?logo=windows)](https://www.microsoft.com/windows)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-236%20cases-success)](#-开发与测试)
 
-*📤 把文件推给任何蓝牙设备 · 🔄 Windows 之间断点续传 · 🛡️ SHA-256 校验 · 🧰 免安装接收端*
+跨平台蓝牙文件传输工具，Rust 重写版本。图形界面与命令行共用同一套后端，覆盖设备发现、配对、OPP 与私有助手通道发送、断点续传、接收、记录、迁移与自检。
 
-</div>
+- 仓库：https://github.com/SeverusZh/BluetoothTransfer
+- 版本：2.0.0
+- 许可证：MIT
+- 工具链：固定 1.100.1，MSRV 1.95
 
----
+## 项目定位
 
-## ✨ 是什么
+本仓库是原 Windows .NET 8 版本的 Rust 重写实现，产物为单一 workspace 下的 GUI 与 CLI，两者通过 `bt-api` 契约共用同一后端、同一配置与同一记录库，记录互通。
 
-- 通过标准蓝牙 **OBEX Object Push Profile（OPP）** 把文件、文本、文件夹推送给任意支持「蓝牙文件接收」的设备（Android 手机/平板、Windows 电脑、功能机等），**接收端无需安装任何软件**；
-- 两台 Windows 电脑之间可走**接收助手通道**（完整 GUI 内置接收面板，或独立极简接收端 `btrecv`）：断点续传、SHA-256 校验、可管理的传输队列；发送前自动探测——助手在线走私有通道，离线自动回退 OPP。
+发送与接收使用两条通道：
 
-> ℹ️ v1.2 起聚焦「通用推送 + 接收助手」双通道；v1.3 引入 Windows 对 Windows 断点续传通道；**v1.4 全面加固**：续传可靠性修复、队列并发修复、协议输入硬化、安全默认值（接收默认询问）、可测试性改造与 184 项自动化测试。**v1.4.1** 完成整套 GUI 视觉重设计：Fluent 极简主题、两栏主界面、统一控件资源体系与接收端极简一屏，功能与协议不变。
+- OPP：标准 OBEX 对象推送，兼容 Android 与常见蓝牙文件接收端，不要求对端安装本应用；传输为明文。
+- 私有助手通道：自定义 RFCOMM 协议，要求收发两端都运行本应用，支持分片级断点续传与端到端 SHA-256 校验。
 
-## 📖 目录
+与原 .NET 版本的关系：旧实现归档在 `legacy/dotnet/`，只读参考，不参与构建、测试与发布；v1.x 发布产物来自旧实现，旧配置、记录与发送 journal 可用 `bt migrate` 迁移。
 
-- [界面设计](#-界面设计)
-- [功能特性](#-功能特性)
-- [快速开始](#-快速开始)
-- [CLI 命令参考](#-cli-命令参考)
-- [配置项](#-配置项)
-- [Windows 兼容性说明](#-windows-兼容性说明)
-- [协议限制须知](#-协议限制须知)
-- [发布产物](#-发布产物-v141)
-- [技术栈与架构](#-技术栈与架构)
-- [开发与测试](#-开发与测试)
-- [许可](#-许可)
+## 下载与安装
 
-## 🎨 界面设计
+发布产物由 `.github/workflows/release.yml` 在推送 `v*` 标签时构建，版本号取自根 `Cargo.toml` 的 `workspace.package.version`。v2.0.0 资产在推送 `v2.0.0` 标签后生成。
 
-v1.4.1 对桌面端与接收端做了整套视觉重设计，只改呈现层，功能、绑定与协议保持不变，界面使用 Windows 自带字体与系统图标，不引入任何外部资源。
+| 平台 | 产物 | 文件名 |
+| --- | --- | --- |
+| Windows | 安装器 | `BluetoothTransfer-2.0.0-setup.exe` |
+| Windows | 图形界面绿色包 | `BluetoothTransfer-2.0.0-windows-x64.zip` |
+| Windows | cli-only 包 | `BluetoothTransfer-2.0.0-cli-windows-x64.zip` |
+| Linux | deb 包 | `bluetooth-transfer_2.0.0_amd64.deb` |
+| Linux | AppImage | `BluetoothTransfer-2.0.0-x86_64.AppImage` |
 
-- **统一资源体系** — 中性色阶与成功/警告/错误语义色在 `App.xaml` 中集中定义，品牌蓝与图标同源定义在 `AppIcons.xaml`，页面内不出现散落颜色；字号阶梯 11–18，间距以 8pt 为主并做局部微调，圆角以 8/12 为主并保留胶囊标签与小控件例外，1px 描边，阴影仅用于浮层与滑块等轻量控件，且极轻
-- **两栏主窗口** — 顶栏标题区 + 左侧设备列表与接收助手 + 右侧发送区、任务队列与「传输记录 / 日志」标签页 + 底部状态栏，保留原生窗口边框
-- **完整控件样式** — 主/次/危险/幽灵按钮、输入框、下拉框、列表行、复选与开关、进度条、滚动条、标签页、右键菜单与提示气泡统一视觉；键盘焦点环可见，空状态与进度/统计信息层次明确
-- **极简接收端** — `btrecv` 保持一屏：状态、当前传输、本会话完成、设置四个分区，同样使用统一色板与控件样式
-- **可访问性** — 所有交互控件保留原有命令、自动化名称与键盘可达性；不新增交互语义、不隐藏任何功能入口
+下载地址形如 `https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/<文件名>`：
 
-## 🎯 功能特性
+- [BluetoothTransfer-2.0.0-setup.exe](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-setup.exe)
+- [BluetoothTransfer-2.0.0-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-windows-x64.zip)
+- [BluetoothTransfer-2.0.0-cli-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-cli-windows-x64.zip)
+- [bluetooth-transfer_2.0.0_amd64.deb](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/bluetooth-transfer_2.0.0_amd64.deb)
+- [BluetoothTransfer-2.0.0-x86_64.AppImage](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-x86_64.AppImage)
 
-### 📤 通用推送 OPP
+### Windows
 
-| 能力 | 说明 |
-|---|---|
-| **发送形态** | 单文件直接推送；文本自动包装为 `.txt`（默认 `bt-note.txt`）；文件夹自动压缩为 `.zip`；单文件可选 `--zip`；剪贴板文本/图片直推；文件/文件夹**拖入窗口即推送** |
-| **发现与配对** | 扫描支持 OPP 的经典蓝牙设备（可只显示已配对）；应用内发起系统配对（ConfirmOnly / PIN）；失败可一键打开 Windows 蓝牙设置 |
-| **自动重试** | 临时失败（连接失败 / 超时 / 对端忙 0xC3 / 断开）按**指数退避**自动重试（默认 3 次，3/6/12s，可配置），失败记录含「已重试 N 次」与失败阶段 |
-| **发送队列** | 多文件/文件夹统一排队顺序推送（Android OPP 同时只接受一个传输）；支持取消全部、失败任务单点重发 |
-| **传输体验** | 实时进度条 + 速率（KB/s）与剩余时间（ETA）；系统托盘常驻 |
+- 安装器：per-user 安装到 `%LOCALAPPDATA%\Programs\BluetoothTransfer`，写入 `HKCU`，不申请管理员权限；默认创建开始菜单项与卸载入口，可选资源管理器右键菜单、SendTo 快捷方式与开机自启。静默安装为 `BluetoothTransfer-2.0.0-setup.exe /S`。
+- 绿色包：解压后直接运行 `bt-gui.exe`，包内附 `LICENSE`，仓库存在 `README.md` 时一并打入。
+- cli-only 包：`bt.exe` 与 `btrecv.exe`，不链接 GUI 依赖，适合脚本与服务器环境。
+- 升级只覆盖程序文件，保留 `%LOCALAPPDATA%\BlueToothTransfer` 与 `%APPDATA%\BlueToothTransfer` 下的配置、记录与日志。
 
-### 🔄 接收助手 btrecv · Windows 互传
+### Linux
 
-- **断点续传** — 私有分片协议（自定义 RFCOMM UUID）：中断后从**已确认偏移**继续，接收端保留半成品（`.btpart` + `.btpart.meta`，按文件名 + 内容 SHA-256 + 大小校验），重连自动续传；完成时校验 SHA-256，不匹配自动清空重传
-- **跨进程 / 跨重启续传** — 发送端把「未完成传输」持久化到 `send-journal.json`（原子写 + 跨进程锁）：**应用关闭、进程被杀、电脑重启**后，下次启动自动重新发起，接收端凭半成品回传已确认偏移继续；zip/文本/文件夹的打包产物保留到传输完成，保证重启后 SHA-256 与文件名可复现。用户**暂停**的传输保留且不自动重发，**取消**的传输清理条目与产物；条目与产物 7 天过期自动清理
-- **真正的传输队列** — 任务支持单独**暂停 / 继续 / 移除 / 重试**；接收端忙时自动退避等待；发送端显示通道列（OPP / 助手）
-- **自动探测 + 手动覆盖** — 发送前探测对端是否运行助手：在线走私有通道，离线自动回退 OPP；可在 GUI/CLI 强制指定通道。探测区分「确认无助手」与「查询失败」，**失败不会被缓存成结论**，也不会把已知在线状态降级，因此对端助手稍后启动或瞬时查询失败后，下一次发送仍能重新发现并切回助手通道；回退 OPP 时会输出具体原因
-- **极简接收端** — `btrecv` 单 exe：CLI 内核（`btrecv run [--dir 目录] [--no-ask]`）+ 极简 GUI 壳；**默认每次接收前询问**（防止已配对设备直接落盘）；先用 OPP 把 `btrecv` 包推过去，解压即用（自包含无需安装 .NET）
-- **链路加密可配置** — 助手通道与 OPP 通道共用 `OppProtectionLevel` 配置，`encrypt` 启用链路加密（RFCOMM 加密由发送端请求、系统协商）；应用层仍无端到端加密
+- deb 包：`sudo apt install ./bluetooth-transfer_2.0.0_amd64.deb`，安装 `/usr/bin/bt-gui`、`/usr/bin/bt`、`/usr/bin/btrecv`、桌面文件与图标。`postinst`/`postrm` 只尝试刷新桌面数据库与图标缓存，失败不阻断安装。
+- AppImage：`chmod +x` 后直接运行；无 FUSE 环境使用 `APPIMAGE_EXTRACT_AND_RUN=1`。
+- 运行依赖 BlueZ 提供的 `org.bluez` D-Bus 服务；图形界面还需要 X11 或 Wayland 会话。
 
-### 🖥️ 完整 GUI 内置接收
+### 校验和
 
-- 主窗口「接收助手」面板：开始/停止监听、当前传输进度、本会话完成列表、保存目录（默认 `下载\BluetoothReceive`）、每次接收前询问
-- **两台主机运行完整 GUI 即可互传**（或一方用完整 GUI、一方用 `btrecv`）；接收记录写入同一 SQLite（direction=recv），含对端蓝牙地址与名称
-- 与 `btrecv` 二选一运行（同一服务 UUID）
+发布页提供 `combined-sha256sums.txt`，逐行列出全部发布的产物，行内只写文件名；下载全部资产后可直接校验：
 
-### ⭐ 设备管理
-
-- 设备列表展示（名称/地址/配对状态），支持**收藏置顶**、**别名显示**、按最近连接排序
-- **收藏夹**：收藏持久化在本地 SQLite，启动/扫描后自动出现在列表；对从未发送过的设备也可收藏
-- 已连接设备自动记录最近连接时间
-
-### 📊 记录与统计
-
-- 所有推送自动写入 SQLite（时间/方向/类型/对端/名称/大小/状态/通道/SHA-256/失败原因）
-- 记录列表（GUI）/ `btcli records`（CLI）查询与筛选
-- 导出 CSV / JSON，统计汇总，**清空记录**（GUI 按钮带确认，或 `btcli records clear [--yes]`）
-- 1.0/1.1 旧记录（`channel=ble/rfcomm`、`direction=recv`）只读兼容，不会被新版本覆盖
-
-## 🚀 快速开始
-
-### 一、GUI 推送
-
-1. 启动应用，点击「扫描」发现设备（需先在本机 Windows 设置中与对端配对）
-2. 选中目标设备（可点击星标收藏）
-3. 发送文本 / 选择文件 / 选择文件夹 / 剪贴板，或直接把文件拖入窗口
-4. 接收端（如 Android 手机）保持屏幕点亮，在通知栏点「接受文件」
-
-### 二、两台 Windows 主机互传
-
-1. 双方都运行本应用（或一方运行本应用、一方运行接收助手 `btrecv`）
-2. 接收方在「接收助手」面板点「开始监听」（默认保存到 `下载\BluetoothReceive`）
-3. 发送方扫描/收藏到对方设备后直接发送——自动走接收助手通道（断点续传 + SHA-256 校验）
-4. 未检测到助手时自动回退 OPP 通用推送
-
-### 三、CLI 命令行
-
-```powershell
-btcli opp-scan --seconds 5
-btcli opp-pair 00:11:22:33:44:55 --pin 1234
-btcli opp-send-file 00:11:22:33:44:55 C:\tmp\photo.jpg
-btcli opp-send-files 00:11:22:33:44:55 a.pdf b.pdf --zip
-btcli opp-send-text 00:11:22:33:44:55 "你好，这是蓝牙推送的文本" --name note.txt
-btcli opp-send-folder 00:11:22:33:44:55 C:\data\docs
+```bash
+sha256sum -c combined-sha256sums.txt
 ```
 
-### 四、接收助手引导 Windows 对 Windows
+构建作业另输出 `sha256sums-windows.txt` 与 `sha256sums-linux.txt`，按平台列出各自产物。
 
-1. 发送端先通过 OPP 把 `btrecv-selfcontained.zip` 推给目标电脑（GUI「发送文件」或 `btcli opp-send-file <地址> <包路径>`）
-2. 对端解压、双击运行 `btrecv`（进入 GUI「监听中」，无需安装 .NET）
-3. 发送端重新扫描，设备出现绿色「助手」徽标即代表探测成功；或运行 `btcli detect <地址>`
-4. 之后默认走可续传的私有通道；对端未运行时自动回退 OPP
-5. 接收助手**默认每次接收前询问**（内置接收默认 `ReceiveAsk=true`，btrecv 默认询问，`--no-ask` 关闭）
+构建未签名，Windows SmartScreen 会提示未知发布者。
 
-## ⌨ CLI 命令参考
+### 从源码构建
 
-| 分类 | 命令 | 说明 |
-|---|---|---|
-| 设备 | `btcli opp-scan [--seconds 秒] [--paired-only] [--json]` | 扫描支持 OPP 的经典蓝牙设备 |
-| 设备 | `btcli opp-pair <地址> [--pin 1234]` | 发起配对（无 PIN 走系统确认流程） |
-| 发送 | `btcli opp-send-file <地址> <文件> [--zip]` | 推送文件（`--zip` 先打包再推送） |
-| 发送 | `btcli opp-send-files <地址> <文件1> [文件2 ...] [--zip]` | 批量推送并汇总成功/失败 |
-| 发送 | `btcli opp-send-text <地址> <文本> [--name 文件名]` | 文本包装为 .txt 后推送 |
-| 发送 | `btcli opp-send-folder <地址> <文件夹>` | 文件夹压缩为 .zip 后推送 |
-| 发送 | `btcli opp-send-file\|files\|text\|folder ... [--mode auto\|assistant\|opp]` | 选择通道：`auto` 助手优先失败回退 OPP / `assistant` 强制助手 / `opp` 强制 OPP（默认 opp） |
-| 设备 | `btcli detect <地址>` | 探测对端是否运行接收助手 |
-| 发布 | `btcli package-receiver [--root 仓库根]` | 一键发布接收助手（自包含 + 框架依赖） |
-| 记录 | `btcli records [--direction send\|recv] [--type text\|file] [--status ok\|failed] [--peer 地址] [--search 关键词] [--limit 数量] [--json]` | 查询传输记录 |
-| 记录 | `btcli records clear [--yes]` | 清空全部传输记录（交互确认，--yes 跳过） |
-| 记录 | `btcli export <csv\|json> <输出文件>` | 导出全部记录 |
-| 统计 | `btcli stats [--json]` | 收发统计 |
-| 设备 | `btcli devices [--json] [--sort last\|name\|favorite]` | 已记录设备 |
-| 设备 | `btcli devices favorite <地址> [--unset]` | 收藏/取消收藏设备 |
-| 设备 | `btcli devices alias <地址> <别名>` | 设置设备别名（留空清除） |
-| 配置 | `btcli config` / `btcli config set <key> <value>` | 查看/修改配置 |
-| 测试 | `btcli selftest` | 无硬件自检（OBEX、存储、重试策略、zip、设备管理） |
-| 交互 | `btcli repl` | 交互式会话 |
+工具链版本固定在根 `rust-toolchain.toml`，rustup 会按该文件选择并安装 1.100.1：
 
-## ⚙ 配置项
-
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `OppChunkSize` | 32768 | OPP 分片大小（字节） |
-| `OppConnectTimeout` | 30 | 连接超时（秒） |
-| `OppSendTimeout` | 300 | 发送超时（秒） |
-| `PushTextFileName` | bt-note.txt | 文本推送默认文件名 |
-| `OppAuthPassword` | （空） | 设备要求 OBEX 认证时的密码 |
-| `OppNameUseBom` | false | Name 头是否带 UTF-16 BOM（默认无 BOM，兼容 Android/Windows） |
-| `OppProtectionLevel` | auto | 连接保护级别：auto / plain / encrypt；**OPP 与助手通道共用**，encrypt 启用链路加密（应用层仍无端到端加密） |
-| `OppRetryCount` | 3 | 失败自动重试次数（0 表示不重试） |
-| `OppRetryDelaySeconds` | 3 | 重试基础间隔（秒），按 1x/2x/4x 指数退避 |
-| `TransferMode` | auto | 发送通道：auto（探测助手，否则 OPP）/ assistant / opp |
-| `ReceiveDirectory` | 下载\BluetoothReceive | 内置接收助手保存目录 |
-| `ReceiveAsk` | **true** | 内置接收助手每次接收前询问（默认开启的安全加固）；设为 false 直接自动接收 |
-
-## 🪟 Windows 兼容性说明
-
-- **发送端**：实现路径与微软官方文档 *RFCOMM Scenario: Send File as a Client* 一致（`RfcommServiceId.ObexObjectPush` + `StreamSocket`），并与 32feet.NET 的 `ObexWebRequest` 逐字节对齐；Windows 10 2004+ / Windows 11 可行，内置/外置 USB 蓝牙适配器均可
-- **接收端**：由系统「蓝牙文件传输向导」（fsquirt）承载；若 Win11 找不到入口，运行 `fsquirt` 或检查注册表 `DisableFsquirt`
-- 出站 RFCOMM 仅支持**已配对**设备（Windows 蓝牙栈限制）；连接默认明文，要求加密时可 `config set OppProtectionLevel encrypt`
-- 连接前进行 SDP 预检：确认服务声明 OPP（0x1105），不满足时给出明确错误并写入失败记录
-
-## ⚠ 协议限制须知
-
-- **iPhone（iOS）不支持蓝牙文件接收协议，无法通过 OPP 推送**
-- OPP 为明文传输：无端到端加密、无接收端校验回传；需要链路层加密时使用 `OppProtectionLevel=encrypt`
-- **OPP 通道无断点续传**：由自动重试缓解；Windows 对 Windows 走接收助手（btrecv）私有通道时支持断点续传与 SHA-256 校验，且发送端持久化未完成传输，**应用关闭/电脑重启后仍可继续**
-- 单文件上限 4GB（OBEX 协议约束），建议不超过 2GB
-- Android 同时只接受一个 OPP 传输：对端已有待确认传输时新推送会被拒绝（0xC3 Forbidden），应用会自动重试
-
-## 📦 发布产物 v1.4.1
-
-每个产物提供两种形态：**含运行时**（自包含单文件，目标机无需安装 .NET 8）与**不含运行时**（框架依赖，目标机需安装 .NET 8 桌面运行时，体积更小）。
-
-| 产物 | 说明 |
-|---|---|
-| `btrecv-cli-only.zip` | 接收助手纯 CLI 自包含（约 6MB，解压即用），OBEX 引导首选 |
-| `btrecv-selfcontained.zip` / `btrecv-frameworkdependent.zip` | 接收助手完整 GUI（含运行时 / 不含运行时） |
-| `BluetoothTransfer-selfcontained.zip` / `BluetoothTransfer-frameworkdependent.zip` | 完整发送端 GUI（内置接收助手，含运行时 / 不含运行时） |
-
-本地构建：`tools/publish-receiver.ps1 -Zip`（btrecv 多形态）、`tools/publish-gui.ps1 -Zip`（完整 GUI 两形态）。
-
-## 🧱 技术栈与架构
-
-| 层 | 技术 |
-|---|---|
-| 语言 / 运行时 | C# + .NET 8 |
-| GUI | WPF（MVVM 组合式分层），Fluent 极简主题（`App.xaml` 语义化资源体系），SVG 矢量图标（`AppIcons.xaml` 同源，`tools/IconGenerator` 生成 PNG/ICO） |
-| 蓝牙 | WinRT `Windows.Devices.Bluetooth.Rfcomm`（OPP 客户端 / 助手服务端） |
-| 协议 | 自研 OBEX 客户端（CONNECT/PUT/DISCONNECT，两阶段 PUT，UTF-16BE 无 BOM Name 头）；私有分片续传协议（`BluetoothTransfer.Core`，HELLO/OFFER/DATA/ACK/DONE，SHA-256 校验） |
-| 存储 | Microsoft.Data.Sqlite + System.Text.Json |
-| 系统托盘 | Hardcodet.NotifyIcon.Wpf |
-
-**解决方案（6 个项目）**：`BluetoothTransfer`（WPF GUI）· `BluetoothTransfer.AppServices`（服务层/模型/接口，手工依赖注入）· `BluetoothTransfer.Core`（助手协议核心）· `BluetoothTransfer.Cli`（btcli）· `BluetoothTransfer.Receiver`（btrecv）· `BluetoothTransfer.Tests`（xUnit）
-
-## 🧪 开发与测试
-
-```powershell
-dotnet build BluetoothTransfer.sln -c Release
-dotnet test BluetoothTransfer.sln -c Release
-btcli selftest
+```bash
+git clone https://github.com/SeverusZh/BluetoothTransfer.git
+cd BlueToothTransfer
+cargo --version        # rustup 按 rust-toolchain.toml 安装并使用 1.100.1
 ```
 
-- **xUnit 单元测试（236 项）**：OBEX 编解码/流程、重试策略、速率跟踪（受控时钟）、发送队列（含暂停/继续竞态回归）、zip 打包、存储/导出/清空/迁移、设备收藏/别名、配置迁移、助手协议帧/消息/内存传输/断线续传/客户端/服务端/接收端集成、CSV 注入防护、控制器并发守卫（手工依赖注入 + fake）
-- 构建基线：**0 警告 / 0 错误**（Linux 上亦可用 `dotnet build BluetoothTransfer.sln -c Release -p:EnableWindowsTargeting=true` 交叉编译验证）
-- **跨平台验证**：仓库内 WPF/WinRT 之外的纯逻辑（协议编解码、落盘与续传、发送日志与恢复、重试策略、存储/导出、控制器并发守卫等）可在非 Windows 主机上通过跨平台 harness 真实执行；当前 209 项在 Linux harness 通过。依赖 `Dispatcher`/STA 的控制器测试与真蓝牙路径需在 Windows 上运行
+本机若已有仓库内工具链目录 `.toolchain/`（不纳入版本控制，由使用者自行准备），先加载环境可省去重复下载：
 
-## 📄 许可
+```bash
+. ./.toolchain/env.sh
+```
 
-[MIT](LICENSE) © SeverusZh
+构建 CLI 与接收薄壳：
+
+```bash
+cargo build --release -p bt-cli --no-default-features
+# 产物：target/release/bt 与 target/release/btrecv
+```
+
+构建图形界面与完整版 `bt`：
+
+```bash
+cargo build --release -p bt-gui
+cargo build --release -p bt-cli
+# 产物：target/release/bt-gui 与 target/release/bt
+```
+
+Linux 构建 GUI 需要 `libxkbcommon`、`libx11`、`libxi`、`libgl1-mesa`、`libegl-mesa`、`libwayland`、`libudev`、`pkg-config` 等开发包。`cargo xtask msrv` 校验 workspace 声明的 MSRV 不低于依赖要求。
+
+## 快速开始
+
+### 图形界面
+
+1. 运行 `bt-gui`，或完整版 `bt` 不带子命令，在设备页点击扫描并设置扫描时长。
+2. 在设备列表选中目标设备，未配对的先配对；已配对设备可直接发送。
+3. 在发送页拖入文件、选择文件夹或输入文本加入队列，查看进度与结果；接收方向在接收页开启监听。
+
+无显示环境可运行 `bt-gui --selftest`，以退出码 0 结束表示界面依赖、页面状态与后端装配可用。
+
+### 命令行
+
+```bash
+bt devices scan --seconds 8 --json
+bt devices pair AA:BB:CC:DD:EE:FF --json
+bt send file AA:BB:CC:DD:EE:FF ./report.pdf --json
+bt recv --dir ~/Downloads/BluetoothReceive --no-ask --events
+bt records list --direction send --limit 5 --json
+```
+
+- `bt --help` 列出全部命令与参数，`bt --version` 输出版本。
+- `bt recv` 或 `btrecv` 不带参数即开始监听，Ctrl+C 停止并以 0 退出。
+- 完整契约见 `docs/CLI.md`。
+
+## 图形界面能力
+
+| 页面 | 能力 |
+| --- | --- |
+| 设备 | 扫描与取消、设备列表、配对与配对口令回填、助手通道三态探测、收藏、别名、打开系统蓝牙设置 |
+| 发送 | 单文件、多文件、文本、文件夹、剪贴板与拖放发起；单文件 zip 选项；通道 auto/assistant/opp；总进度与速率 |
+| 队列 | 逐任务暂停、继续、取消、重试、移除，状态与错误展示 |
+| 接收 | 启停监听、落盘目录、接收前询问与待决询问、进度与完成列表、SHA-256 校验结果 |
+| 记录 | 按方向、通道、状态、设备与关键字筛选，复制、单条删除、清空、CSV 与 JSONL 导出 |
+| 日志 | 最近事件、状态栏提示、日志落盘位置 |
+| 设置 | 12 项普通配置、OPP 认证密码、迁移入口、自检入口 |
+
+桌面集成：
+
+- 托盘与通知：最小化到托盘、传输完成与失败通知、托盘菜单快捷入口。
+- 单实例与外部收件箱：重复启动唤起已有实例；系统「发送到」与文件管理器把路径投递给运行中的实例。
+- Windows 集成：安装器可选写入 5 个资源管理器静态 Verb（文件、文件夹、文件夹背景、驱动器、`.txt`）与 SendTo 快捷方式；Windows 11 需在「显示更多选项」中查看。
+- Linux 集成：安装 `.desktop` 文件与图标；用户级右键菜单与开机自启由设置页写入 `~/.local/share` 与 `~/.config/autostart`。
+- 窗口状态记忆与可选开机自启。
+
+## 命令行
+
+两个二进制：`bt` 提供完整命令集，`btrecv` 是只做接收的薄壳。数据写 stdout，诊断写 stderr。
+
+### 命令矩阵
+
+| 命令 | 用途 |
+| --- | --- |
+| `bt devices list/scan/pair/alias/favorite/detect` | 设备缓存、扫描、配对、别名、收藏、助手通道三态探测 |
+| `bt send file/files/text/folder` | 顺序发送并等待终态，`--mode auto\|assistant\|opp`、`--zip`、`--name` |
+| `bt recv`、`btrecv` | 接收服务，`--dir`、`--ask`/`--no-ask`、`--once` |
+| `bt records list/delete/clear/stats` | 记录查询、单条删除、清空、统计 |
+| `bt export csv\|jsonl` | 流式导出记录 |
+| `bt config list/get/set` | 读写 12 项配置与 OPP 认证密码 |
+| `bt resume list/run/cancel` | 按 BTJ1 journal 查询、恢复与取消待续传发送 |
+| `bt migrate` | 迁移旧 .NET 数据，`--from`、`--dry-run` |
+| `bt selftest` | 无硬件自检 |
+| `bt repl` | 同一后端会话执行多条命令 |
+| `bt gui` | 打开图形界面，cli-only 构建返回错误 |
+
+### 输出模式
+
+- `--json`：stdout 恰好一个 JSON 对象，不混入日志与进度；字段一律 snake_case，时间为 UTC RFC 3339。
+- `--events`：stdout 为 NDJSON，每行一个事件，最后一行固定为 `type=result`，失败时为 `type=error`；事件类型包括 `job_progress`、`job_state_changed`、`receive_progress`、`receive_ask`、`receive_done`、`pair_prompt` 等。
+- 参数解析失败时，带 `--json`/`--events` 同样输出结构化错误对象，退出码 2。
+
+### 退出码
+
+| 码 | 含义 |
+| --- | --- |
+| 0 | 成功，含 `selftest` 全部通过与接收被 Ctrl+C 停止 |
+| 1 | 操作失败，含传输失败、自检未通过、续传条目全部跳过 |
+| 2 | 用法错误，含未知命令、缺参数、地址非法、清空记录缺少 `--yes` |
+| 3 | 已有实例或任务占用 |
+| 4 | 权限或锁失败 |
+| 5 | 目标未找到 |
+
+`devices detect` 使用独立三态映射：`present=0`、`absent=1`、`unknown=5`。
+
+### 密码处理
+
+OPP 认证密码是第 13 项设置，不属于 12 项普通配置：
+
+```bash
+printf '%s' "$PASSWORD" | bt config set auth-password
+```
+
+- 值从 stdin 或 TTY 读取，TTY 下不回显；传入位置参数会被拒绝并返回 2。
+- 密码不出现在 argv、日志、错误信息与 JSON 输出中；`bt config get auth-password` 永远返回用法错误。
+- 空输入表示清除密码。
+
+### 旧命令别名
+
+以下旧命令名保留且不出现在帮助里：
+
+| 旧名 | 等价命令 |
+| --- | --- |
+| `opp-scan` | `devices scan` |
+| `opp-pair` | `devices pair` |
+| `opp-send-file` | `send file` |
+| `opp-send-files` | `send files` |
+| `opp-send-text` | `send text` |
+| `opp-send-folder` | `send folder` |
+| `detect` | `devices detect` |
+| `stats` | `records stats` |
+
+`devices`、`records`、`config` 不带子命令时分别等价于 `devices list`、`records list`、`config list`。
+
+## Agent Skill
+
+`skills/bluetooth-transfer/SKILL.md` 是面向 Agent 的可执行指引，含命令矩阵、JSON 契约、退出码、错误恢复与安全边界；辅助脚本在 `skills/bluetooth-transfer/scripts/`。
+
+加载方式：文件带 `name` 与 `description` 前置元数据，支持 Agent Skill 目录的运行时把 `skills/bluetooth-transfer/` 收入技能目录即可按需加载；不支持该机制的运行时直接读取该文件作为操作指引。
+
+无蓝牙硬件的验证路径：
+
+```bash
+export BT_BACKEND=mock
+export BT_HOME=$(mktemp -d)
+bt devices list --json
+```
+
+- `BT_BACKEND=mock` 使用内存后端，不写磁盘、不访问蓝牙；固定设备为 `AA:BB:CC:00:00:01` Mock Phone（已配对、助手通道可用）与 `AA:BB:CC:00:00:02` Mock Tablet。
+- `BT_HOME` 隔离便携根：配置在 `$BT_HOME/.config/BluetoothTransfer/`，数据在 `$BT_HOME/.local/share/BluetoothTransfer/`，默认接收目录为 `$BT_HOME/Downloads/BluetoothReceive`。
+- 模拟后端不跨进程持久化，需要串联状态时用 `bt repl --json`。
+
+## 轻量化指标
+
+| 指标 | 上限 | 实测 |
+| --- | --- | --- |
+| 接收最终文件额外字节 | 0 | 0 |
+| 半成品 sidecar | 64 字节 | 53 字节 |
+| journal 单条目 | 256 字节 | 182 字节典型，253 字节最坏 |
+| 配置全默认时 | 不落盘 | 不创建文件；单个非默认项 13 字节 |
+| 导出 JSONL 单行 | 250 字节 | 205 字节 |
+| 导出 CSV 单行 | 200 字节 | 表头 74 字节，数据 94 字节 |
+| OPP 协议开销 | 0.03% 以内 | 0.00923% |
+| 助手协议开销 | 0.01% 以内 | 0.00725% |
+| cli-only 发布体积 | 8 MB | `bt` 3,609,904 字节，`btrecv` 3,352,048 字节 |
+| GUI 单文件 | 20 MB | 11,176,216 字节 |
+| deb 包 | 20 MB | 约 5.67 MB，字节数不可复现，随二进制与打包时间戳波动 |
+| NSIS 安装器 | 15 MB | 本机无 makensis，未生成 |
+
+体积实测方法与验证边界见 `docs/RELEASE.md`，协议与导出指标由单元测试固化，CLI 侧实测值见 `docs/ACCEPTANCE.md`。
+
+## 构建与测试
+
+质量门禁与 CI 使用同一组命令，工具链由 `rust-toolchain.toml` 固定为 1.100.1：
+
+```bash
+. ./.toolchain/env.sh          # 使用仓库内工具链目录时
+cargo xtask msrv               # workspace MSRV 与依赖要求一致性
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --workspace --release
+cargo build -p bt-cli --no-default-features
+cargo run -p bt-gui -- --selftest
+cargo test -p bt-cli           # CLI 端到端用例，使用临时 BT_HOME 与 BT_BACKEND=mock
+```
+
+CI 在 `.github/workflows/ci.yml` 中运行三个作业：`质量门禁 (ubuntu-latest)` 与 `质量门禁 (windows-latest)` 依次执行 MSRV 元数据检查、格式化、静态检查、测试、发布构建、纯 CLI 构建与 GUI 自检；`MSRV 构建` 用 1.95.0 执行 `cargo check --workspace --all-targets` 校验声明的 MSRV。
+
+测试数量：`cargo test --workspace` 共 296 项通过、0 失败，1 项因缺少桌面会话 D-Bus 被忽略；9 个 doc-test 目标无用例。`cargo test -p bt-cli` 合计 61 项，其中 `crates/bt-cli/tests/` 下的端到端用例 47 项，使用临时 `BT_HOME` 与 `BT_BACKEND=mock`，不依赖蓝牙硬件。
+
+## 平台与限制
+
+- 支持 Windows x64 与 Linux x64；Linux 依赖 BlueZ 提供的 D-Bus 服务与 RFCOMM 套接字。
+- OPP 为明文传输，不要在不可信链路发送敏感数据。
+- iOS 不支持蓝牙文件接收；向 iPhone 发送文件需要对方运行本应用接收端或改用其他方式。
+- 私有助手通道要求收发两端都运行本应用；普通 OPP 只要求接收端支持蓝牙文件接收。
+- OPP 单包上限 65023 字节；助手通道单帧上限 1 MiB，默认分片 256 KiB。
+- 接收端单实例：同一时刻只有一个接收会话占用 RFCOMM 通道。
+- 接收文件名会被清洗为单段名称，拒绝 `..` 穿越；重名自动追加 ` (n)`。
+- 单文件 zip 与文件夹打包走 ZIP32，源文件超过 4 GiB 时命令级拒绝。
+- 配对 PIN 由 CLI 的 `--pin` 或 GUI 对话框回填到传输层，只用于本次配对，不进入日志、记录与 JSON。
+
+## 未验证边界
+
+以下路径在本仓库的开发环境中缺少硬件、系统服务或对应运行时，未验证，不以模拟结果代替结论：
+
+1. 真实蓝牙适配器上的扫描、配对、SDP、RFCOMM 与 OPP 互操作。
+2. Windows WinRT 运行时路径，只在 Linux 上做过交叉类型检查。
+3. Windows 安装器的实际安装、升级、静默安装、卸载、右键菜单与 SendTo。
+4. 图形界面的真实窗口渲染与交互，只验证了无窗口 `--selftest`。
+5. AppImage 产物：已生成并运行 `--selftest`，未在真实桌面会话验证窗口、托盘与桌面集成。
+6. deb 包的实际安装与卸载，只用 `dpkg-deb --info` 检查过产物结构。
+7. 带真实旧数据的迁移，只验证了空目录与缺失目录。
+8. 4 GiB 以上大文件的真实传输与磁盘满场景，只验证了 4 GiB 边界拒绝。
+9. 退出码 3 的真实后端触发路径，mock 后端不跨进程 busy。
+10. Ctrl+C 打断真实长传输与真实断线重连；续传语义用脚本化传输与 CLI 端到端用例验证。
+
+完整清单见 `docs/ACCEPTANCE.md`，发布侧边界见 `docs/RELEASE.md`。
+
+## 数据与迁移
+
+数据目录：
+
+```text
+配置根/BluetoothTransfer/config.toml      仅写非默认值
+数据根/BluetoothTransfer/records.db       SQLite 记录库
+数据根/BluetoothTransfer/logs/            日志
+数据根/BluetoothTransfer/journal/         BTJ1 断点续传索引 send-journal.bin
+数据根/BluetoothTransfer/auth.token       OPP 认证密码，权限 0600
+数据根/BluetoothTransfer/pending/         打包与续传临时产物
+下载目录/BluetoothReceive/                 默认接收目录
+```
+
+配置根与数据根按平台拆分：Linux 使用 `$XDG_CONFIG_HOME` 与 `$XDG_DATA_HOME`，未设置时用 `$HOME/.config` 与 `$HOME/.local/share`；Windows 使用 `%APPDATA%` 与 `%LOCALAPPDATA%`。设置 `BT_HOME` 时切换为便携布局。
+
+从旧 .NET 版本升级：
+
+```bash
+bt migrate --dry-run --json
+bt migrate --from "%APPDATA%/BluetoothTransfer" --json
+```
+
+迁移覆盖旧配置、历史记录与发送 journal，重复执行幂等；省略 `--from` 时按平台配置目录推断。图形界面在设置页提供同一入口。
+
+卸载保留策略：Windows 安装器卸载时询问是否同时删除用户数据，选择否即保留；Linux 下应用写入 `~/.local/share` 与 `~/.config/autostart` 的用户级右键菜单与开机自启项不由包管理器删除，可在设置页移除。
+
+## 仓库结构
+
+单一 Rust workspace，依赖方向单向：
+
+```text
+bt-core ← bt-api ← bt-store / bt-transport ← bt-engine ← bt-app ← bt-gui / bt-cli
+                                                        ↑
+                                                   bt-platform
+```
+
+| 路径 | 内容 |
+| --- | --- |
+| `crates/bt-core` | 传输层无关模型：设备标识、通道、配置、记录、错误、路径与哈希 |
+| `crates/bt-api` | 冻结契约：`Backend` trait、事件模型与 DTO，GUI 与 CLI 唯一依赖的接口 |
+| `crates/bt-store` | SQLite 记录库、TOML 配置、流式导出与旧格式迁移 |
+| `crates/bt-transport` | 蓝牙抽象：Linux 走 BlueZ D-Bus 加 RFCOMM，Windows 走 WinRT RFCOMM 与配对代理 |
+| `crates/bt-engine` | 助手协议状态机、OBEX 推送、顺序队列、journal、断点续传、打包与接收服务 |
+| `crates/bt-app` | 装配根，`build_backend` 拼装 `Arc<dyn Backend>` |
+| `crates/bt-platform` | 单实例、外部收件箱、Shell 集成、通知、剪贴板、对话框、自启与窗口状态 |
+| `crates/bt-gui` | eframe/egui 界面、平台集成与无窗口自检入口 |
+| `crates/bt-cli` | `bt` 完整命令集与 `btrecv` 接收薄壳 |
+| `xtask` | `cargo xtask msrv` 等仓库任务 |
+| `packaging/` | NSIS 安装器脚本、deb 与 AppImage 构建脚本、图标生成 |
+| `skills/` | 面向 Agent 的 CLI 指引与脚本 |
+| `docs/` | 架构、协议、CLI、验收、发布与评审记录 |
+| `legacy/dotnet/` | 重构前的 Windows .NET 8 实现，只读参考，不参与 workspace 构建、测试与发布 |
+
+协议字节级细节见 `docs/PROTOCOL.md`，架构与依赖约束见 `docs/ARCHITECTURE.md`。
+
+## 许可证
+
+MIT，见 `LICENSE`。

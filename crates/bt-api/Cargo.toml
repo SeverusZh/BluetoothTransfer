@@ -1,0 +1,15 @@
+[package]
+name = "bt-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "冻结后端契约：GUI 与 CLI 只依赖本 crate"
+
+[dependencies]
+bt-core.workspace = true
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

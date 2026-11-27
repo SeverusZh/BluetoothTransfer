@@ -1,0 +1,17 @@
+[package]
+name = "bt-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "装配根：把契约、引擎、存储与传输拼成后端实例"
+
+[dependencies]
+bt-core.workspace = true
+bt-api.workspace = true
+bt-engine.workspace = true
+bt-store.workspace = true
+bt-transport.workspace = true
+crossbeam-channel = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+

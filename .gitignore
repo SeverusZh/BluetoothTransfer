@@ -40,3 +40,13 @@ FIX_PROGRESS.md
 ## Code review working artifacts
 .code-review-part*.md
 .dotnet-cli/
+
+## Rust
+/target/
+/.toolchain/
+/dist/
+*.rs.bk
+# Rust 源码里的 src/bin 目录不能被上面的 .NET bin 规则吞掉
+!**/src/bin/
+!**/src/bin/**
+

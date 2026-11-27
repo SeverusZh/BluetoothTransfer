@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: 质量门禁
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 图形依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.1
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: MSRV 元数据检查
+        run: cargo xtask msrv
+
+      - name: 格式化检查
+        run: cargo fmt --all --check
+
+      - name: 静态检查
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: 单元测试
+        run: cargo test --workspace
+
+      - name: 发布构建
+        run: cargo build --workspace --release
+
+      - name: 纯 CLI 构建
+        run: cargo build -p bt-cli --no-default-features
+
+      - name: GUI 自检
+        run: cargo run -p bt-gui -- --selftest
+
+  msrv:
+    name: MSRV 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 图形依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 按声明的 MSRV 构建
+        run: cargo check --workspace --all-targets
