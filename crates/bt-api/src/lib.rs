@@ -20,4 +20,4 @@ pub use event::Event;
 pub use mock::{MockBackend, MockCall};
 
 /// 契约版本；`bt-api` 的不兼容改动必须同时递增该值并在架构文档记录。
-pub const CONTRACT_VERSION: u32 = 1;
+pub const CONTRACT_VERSION: u32 = 2;
