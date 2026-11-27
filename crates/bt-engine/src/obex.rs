@@ -155,7 +155,7 @@ impl ObexHeader {
 
     pub fn as_name(&self) -> Option<String> {
         let payload = &self.value;
-        if payload.len() < 2 || payload.len() % 2 != 0 {
+        if payload.len() < 2 || !payload.len().is_multiple_of(2) {
             return None;
         }
         let start = if payload.len() >= 2 && payload[0] == 0xfe && payload[1] == 0xff {
@@ -678,7 +678,7 @@ mod tests {
         let long = format!("{}.txt", "汉".repeat(200));
         let header = ObexHeader::name(&long, false);
         assert!(header.value.len() <= 250);
-        assert!(header.value.len() % 2 == 0);
+        assert!(header.value.len().is_multiple_of(2));
         let decoded = header.as_name().unwrap();
         assert!(decoded.starts_with(&"汉".repeat(123)));
     }

@@ -282,7 +282,7 @@ fn decode_text(bytes: &[u8]) -> Result<String, BtError> {
 }
 
 fn decode_utf16(bytes: &[u8], big_endian: bool) -> Result<String, BtError> {
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return Err(BtError::invalid("UTF-16 文本字节数为奇数"));
     }
     let units: Vec<u16> = bytes

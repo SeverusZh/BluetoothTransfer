@@ -6,7 +6,7 @@ members = ["crates/*", "xtask"]
 version = "2.0.0"
 edition = "2021"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.95"
 
 [workspace.dependencies]
 bt-core = { path = "crates/bt-core", version = "2.0.0" }

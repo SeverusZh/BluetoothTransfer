@@ -32,6 +32,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: MSRV 元数据检查
+        run: cargo xtask msrv
+
       - name: 格式化检查
         run: cargo fmt --all --check
 
@@ -49,3 +52,21 @@ jobs:
 
       - name: GUI 自检
         run: cargo run -p bt-gui -- --selftest
+
+  msrv:
+    name: MSRV 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Linux 图形依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libxi-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libudev-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@1.95.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 按声明的 MSRV 构建
+        run: cargo check --workspace --all-targets

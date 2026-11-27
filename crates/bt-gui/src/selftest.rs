@@ -144,12 +144,12 @@ fn seeded_backend() -> Arc<MockBackend> {
     .enumerate()
     {
         let mut record = Record::running(
-            if index % 2 == 0 {
+            if index.is_multiple_of(2) {
                 Direction::Send
             } else {
                 Direction::Receive
             },
-            if index % 2 == 0 {
+            if index.is_multiple_of(2) {
                 bt_core::Channel::Opp
             } else {
                 bt_core::Channel::Assistant
