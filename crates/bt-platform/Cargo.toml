@@ -8,3 +8,31 @@ description = "平台集成：单实例、外部收件箱、Shell 集成、通�
 
 [dependencies]
 bt-core.workspace = true
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+arboard = "3.7"
+notify-rust = "4.19"
+rfd = "0.15"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# 强制 wayland-sys 使用 dlopen：无显示环境的构建机没有 wayland-client 开发头文件，
+# 运行期在 Wayland 桌面加载系统库，X11 桌面退回 XDG portal 的 X11 路径。
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.8", default-features = false, features = ["blocking", "async-io"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["dlopen"] }

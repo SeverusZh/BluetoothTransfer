@@ -15,5 +15,6 @@ path = "src/main.rs"
 bt-core.workspace = true
 bt-api.workspace = true
 bt-app.workspace = true
+bt-platform.workspace = true
 crossbeam-channel = "0.5"
-eframe = { version = "0.37", default-features = false, features = ["glow", "x11", "default_fonts"] }
+eframe = { version = "0.37", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }

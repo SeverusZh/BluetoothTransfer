@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=蓝牙传输
+Comment=通过蓝牙发送与接收文件
+Exec=bt-gui %F
+Icon=bluetooth-transfer
+Terminal=false
+Categories=Utility;Network;
+StartupWMClass=bluetooth-transfer
+Actions=SendWithBluetooth;
+
+[Desktop Action SendWithBluetooth]
+Name=用蓝牙传输发送
+Exec=bt-gui --send %F
