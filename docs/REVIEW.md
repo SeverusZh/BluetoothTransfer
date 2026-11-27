@@ -439,3 +439,99 @@
 ### 8.6 最终判定
 
 **有条件放行。** T9 对 R-26 主链路、R-28、R-29、R-30、R-32 的修复经独立复现成立；R-27 为低风险测量表述问题，R-31 的大部分项目已处理或已记录接受理由。剩余必修项只有 **R-33**：用户源文件若位于 pending/ 会在完成时被 journal cleaner 删除，直接违反“用户源文件永不被删”；应在命令层拒绝该来源或改为显式来源标志。R-34 至 R-38 为低风险边界/文档问题，建议发布前处理。MSRV 1.95、真实蓝牙、Windows 安装器、GUI 渲染与 AppImage 仍属未验证边界，不能以本机结果替代。
+
+## 9 T12 定向确认
+
+确认对象：HEAD 5bf913d（T11 提交 bb57f60、9d4362e、f206157 之后的修复；相对 T10 的 f206157 为 26 个文件、+478/-54 行）。工作树干净，docs/REVIEW.md 已入库。本轮未改源码、未做 git 写操作；只追加本章。
+
+本轮只确认 R-33 至 R-38，但重新执行了全部门禁与体积复测。
+
+### 9.1 逐项结论
+
+| 编号 | 结论 | 独立证据 |
+| --- | --- | --- |
+| R-33 | 已修复主场景，保留两个低风险边角 | CLI 对 pending 内用户源文件的普通发送、--zip、send files 均 exit 2、kind=invalid_argument、hint 含“pending/移出”，源文件仍在；引擎入队守卫单测通过；自产 zip 取消/完成经 e2e 与真实 SIGINT 验证，自产 zip 由 journal 终态清理、用户源文件保留；非自产 journal 恢复载荷不被 cleaner 删除。边角见 R-40、R-41。 |
+| R-34 | 已修复 | 独立 harness：损坏 journal + payload，settle=false、payload 保留、journal 变 .corrupt.<ts>；有效空 journal（BTJ1 4 字节）+ payload，settle=true、payload 删除，不泄漏；有效 paused journal 引用与 journal 锁等待均保留。 |
+| R-35 | 已修复 | 独立 harness：pending/../victim 普通外部文件 SETTLE=false；pending 内指向外部文件的 symlink SETTLE=false；pending/../victim-link 的悬挂 symlink SETTLE=false 且 link 仍在；pending 内普通自产文件仍可 is_owned。 |
+| R-36 | 部分修复（低） | 约 5.67 MB 成立；本次两次重建 5,670,724 与 5,670,710 字节，文档写“本次重建 5,670,756 与 5,670,778”，相差 32–68 字节，仍在“可致数十 KB 差异”的说明内；精确“本次”值不可复现。 |
+| R-37 | 已修复 | 真实后端 selftest --json：transport/engine 为 ok=false、skipped=true，顶层 ok=true、failed=[]、exit 0；human 输出 [skip] 两项、无 [fail]；GUI 字体缺失分支已改为 push_skip；SelftestReport.passed 与 failed_names 单测覆盖。 |
+| R-38 | 已修复主路径，hint 仍有低风险 | 文档 3/4 已改为 3 单实例占用、4 配置/journal 锁；用“抽象 socket 已 bind 但未 listen”的伪实例实测 bt gui exit 3、kind=busy；但错误 hint 仍被 run_gui 统一改写为“无显示环境”，见 R-39。 |
+
+### 9.2 R-33 详细确认
+
+- 原始场景：release 二进制在 pending/ 放置 user.txt，执行 send file、send file --zip、send files，三者均 exit 2、type=error、kind=invalid_argument，错误信息指明 pending，源文件与 pending 内容不变。源文件在 pending 外时发送正常。
+- 引擎守卫：ensure_sendable_source 对 File/Files 检查 item.produced、item.recovered 与 packages.contains；CLI 不依赖引擎才拦截。自产 zip 由 CLI/GUI 设置 item.produced=true；恢复载荷由 journal produced 透传并置 recovered=true。
+- 自产载荷：zip 取消后 journal paused、payload 保留；resume run 完成后 journal 与 zip 清空、源文件保留；显式 resume cancel 删除 zip、源文件仍在。真实 SIGINT（BT_TEST_TRANSPORT=stall）当前代码仍为 exit1、journal paused、payload 126 B、source 18 B。
+- cleaner 语义：Journal 只按 entry.produced 决定是否清理；Journal::complete 对 produced=false 的条目保留 payload（单测）；引擎恢复非自产条目完成后 payload 仍在（bt-app e2e）。
+- is_owned 调用点全仓仅剩 PendingPackageStore::delete 与 settle_owned_payload；引擎 provenance 已改为 item.produced && contains，不再以 is_owned 推断。仍存在两个低风险边角：GUI 的 zip 开关对 pending 内源文件先打包而不拒绝（源文件不删除，R-40）；SendItem 的 produced/recovered 字段为 pub 且 Deserialize 未 skip_deserializing（当前无外部 JSON 输入路径，R-41）。
+
+### 9.3 R-34/R-35 详细确认
+
+- R-34：settle_owned_payload 读取 journal 后检查 journal_file 是否仍存在；损坏 journal 被 quarantine 后路径消失，返回 false；有效空 journal 路径仍存在，返回 true 并删除。实测结果见 9.1。
+- R-35：is_owned 先 canonicalize root，再 symlink_metadata 拒绝 symlink/非普通文件，再 canonicalize candidate 并限定 starts_with root；contains 使用 absolute_lexical 归一化路径，拒绝 .. 与外部路径。实测普通外部文件、外部 symlink、悬挂 symlink 均无法删除，pending 内文件正常。
+- Windows 的盘符、大小写、分隔符和 junction 变体未在本机验证；建议 CI/Windows 补一条路径边界测试。
+
+### 9.4 R-36/R-37/R-38 详细确认
+
+- R-36：release 二进制尺寸 cli-only bt 3,609,904、btrecv 3,352,048、bt-gui 11,175,704、完整 bt 11,690,264，均与文档一致；两次 .deb 重建 5,670,724/5,670,710，与文档“本次 5,670,756/5,670,778”的差异在声明的时间戳波动范围内，但精确值不可复现。
+- R-37：SelftestCheck 新增 skipped；passed 将 skipped 视为通过，failed_names 排除 skipped；CLI 与 GUI 的人读输出均标 [skip]；JSON 仅在 skipped=true 时输出该字段；真实后端无 BlueZ 时 transport/engine 跳过，exit 0。
+- R-38：docs/CLI.md 的 3/4 表述与实现一致；单实例冲突实测 exit 3、kind=busy；正常第二个实例成功转发按设计 exit 0，不属于冲突。bt-cli 的 run_gui 在任意错误上统一附加“无显示环境”hint，导致 busy 场景提示不准确（R-39）。
+
+### 9.5 新发现与低风险项
+
+**R-39 低：单实例 busy 的 CLI hint 被 run_gui 改写为“无显示环境”**
+- 现象：实测 bt gui 在伪单实例占用下 exit 3、kind=busy，但 error.hint 为“无显示环境时无法打开窗口；请改用 CLI 子命令”，与 busy 原因不符。
+- 证据：crates/bt-cli/src/lib.rs:133 对 run_gui 的所有错误统一 with_hint；Busy 的默认 hint 被覆盖。
+- 建议：只在非 Busy 错误上附加显示提示，或按错误 kind 选择 hint。
+
+**R-40 低：GUI 的 zip 开关未拒绝 pending 内用户源**
+- 现象：CLI 的 --zip 在打包前拒绝 pending 内源文件；GUI send_pending 的 zip 分支直接 pack_zip_file_in，再把新 zip 以 produced=true 入队，原源文件保留但未被拒绝。R-33 的“入队拒绝 pending 内用户源”在 GUI zip 路径不一致。
+- 证据：crates/bt-gui/src/state/actions.rs:325-340；CLI 守卫在 crates/bt-cli/src/commands/send.rs:120-130。
+- 建议：GUI zip 分支前置 is_pending_source 检查；或明确文档只约束原始文件发送，zip 包装不受限。
+- 影响：不造成数据删除，属于行为一致性/契约问题。
+
+**R-41 低：SendItem 的 produced/recovered 公开且反序列化可被外部 JSON 设置**
+- 现象：字段为 pub；serde 只有 skip_serializing，没有 skip_deserializing；produced=true 的 JSON 若被 from_value 解析会保留。当前仓库没有把 SendItem 作为 JSON 输入的任何路径（JobSnapshot 只输出；inbox 用 WireItem；journal 是本地二进制），所以不是当前可达的伪造面。
+- 证据：crates/bt-api/src/dto.rs:78-88、:661-667；全仓 from_value/from_str<SendItem> 仅测试。
+- 建议：后续如引入 JSON 输入，使用 skip_deserializing 或私有字段+构造函数；journal 的 produced 是本地文件字段，不构成远程伪造面。
+- 影响：低；库调用方可以直接设置，但属于同进程可信 API。
+
+**R-42 低：R-36 精确字节值不可复现**
+- 现象：文档写“本次重建 5,670,756 与 5,670,778”，本次实测 5,670,724 与 5,670,710；差异 32–68 B，在“数十 KB 差异”说明内。
+- 建议：文档改为不写具体“本次”值，只写约 5.67 MB、命令与波动范围；或接受该低风险表述。
+
+**R-43 低：bt-api 公开结构新增字段但 CONTRACT_VERSION 仍为 1**
+- 现象：SendItem 新增 pub produced/recovered，SelftestCheck 新增 pub skipped；这些是公开结构体的新增字段，下游 Rust 代码用结构体字面量构造会编译失败，但 CONTRACT_VERSION 仍为 1，没有契约版本变化说明。
+- 证据：crates/bt-api/src/lib.rs:23；crates/bt-api/src/dto.rs:78、:407。
+- 建议：若不面向外部库发布，在文档标注 bt-api 仅限本仓库使用；若作为契约发布，提升 CONTRACT_VERSION 或改为私有字段加构造/访问器。
+- 影响：低；当前 workspace 内全部通过，CLI/GUI JSON 未被改变。
+
+### 9.6 门禁与体积复测
+
+| 项目 | 命令 | 退出码 | 结果 |
+| --- | --- | --- | --- |
+| 格式化 | cargo fmt --all --check | 0 | 无输出 |
+| 静态检查 | cargo clippy --workspace --all-targets -- -D warnings | 0 | 无警告 |
+| 全量测试 | cargo test --workspace | 0 | 293 passed、0 failed、1 ignored；较 T10 的 283/1 增加 10 个测试 |
+| CLI e2e | cargo test -p bt-cli | 0 | e2e 44、单测 13、pair_pin 3 |
+| 发布构建 | cargo build --workspace --release | 0 | cli-only bt 3,609,904、btrecv 3,352,048、bt-gui 11,175,704、完整 bt 11,690,264 |
+| cli-only 调试 | cargo build -p bt-cli --no-default-features | 0 | 通过 |
+| GUI 自检 | cargo run -p bt-gui -- --selftest | 0 | 16 项全 ok |
+| MSRV | cargo xtask msrv | 0 | workspace=1.95，依赖最高要求=1.95 |
+| Windows target | cargo check -p bt-transport/-platform/-engine --target x86_64-pc-windows-msvc | 0 | 三者通过；store/app/cli/gui 仍 101（lib.exe 缺失） |
+| .deb | VERSION=2.0.0 packaging/linux/build-deb.sh 两次 | 0 | 5,670,724 与 5,670,710 字节 |
+
+### 9.7 未验证项
+
+1. Rust 1.95 实际编译：本机只有 1.96；1.95 未安装，CI 的 MSRV 作业已接线但未在本轮运行。
+2. 真实蓝牙扫描/配对/SDP/RFCOMM/OPP/助手通道、真实长传输与真实断线续传；无硬件/BlueZ。
+3. 真实 GUI 窗口/托盘/通知、Windows WinRT、NSIS 安装/卸载、AppImage、GitHub Actions 发布。
+4. .deb 实际安装/卸载。
+5. settle_owned_payload 的 Windows 盘符/大小写/junction 变体；本机仅 Linux。
+6. 单实例冲突的 Windows 实现；本机只验证 Linux 的伪占用 exit 3。
+7. 真实旧 .NET 数据迁移与旧版接收端互传。
+8. 4 GiB 以上真实蓝牙传输、磁盘满；未变。
+
+### 9.8 最终判定
+
+**可放行。** R-33 的原始用户源文件场景、自产 zip 生命周期、journal 终态清理与恢复语义均已独立验证；R-34、R-35、R-37、R-38 主路径已修复；R-36 的约 5.67 MB 可复现，精确字节值有低风险表述差异。剩余必修项：**无**。R-39、R-40、R-41、R-42、R-43 为低风险行为/契约/文档硬化项，建议后续处理，不阻断发布。1.95 实编、真实蓝牙、Windows 安装器与 GUI 渲染仍需在对应环境验证，不能以本机结果替代。
