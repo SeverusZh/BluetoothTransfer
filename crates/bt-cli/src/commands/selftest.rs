@@ -25,7 +25,13 @@ pub fn run(ctx: &Context) -> Result<u8, CliError> {
     );
     if ctx.mode.is_human() {
         for check in &report.checks {
-            let mark = if check.ok { "ok" } else { "fail" };
+            let mark = if check.skipped {
+                "skip"
+            } else if check.ok {
+                "ok"
+            } else {
+                "fail"
+            };
             println!("[{mark}] {}: {}", check.name, check.detail);
         }
         if ok {

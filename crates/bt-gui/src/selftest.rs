@@ -15,12 +15,14 @@ use crate::theme;
 pub fn run() -> Result<u8, bt_core::BtError> {
     let report = self_check();
     for check in &report.checks {
-        println!(
-            "[{}] {}: {}",
-            if check.ok { "ok" } else { "fail" },
-            check.name,
-            check.detail
-        );
+        let mark = if check.skipped {
+            "skip"
+        } else if check.ok {
+            "ok"
+        } else {
+            "fail"
+        };
+        println!("[{mark}] {}: {}", check.name, check.detail);
     }
     Ok(if report.passed() { 0 } else { 1 })
 }
@@ -96,12 +98,14 @@ pub fn self_check() -> SelftestReport {
         "设备、发送、队列、接收、记录、日志、设置全部渲染",
     );
     report.push("dialogs", pairing_ready, "配对确认对话框已渲染");
-    let font_detail = if font.found() {
-        font.detail.clone()
+    if font.found() {
+        report.push("font", true, font.detail.clone());
     } else {
-        format!("环境跳过：{}；设置 BT_FONT_PATH 后重跑", font.detail)
-    };
-    report.push("font", true, font_detail);
+        report.push_skip(
+            "font",
+            format!("缺少中文系统字体：{}；设置 BT_FONT_PATH 后重跑", font.detail),
+        );
+    }
     report.push("config", state.config.validate().is_ok(), "配置在合法区间");
 
     let inbox_root = temp_dir.join("inbox");

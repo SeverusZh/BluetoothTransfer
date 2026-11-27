@@ -993,8 +993,8 @@ impl Inner {
                     .transport_error
                     .clone()
                     .unwrap_or_else(|| "蓝牙传输不可用".to_string());
-                report.push("transport", true, format!("未启用（环境跳过）：{detail}"));
-                report.push("engine", true, "未启用（环境跳过）：无蓝牙传输");
+                report.push_skip("transport", format!("蓝牙传输不可用：{detail}"));
+                report.push_skip("engine", "无蓝牙传输，发送引擎未装配");
             }
         }
         self.bus.emit(Event::log(LogLevel::Info, "后端自检完成"));
