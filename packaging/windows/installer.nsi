@@ -9,10 +9,10 @@ SetCompressorDictSize 64
   !error "VERSION 未定义：使用 /DVERSION=<版本> 传入，版本号以 workspace.package.version 为唯一来源"
 !endif
 !ifndef BUILD_DIR
-  !define BUILD_DIR "../../target/release"
+  !define BUILD_DIR "..\..\target\release"
 !endif
 !ifndef OUTPUT_FILE
-  !define OUTPUT_FILE "../../dist/BluetoothTransfer-${VERSION}-setup.exe"
+  !define OUTPUT_FILE "..\..\dist\BluetoothTransfer-${VERSION}-setup.exe"
 !endif
 
 !define APP_NAME "蓝牙传输"
@@ -73,15 +73,15 @@ Section "主程序（必需）" SEC_MAIN
   DeleteRegKey HKCU "Software\Classes\SystemFileAssociations\.txt\shell\BluetoothTransfer.SendText"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "BluetoothTransfer"
   Delete "$APPDATA\Microsoft\Windows\SendTo\${APP_NAME}.lnk"
-  File "/oname=${APP_EXE}" "${BUILD_DIR}/${APP_EXE}"
-  !if /FileExists "${BUILD_DIR}/bt.exe"
-    File "/oname=bt.exe" "${BUILD_DIR}/bt.exe"
+  File "/oname=${APP_EXE}" "${BUILD_DIR}\${APP_EXE}"
+  !if /FileExists "${BUILD_DIR}\bt.exe"
+    File "/oname=bt.exe" "${BUILD_DIR}\bt.exe"
   !endif
-  !if /FileExists "${BUILD_DIR}/btrecv.exe"
-    File "/oname=btrecv.exe" "${BUILD_DIR}/btrecv.exe"
+  !if /FileExists "${BUILD_DIR}\btrecv.exe"
+    File "/oname=btrecv.exe" "${BUILD_DIR}\btrecv.exe"
   !endif
-  !if /FileExists "${BUILD_DIR}/../../LICENSE"
-    File "/oname=LICENSE.txt" "${BUILD_DIR}/../../LICENSE"
+  !if /FileExists "${BUILD_DIR}\..\..\LICENSE"
+    File "/oname=LICENSE.txt" "${BUILD_DIR}\..\..\LICENSE"
   !endif
   Delete "$INSTDIR\uninstall.exe"
   WriteUninstaller "$INSTDIR\uninstall.exe"
