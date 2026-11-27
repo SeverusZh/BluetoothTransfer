@@ -1,104 +1,173 @@
 //! 命令行前端：bt 提供完整命令集，btrecv 是只做接收的薄壳。
 //!
-//! 默认特性启用 gui，使 bt 在无子命令时直接打开图形界面；
+//! 默认特性启用 gui，使 bt 无子命令时打开图形界面；
 //! 关闭默认特性后 bt 只保留纯命令行路径，不链接 eframe。
 
+pub mod backend;
 pub mod cli;
+pub mod commands;
+pub mod error;
+pub mod output;
+pub mod signal;
 
-use bt_app::{build_backend, AppPaths};
-use clap::Parser;
+pub use cli::{BtrecvCli, Cli, Command};
 
-pub use cli::{Cli, Command};
+use clap::{CommandFactory, Parser};
 
-/// 进程入口，返回退出码：0 成功、1 自检未通过、2 用法错误、3 未实现或运行失败。
+use crate::backend::Context;
+use crate::cli::BtrecvCommand;
+use crate::error::CliError;
+use crate::output::OutputMode;
+
+/// bt 进程入口。
 pub fn main_entry(args: Vec<String>) -> i32 {
-    let parsed = Cli::try_parse_from(std::iter::once("bt".to_string()).chain(args));
-    let cli = match parsed {
+    signal::install();
+    let wants_json = args.iter().any(|arg| arg == "--json");
+    let parsed = match Cli::try_parse_from(std::iter::once("bt".to_string()).chain(args)) {
         Ok(cli) => cli,
-        Err(error) => {
-            let code = match error.kind() {
-                clap::error::ErrorKind::DisplayHelp
-                | clap::error::ErrorKind::DisplayVersion
-                | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => 0,
-                _ => 2,
-            };
-            let _ = error.print();
-            return code;
-        }
+        Err(error) => return clap_failure("bt", &error, wants_json),
     };
-    dispatch(cli)
+    run_cli(parsed)
 }
 
-fn dispatch(cli: Cli) -> i32 {
-    match cli.command {
-        None => launch_default(),
-        Some(Command::Selftest) => run_selftest(),
-        Some(Command::Send { .. }) => pending("send"),
-        Some(Command::Recv { .. }) => pending("recv"),
+fn run_cli(cli: Cli) -> i32 {
+    if cli.command.is_none() {
+        return default_command();
     }
+    if matches!(&cli.command, Some(Command::Repl)) {
+        return commands::repl_entry(&cli);
+    }
+    let mode = OutputMode::from_flags(cli.json, cli.events);
+    let name = cli.command_name();
+    if matches!(&cli.command, Some(Command::Gui)) {
+        return match run_gui() {
+            Ok(code) => i32::from(code),
+            Err(error) => i32::from(error.report(mode, name)),
+        };
+    }
+    let ctx = if matches!(&cli.command, Some(Command::Resume { .. })) {
+        Context::open_without_resume(mode)
+    } else {
+        Context::open(mode)
+    };
+    let ctx = match ctx {
+        Ok(ctx) => ctx,
+        Err(error) => return i32::from(error.report(mode, name)),
+    };
+    let result = match cli.command.as_ref() {
+        Some(command) => commands::dispatch(command, &ctx),
+        None => Ok(0),
+    };
+    let code = match result {
+        Ok(code) => i32::from(code),
+        Err(error) => i32::from(error.report(mode, name)),
+    };
+    ctx.shutdown();
+    code
 }
 
-fn launch_default() -> i32 {
+/// btrecv 进程入口：无参即监听，其余参数与 bt recv 一致。
+pub fn recv_entry(args: Vec<String>) -> i32 {
+    signal::install();
+    let wants_json = args.iter().any(|arg| arg == "--json");
+    let parsed = match BtrecvCli::try_parse_from(std::iter::once("btrecv".to_string()).chain(args)) {
+        Ok(cli) => cli,
+        Err(error) => return clap_failure("btrecv", &error, wants_json),
+    };
+    if let Some(command) = &parsed.command {
+        match command {
+            BtrecvCommand::Help => {
+                let mut help = BtrecvCli::command();
+                let _ = help.print_help();
+                println!();
+                return 0;
+            }
+            BtrecvCommand::Version => {
+                println!("btrecv {}", env!("CARGO_PKG_VERSION"));
+                return 0;
+            }
+            BtrecvCommand::Recv(_) => {}
+        }
+    }
+    let recv_args = match &parsed.command {
+        Some(BtrecvCommand::Recv(args)) => args.clone(),
+        _ => parsed.direct.clone(),
+    };
+    let mode = OutputMode::from_flags(parsed.json, parsed.events);
+    let ctx = match Context::open(mode) {
+        Ok(ctx) => ctx,
+        Err(error) => return i32::from(error.report(mode, "recv")),
+    };
+    let code = match commands::recv::run(&ctx, &recv_args) {
+        Ok(code) => i32::from(code),
+        Err(error) => i32::from(error.report(mode, "recv")),
+    };
+    ctx.shutdown();
+    code
+}
+
+fn default_command() -> i32 {
     #[cfg(feature = "gui")]
     {
-        match bt_gui::run_window() {
+        match run_gui() {
             Ok(code) => i32::from(code),
-            Err(error) => {
-                eprintln!("{error}");
-                3
-            }
+            Err(error) => i32::from(error.report(OutputMode::Human, "gui")),
         }
     }
     #[cfg(not(feature = "gui"))]
     {
-        eprintln!("未指定子命令，且本构建不含图形界面；请使用 bt --help 查看命令");
+        eprintln!("本构建不含图形界面；使用 bt --help 查看可用命令");
         2
     }
 }
 
-fn run_selftest() -> i32 {
-    let paths = match AppPaths::resolve() {
-        Ok(paths) => paths,
-        Err(error) => {
-            eprintln!("{error}");
-            return 3;
-        }
-    };
-    let backend = match build_backend(paths) {
-        Ok(backend) => backend,
-        Err(error) => {
-            eprintln!("{error}");
-            return 3;
-        }
-    };
-    let _events = backend.subscribe();
-    match backend.selftest() {
-        Ok(report) => {
-            for check in &report.checks {
-                let mark = if check.ok { "ok" } else { "fail" };
-                println!("[{mark}] {}: {}", check.name, check.detail);
-            }
-            if report.passed() {
-                0
-            } else {
-                println!("自检未通过");
-                3
-            }
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            3
-        }
+fn run_gui() -> Result<u8, CliError> {
+    #[cfg(feature = "gui")]
+    {
+        bt_gui::main_entry(Vec::new())
+            .map_err(|error| CliError::from(error).with_hint("无显示环境时无法打开窗口；请改用 CLI 子命令"))
+    }
+    #[cfg(not(feature = "gui"))]
+    {
+        Err(CliError::failed("当前构建为 cli-only，未启用图形界面")
+            .with_hint("安装带 GUI 的发行包，或使用 bt --help 查看命令行能力"))
     }
 }
 
-fn pending(command: &str) -> i32 {
-    eprintln!("{command} 子命令待 T2 实现");
-    3
+fn clap_failure(program: &str, error: &clap::Error, wants_json: bool) -> i32 {
+    let code = clap_error_code(error);
+    if code == 0 {
+        let _ = error.print();
+        return 0;
+    }
+    if wants_json {
+        let message = error
+            .to_string()
+            .lines()
+            .next()
+            .unwrap_or("用法错误")
+            .trim_start_matches("error: ")
+            .to_string();
+        let body = serde_json::json!({
+            "ok": false,
+            "command": program,
+            "type": "error",
+            "error": {
+                "kind": "invalid_argument",
+                "message": message,
+                "hint": format!("运行 {program} --help 查看用法"),
+            }
+        });
+        println!("{body}");
+    } else {
+        let _ = error.print();
+    }
+    code
 }
 
-/// btrecv 入口：默认走接收语义。
-pub fn recv_entry() -> i32 {
-    eprintln!("接收服务待 T2 实现");
-    3
+fn clap_error_code(error: &clap::Error) -> i32 {
+    match error.kind() {
+        clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => 0,
+        _ => 2,
+    }
 }

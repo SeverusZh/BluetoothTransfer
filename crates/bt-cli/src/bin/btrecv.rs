@@ -1,3 +1,5 @@
 fn main() -> std::process::ExitCode {
-    std::process::ExitCode::from(bt_cli::recv_entry() as u8)
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let code = bt_cli::recv_entry(args);
+    std::process::ExitCode::from(code.clamp(0, 255) as u8)
 }
