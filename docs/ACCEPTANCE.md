@@ -43,13 +43,13 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | SND-01 | OPP 单文件发送 | `bt send file <ADDR> <PATH> --json`；e2e `send_file_and_folder_and_zip` | 契约已验证；真实 OPP 未验证 |
 | SND-02 | 多文件顺序发送与汇总 | `bt send files <ADDR> <PATH>...`；e2e 同上 | 契约已验证 |
 | SND-03 | 文本发送 | `bt send text <ADDR> <TEXT>`；e2e `send_text_returns_jobs_and_summary` | 契约已验证 |
-| SND-04 | 文件夹自动打包发送 | `bt send folder <ADDR> <DIR>`；e2e `send_file_and_folder_and_zip` | 契约已验证（引擎打包）；真实 OPP 发送未验证 |
-| SND-05 | 单文件 zip | `bt send file <ADDR> <PATH> --zip`；e2e `send_file_and_folder_and_zip` 校验名称与 pending 清理、`zip_rejects_4gib_source_and_leaves_no_artifact` 校验 4 GiB 上限；GUI 与 CLI 共用 bt-app 打包器，selftest 校验产物 | 契约已验证（含 4 GiB 拒绝与清理；真实 OPP 未验证） |
+| SND-04 | 文件夹自动打包发送 | `bt send folder <ADDR> <DIR>`；e2e `send_file_and_folder_and_zip`、`send_folder_rejects_zip32_limit_with_unsupported_error` | 契约已验证（引擎打包与 ZIP32 命令级预检）；真实 OPP 发送未验证 |
+| SND-05 | 单文件 zip | `bt send file <ADDR> <PATH> --zip`；e2e `send_file_and_folder_and_zip` 校验名称与 pending 清理、`zip_rejects_4gib_source_and_leaves_no_artifact` 校验 4 GiB 上限；e2e `zip_cancel_keeps_payload_and_resume_run_finishes_it` 校验取消保留、续传完成清理与显式取消清理；GUI `canceled_zip_job_keeps_payload_for_resume` 校验同一语义 | 契约已验证（含 4 GiB 拒绝、取消保留与终态清理；真实 OPP 未验证） |
 | SND-06 | 通道模式 auto/assistant/opp | `--mode`；e2e 校验 assistant 通道与记录 | 契约已验证；真实助手通道未验证 |
 | SND-07 | 助手通道探测与发送 | `devices detect` + `send --mode assistant`；bt-app e2e `assistant_send_end_to_end_uses_journal_and_records_completed` | 协议与引擎已用脚本化传输验证；真实 RFCOMM 未验证 |
 | SND-08 | 断点续传 | `bt resume list/run/cancel`；e2e `resume_list_run_and_cancel_use_the_real_journal`、`resume_run_recovers_paused_entries_and_prunes_missing_payloads` | 契约已验证：BTJ1 journal 计划、paused 恢复与 abandon 清理；真实断线续传未验证 |
 | SND-09 | 顺序队列与逐任务暂停/继续/取消/重试/移除 | 引擎队列单元测试与 GUI 队列页动作 | 已接线；无长传输可验证真实暂停与重试 |
-| SND-10 | Ctrl+C 取消发送并保留续传信息 | e2e `cancel_keeps_resume_entry_and_resume_run_finishes_it`：脚本化传输取消后 journal 保持 paused，CLI `resume list/run` 可继续；引擎单测 `cancel_preserves_paused_journal_entry` | 契约已验证；真实长传输 Ctrl+C 未验证 |
+| SND-10 | Ctrl+C 取消发送并保留续传信息 | e2e `cancel_keeps_resume_entry_and_resume_run_finishes_it`、`zip_cancel_keeps_payload_and_resume_run_finishes_it`：脚本化传输取消后 journal 保持 paused、自产 zip 保留，CLI `resume list/run` 可继续并在完成后清理；引擎单测 `cancel_preserves_paused_journal_entry`、`cancel_keeps_produced_zip_until_journal_terminal_state`、`completed_produced_zip_is_removed_with_journal_entry`；GUI `canceled_zip_job_keeps_payload_for_resume` | 契约已验证；真实长传输 Ctrl+C 未验证 |
 | SND-11 | 进度与速率 | `--events` 的 `job_progress`；e2e `send_events_are_ndjson_with_result_line` | 契约已验证 |
 | SND-12 | 剪贴板与拖放发起 | GUI 发送页动作与平台剪贴板测试 | 已接线；无显示环境未验证真实剪贴板 |
 
@@ -99,7 +99,7 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | SYS-03 | 托盘、通知、通知点击 | bt-platform 托盘与通知单元测试 | 调用路径已验证；无托盘宿主与通知守护进程，未验证实际显示 |
 | SYS-04 | Windows 资源管理器集成 | NSIS 脚本静态检查 | 脚本覆盖注册表项；无 Windows 运行环境，未验证 |
 | SYS-05 | Linux 桌面集成 | .desktop、AppRun 与打包脚本静态检查 | 文件存在且脚本可重复执行；未在桌面环境验证 |
-| SYS-06 | GUI 页面与交互 | 设备、发送、接收、记录、日志、设置 | 页面状态与动作已接线；无显示环境未验证真实交互 |
+| SYS-06 | GUI 页面与交互 | 设备、发送、队列、接收、记录、日志、设置 | 页面状态与动作已接线；无显示环境未验证真实交互 |
 | SYS-07 | GUI selftest | `cargo run -p bt-gui -- --selftest` | 已验证：16 项检查退出 0 |
 | SYS-08 | Windows 安装器 | NSIS 构建与安装/卸载/升级 | 脚本曾用 NSIS 编译；未在 Windows 安装/卸载/升级 |
 | SYS-09 | GitHub Actions 发布 | release.yml 静态检查 | 版本校验、矩阵与产物断言已接线；未在 GitHub 实际运行 |
@@ -118,20 +118,20 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | CLI-08 | btrecv 透明转发参数 | `btrecv --help`、无参监听、`btrecv recv` | 已验证 |
 | CLI-09 | 默认人类可读输出 CJK 对齐 | 人工检查表格宽度 | 已验证（人工） |
 | CLI-10 | 未知命令/缺参数退出 2，带 --json 或 --events 时输出错误对象 | e2e `usage_errors_exit_2`、`usage_errors_are_json_when_requested`、`events_parse_errors_emit_ndjson_error` | 已验证 |
-| CLI-15 | REPL 内错误输出结构化对象 | e2e `repl_json_reports_errors_as_objects`、`repl_events_reports_errors_as_ndjson` | 已验证 |
-| CLI-16 | 查询命令不触发 journal 续传 | `Command::auto_resumes_journal` 单测覆盖命令矩阵；bt-app `backend_can_open_without_auto_resuming_the_journal`、`backend_auto_resume_enqueues_journal_entries`；e2e `read_only_commands_do_not_touch_the_resume_journal` | 契约已验证 |
+| CLI-15 | REPL 内错误与帮助输出结构化对象 | e2e `repl_json_reports_errors_as_objects`、`repl_events_reports_errors_as_ndjson`、`repl_help_emits_structured_rows` | 已验证 |
+| CLI-16 | 查询命令不触发 journal 续传 | `Command::auto_resumes_journal` 单测覆盖命令矩阵；bt-app `backend_can_open_without_auto_resuming_the_journal`、`backend_auto_resume_enqueues_journal_entries`；e2e `read_only_commands_do_not_touch_the_resume_journal` 与真实后端 `real_backend_resumes_only_for_transfer_commands` | 契约已验证（含真实 CLI 二进制的只读/发送对照） |
 | CLI-11 | 数据根隔离 | `BT_HOME` 便携布局：配置与数据分居 `.config` 与 `.local/share` | 已验证 |
 | CLI-12 | 模拟后端可用 | `BT_BACKEND=mock`，由 bt-app 装配层选择 MockBackend | 已验证 |
 | CLI-13 | REPL 同一会话状态 | e2e 记录、配置、别名流程 | 已验证 |
-| CLI-14 | cli-only 构建行为 | `cargo build -p bt-cli --no-default-features`；`bt gui` 退出 1，无子命令退出 2 | 已验证 |
+| CLI-14 | cli-only 构建行为 | `cargo build -p bt-cli --no-default-features`；`bt gui` 退出 1，无子命令退出 2 并在 `--json`/`--events` 下输出结构化错误 | 已验证 |
 
 ## 体积指标
 
 | 指标 | 上限 | 当前状态 |
 | --- | --- | --- |
-| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,602,864 字节、`btrecv` 3,349,872 字节（本机 release，无 GUI 特性） |
-| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,171,480 字节 |
-| .deb | 20 MB | 已验证：5,554,490 字节 |
+| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,607,088 字节、`btrecv` 3,350,000 字节（本机 release，无 GUI 特性） |
+| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,173,528 字节 |
+| .deb | 20 MB | 已验证：重建实测 5,603,710 字节（方法与波动说明见 docs/RELEASE.md） |
 | NSIS 安装器 | 15 MB | 未生成：本机无 makensis 与 Windows 链接器 |
 | 接收最终文件额外字节 | 0 | 已验证：bt-app e2e 断言落盘长度等于载荷 |
 | 半成品 sidecar | 64 字节 | 已验证：53 字节 |

@@ -80,12 +80,12 @@ Linux：
 
 | 产物 | 上限 | 本机实测 | 说明 |
 | --- | --- | --- | --- |
-| cli-only 二进制 `bt` | 8 MB | 3,602,864 字节（3.44 MiB） | `cargo build -p bt-cli --no-default-features --release` |
-| cli-only 二进制 `btrecv` | 8 MB | 3,349,872 字节（3.19 MiB） | 同上，两个二进制合计 6.94 MB |
-| 完整 `bt` | 无独立上限 | 11,682,712 字节（11.14 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
-| GUI 单文件 `bt-gui` | 20 MB | 11,171,480 字节（10.65 MiB） | 已开启 strip/LTO/opt-level z |
+| cli-only 二进制 `bt` | 8 MB | 3,607,088 字节（3.44 MiB） | `cargo build -p bt-cli --no-default-features --release` |
+| cli-only 二进制 `btrecv` | 8 MB | 3,350,000 字节（3.19 MiB） | 同上，两个二进制合计 6.96 MB |
+| 完整 `bt` | 无独立上限 | 11,687,448 字节（11.15 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
+| GUI 单文件 `bt-gui` | 20 MB | 11,173,528 字节（10.66 MiB） | 已开启 strip/LTO/opt-level z |
 | NSIS 安装器 | 15 MB | 未生成 | 本机无 makensis、无 MSVC 链接器，只能在 CI 的 Windows runner 生成 |
-| `.deb` | 20 MB（CI 断言） | 5,554,490 字节（5.30 MiB） | 用真实 release 二进制构建，含 GUI、cli-only bt、btrecv、桌面文件与图标 |
+| `.deb` | 20 MB（CI 断言） | 5,603,710 字节（5.34 MiB，本次重建） | `VERSION=2.0.0 packaging/linux/build-deb.sh` 用 release 二进制构建；dpkg-deb 的 ar/tar 时间戳与压缩实现不同可致数 KB 差异，因此文档记录方法与本次值，不做字节级断言 |
 | AppImage | 25 MB（建议值，未在 CI 断言） | 未生成 | 无 appimagetool，下载超时 |
 
 体积上限的依据：cli-only 目标来自架构文档；GUI 20 MB 与安装器 15 MB 来自任务验收目标，release 配置已开启 strip、LTO 与 `opt-level z`。本机没有 makensis 与 MSVC 链接器，NSIS 安装器无法生成，不用占位二进制伪造体积；真实安装器由 CI 的 Windows runner 构建并断言。
@@ -104,13 +104,13 @@ Linux：
 - `cargo build --workspace --release` 通过，记录 cli-only、GUI 与完整 bt 的体积。
 - `cargo fmt -p bt-platform -p bt-gui --check` 通过。
 - `cargo clippy -p bt-platform -p bt-gui --all-targets -- -D warnings` 通过。
-- `cargo test -p bt-platform -p bt-gui` 通过：bt-platform 22 项、bt-gui 10 项。
+- `cargo test -p bt-platform -p bt-gui` 通过：bt-platform 22 项（另有 1 项需要桌面会话 D-Bus 的 ignored）、bt-gui 9 项（8 项单元测试加 1 项 zip 载荷生命周期集成测试）。
 - `cargo run -p bt-gui -- --selftest` 在无显示环境退出 0，16 项检查覆盖 7 个页面、配对对话框、PIN 回填、GUI zip 入队与清理、后端 mock 事件、收件箱往返、zip 往返与日志落盘。
 - `cargo check -p bt-platform --target x86_64-pc-windows-msvc` 通过。
 - `cargo build -p bt-gui --release` 与 `cargo build -p bt-cli --no-default-features --release` 通过并记录体积。
 - Linux 托盘：在会话 D-Bus 上启动并持有 `org.kde.StatusNotifierItem` 名称；本机没有托盘宿主面板，图标未实际显示。
-- NSIS 脚本：本轮无法复核，本机无 `makensis`；此前记录显示曾用 NSIS 3.10 编译通过，但没有 Windows 安装/卸载证据。
-- `.deb` 构建脚本：用真实 release 二进制构建，产物 5,554,490 字节，并通过 `dpkg-deb --info` 检查。
+- NSIS 脚本：PATH 无 `makensis`，使用 gitignored 的 NSIS 3.10 解包副本复核：未传 `VERSION` 时脚本按设计失败，传 `-DVERSION=2.0.0` 加占位载荷可编译；产物只用于脚本验证，不作为发布产物，Windows 安装/卸载/升级仍未验证。
+- `.deb` 构建脚本：用 release 二进制运行 `VERSION=2.0.0 packaging/linux/build-deb.sh`，本次重建 5,603,710 字节并通过 `dpkg-deb --info` 检查；该值随二进制与打包时间戳变化，引用构建脚本输出而非固定字节数。
 
 未验证（环境缺失，不伪造结论）：
 
@@ -134,7 +134,7 @@ cargo build --release -p bt-cli --no-default-features
 VERSION=2.0.0 packaging/linux/build-deb.sh
 VERSION=2.0.0 APPIMAGETOOL=/path/to/appimagetool packaging/linux/build-appimage.sh
 
-# Windows 安装器（Windows runner）
+# Windows 安装器与 runner 命令
 makensis /DVERSION=2.0.0 /DBUILD_DIR=target/release /DOUTPUT_FILE=dist/setup.exe packaging/windows/installer.nsi
 ```
 

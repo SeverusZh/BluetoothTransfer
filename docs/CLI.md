@@ -11,7 +11,7 @@
 - `--events`：stdout 为 NDJSON，每行一个事件；最后一行固定为 `type=result`，失败时为 `type=error`。
 - 错误对象字段：`ok=false`、`command`、`type=error`、`error.kind`、`error.message`、`error.hint`。
 - 参数解析失败时若带 `--json` 或 `--events`，同样按各自模式输出错误对象或错误行，`command` 为 `bt` 或 `btrecv`，退出码 2。
-- REPL 内每条非空命令输出一个对象；用法错误、未知命令与被禁命令同样输出错误对象，不静默写 stderr。
+- REPL 内除 `quit`/`exit` 外的每条非空命令输出一个对象，包括 `help`/`?`；用法错误、未知命令与被禁命令同样输出错误对象，不静默写 stderr。
 - 事件对象字段见「NDJSON 事件」一节。
 
 字段命名一律 snake_case。时间一律为 UTC RFC 3339，形如 `2026-01-01T00:00:00Z`。
@@ -35,6 +35,7 @@
 | --- | --- |
 | `BT_HOME` | 便携根覆盖。设置后配置在 `$BT_HOME/.config/BluetoothTransfer/`，数据在 `$BT_HOME/.local/share/BluetoothTransfer/`，默认接收目录为 `$BT_HOME/Downloads/BluetoothReceive` |
 | `BT_BACKEND` | 值为 `mock` 时使用内存模拟后端；其它值走正式装配 |
+| `BT_TEST_TRANSPORT` | 仅调试构建的测试入口：值为 `mock` 时为真实后端注入内存脚本化传输层；发布构建忽略 |
 | `XDG_CONFIG_HOME` / `XDG_DATA_HOME` | Linux 配置根与数据根，未设置时用 `$HOME/.config` 与 `$HOME/.local/share` |
 | `APPDATA` / `LOCALAPPDATA` | Windows 配置根与数据根 |
 
@@ -73,7 +74,7 @@ OPP 认证密码是第 13 项设置，不属于 12 项普通配置：
 | `AA:BB:CC:00:00:01` | Mock Phone | 是 | -48 | available | 否 |
 | `AA:BB:CC:00:00:02` | Mock Tablet | 否 | -60 | unknown | 否 |
 
-模拟后端没有跨进程持久化：`bt send` 写入的记录在下一次独立进程调用中不可见。需要同一会话串联命令时使用 `bt repl --json`。`--zip` 的打包产物仍写入数据目录的 `pending/`，命令结束或取消后删除。
+模拟后端没有跨进程持久化：`bt send` 写入的记录在下一次独立进程调用中不可见。需要同一会话串联命令时使用 `bt repl --json`。`--zip` 的打包产物仍写入数据目录的 `pending/`；模拟后端没有 journal，命令结束（包括取消）后删除产物。
 
 ## 兼容别名
 
@@ -183,7 +184,7 @@ JSON：
 {"ok":false,"address":"AA:BB:CC:00:99:99","state":"unknown","device":null,"error":"设备不存在 AA:BB:CC:00:99:99"}
 ```
 
-`error` 只在探测失败或未知时出现。
+`error` 只在探测失败或未知时出现。`unknown` 是探测结论而不是命令执行失败：`--events` 下末行仍为 `type=result`，退出码 5 供脚本分支；只有探测过程本身报错才输出 `type=error`。
 
 ## 发送命令
 
@@ -194,11 +195,11 @@ bt send file <ADDR> <PATH>... [--zip] [--mode auto|assistant|opp] [--json] [--ev
 bt send files <ADDR> <PATH>... [--zip] [--mode auto|assistant|opp] [--json] [--events]
 ```
 
-顺序发送一个或多个文件并汇总。`--zip` 由 bt-app 的打包器把每个输入文件写成 Deflate zip 再发送，CLI 与 GUI 共用同一实现；产物位于数据目录 `pending/`，传输结束或失败后清理。
+顺序发送一个或多个文件并汇总。`--zip` 由 bt-app 的打包器把每个输入文件写成 Deflate zip 再发送，CLI 与 GUI 共用同一实现；产物位于数据目录 `pending/`，其去留由 journal 条目决定：取消后保留供续传，传输完成、显式 `resume cancel`、abandon 规则或 TTL 清理时删除，用户源文件永不删除。
 
 zip 走 ZIP32 字段，不做 ZIP64：单个文件或文件夹累计未压缩大小达到 4 GiB 时拒绝打包，退出码 1，`error.kind=unsupported`，`error.hint` 给出拆分或不打包发送的建议；打包失败不产出 zip、不残留 `pending/` 半成品。压缩后大小或条目偏移超出 ZIP32 上限时同样失败并清理产物。`--mode` 省略时使用配置的 `mode`；显式 `auto` 表示交给后端按配置与探测结果选择。
 
-发送被 Ctrl+C 取消时，命令以 1 退出，任务状态为 canceled；journal 条目转为 paused 并保留自产载荷，可用 `bt resume list` 查看、`bt resume run` 继续。只有 `bt resume cancel`、传输完成或 7 天 TTL 清理会移除条目。
+发送被 Ctrl+C 取消时，命令以 1 退出，任务状态为 canceled；journal 条目转为 paused 并保留自产载荷（包括 CLI 预打包的 zip），可用 `bt resume list` 查看、`bt resume run` 继续。只有 `bt resume cancel`、传输完成、abandon 规则或 7 天 TTL 清理会移除条目。
 
 JSON：
 
@@ -222,7 +223,7 @@ bt send text <ADDR> <TEXT>... [--name NAME] [--mode ...] [--json] [--events]
 bt send folder <ADDR> <DIR> [--mode ...] [--json] [--events]
 ```
 
-目录由引擎打包为 zip 后发送，记录类型为 `folder`。
+目录由引擎打包为 zip 后发送，记录类型为 `folder`。CLI 在入队前预检 ZIP32 上限：单文件或累计未压缩内容达到 4 GiB 时命令级失败，退出码 1、`error.kind=unsupported`、`error.hint` 给出拆分或先压缩的建议，且不写打包产物；引擎在真正打包时再次校验同一上限。
 
 ## 接收命令
 
@@ -377,9 +378,9 @@ bt --help
 
 `selftest` 全部通过退出 0，否则 1。JSON：`{"ok":true,"checks":[{"name":"config","ok":true,"detail":"..."}],"failed":[]}`。
 
-`gui` 启动图形界面；cli-only 构建返回明确错误并以 1 退出。无子命令的 `bt` 在带 GUI 的构建中打开窗口，在 cli-only 构建中打印用法并以 2 退出。
+`gui` 启动图形界面；cli-only 构建返回明确错误并以 1 退出。无子命令的 `bt` 在带 GUI 的构建中打开窗口；cli-only 构建输出用法错误（`--json`/`--events` 下为结构化错误对象）并以 2 退出。
 
-`repl` 从 stdin 逐行读取命令，双引号或单引号保留空格；支持 `help`、`?`、`quit`、`exit`。同一会话复用后端，`--json` 时每行命令输出一个 JSON 对象，`--events` 时每行输出一个 NDJSON 对象；参数解析失败、未知命令与被禁命令也输出错误对象。repl 打开后端时不自动恢复 journal，避免仅查询时触发发送。`gui`、`recv`、`repl` 不能在 repl 内运行；`config set auth-password` 也会被拒绝。
+`repl` 从 stdin 逐行读取命令，双引号或单引号保留空格；支持 `help`、`?`、`quit`、`exit`。同一会话复用后端，`--json` 时每行命令输出一个 JSON 对象，`--events` 时每行输出一个 NDJSON 对象；`help`/`?` 输出 `command=repl.help` 的结构化帮助对象，`quit`/`exit` 为控制命令不输出对象；参数解析失败、未知命令与被禁命令也输出错误对象。repl 打开后端时不自动恢复 journal，避免仅查询时触发发送。`gui`、`recv`、`repl` 不能在 repl 内运行；`config set auth-password` 也会被拒绝。
 
 ## NDJSON 事件
 
