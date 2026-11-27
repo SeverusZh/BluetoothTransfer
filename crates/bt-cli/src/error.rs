@@ -204,6 +204,14 @@ mod tests {
     }
 
     #[test]
+    fn single_instance_busy_maps_to_exit_3() {
+        let error = CliError::from(bt_core::BtError::busy("已有实例在运行，但无法转交启动参数"));
+        assert_eq!(error.kind(), BtErrorKind::Busy);
+        assert_eq!(error.exit_code(), EXIT_RUNNING);
+        assert!(error.hint_text().unwrap_or_default().contains("实例"));
+    }
+
+    #[test]
     fn io_permission_denied_maps_to_permission() {
         let error = CliError::from(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝"));
         assert_eq!(error.kind(), BtErrorKind::Permission);
