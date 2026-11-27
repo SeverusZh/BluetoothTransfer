@@ -1,0 +1,30 @@
+[package]
+name = "bt-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "命令行前端：bt 与 btrecv 两个可执行文件"
+
+[lib]
+name = "bt_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bt"
+path = "src/bin/bt.rs"
+
+[[bin]]
+name = "btrecv"
+path = "src/bin/btrecv.rs"
+
+[features]
+default = ["gui"]
+gui = ["dep:bt-gui"]
+
+[dependencies]
+bt-core.workspace = true
+bt-api.workspace = true
+bt-app.workspace = true
+bt-gui = { workspace = true, optional = true }
+clap = { version = "4", features = ["derive"] }
