@@ -109,9 +109,9 @@ MockBackend 提供内存实现：可预置设备、事件脚本与配对交互�
 | 助手协议开销 | 0.01% 以内 | 0.00725% | 262144 字节分片，19 字节帧开销 |
 | cli-only bt | 8 MB 以内 | 3,609,904 字节 | 关闭 gui 特性的 release 构建 |
 | cli-only btrecv | 8 MB 以内 | 3,352,048 字节 | 同上 |
-| GUI 单文件 bt-gui | 20 MB 以内 | 11,175,704 字节 | strip、LTO、opt-level=z |
+| GUI 单文件 bt-gui | 20 MB 以内 | 11,176,216 字节 | strip、LTO、opt-level=z |
 | NSIS 安装器 | 15 MB 以内 | 未生成 | 本机无 makensis 与 Windows 链接器 |
-| .deb | 20 MB 以内 | 约 5.67 MB（本次重建 5,670,756 字节；可致数十 KB 差异） | 含 GUI、cli-only bt 与 btrecv；dpkg-deb 打包时间戳可致差异 |
+| .deb | 20 MB 以内 | 约 5.67 MB（字节数不可复现，随二进制与打包时间戳波动） | 含 GUI、cli-only bt 与 btrecv |
 
 测量方法：
 
@@ -174,7 +174,7 @@ Windows：
 - CI 矩阵覆盖 ubuntu-latest 与 windows-latest，执行格式化、静态检查、测试、发布构建与 GUI 自检。
 - 发布产物：cli-only 压缩包、GUI 单文件可执行、NSIS 安装器、deb 与 AppImage；发布流程只允许在 CI 里执行。
 - CLI 的 --version、GUI 标题版本、安装器脚本与 CI 版本校验都读取同一份 workspace.package.version；变更记录写入 CHANGELOG.md。
-- 契约版本记在 bt-api 的 CONTRACT_VERSION，破坏性变更必须同时递增版本并在本文档记录。
+- 契约版本记在 bt-api 的 CONTRACT_VERSION，当前为 2；公开结构新增字段等破坏性变更必须同时递增版本并在本文档记录。
 
 ## 界面页面清单
 

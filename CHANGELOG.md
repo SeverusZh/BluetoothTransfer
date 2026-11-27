@@ -26,6 +26,8 @@ Rust 重写版本，取代原 Windows .NET 8 WPF 实现。
 - CLI e2e 增加真实后端路径：只读命令不改 journal，`send` 触发自动续传；并用真实进程 SIGINT 与停顿链路验证取消后保留 zip 载荷。
 - 发送 provenance 显式化：打包与恢复步骤写入自产标志，journal cleaner 只清理自产载荷；pending 内的用户源文件在 CLI/GUI/引擎入队被拒绝。损坏 journal 与 symlink 或 `..` 逃逸不再触发 settle 误删。
 - GUI selftest 支持 skipped 状态；CLI 退出码文档把单实例占用归入 3，与 Busy 实现一致。
+- bt-api 契约版本升至 2：SendItem 增加内部 produced/recovered 字段并禁止从外部 JSON 置位，SelftestCheck 增加 skipped；公开结构字段变更不再以 1 发布。
+- GUI 与 CLI 一致拒绝 pending/ 内的用户源文件，zip 打包前同样提示移出；单实例占用时 CLI 的 gui 命令给出对应 hint 而非无显示环境提示。
 
 ### 破坏性变更
 

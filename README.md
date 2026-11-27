@@ -149,8 +149,8 @@ bt selftest --json
 | OPP 协议开销 | 0.03% 以内 | 0.00923% |
 | 助手协议开销 | 0.01% 以内 | 0.00725% |
 | cli-only 发布体积 | 8 MB | `bt` 3,609,904 字节，`btrecv` 3,352,048 字节 |
-| GUI 单文件 | 20 MB | 11,175,704 字节 |
-| .deb | 20 MB | 约 5.67 MB（本次重建 5,670,756 字节；不同构建与打包时间戳可致数十 KB 差异，方法见 docs/RELEASE.md） |
+| GUI 单文件 | 20 MB | 11,176,216 字节 |
+| .deb | 20 MB | 约 5.67 MB（字节数不可复现，随二进制与打包时间戳波动；方法见 docs/RELEASE.md） |
 | NSIS 安装器 | 15 MB | 本机无 makensis，未生成 |
 
 体积实测方法与最终数字见 `docs/RELEASE.md` 与 `docs/ARCHITECTURE.md`；协议与导出指标由单元测试固化，CLI 侧实测值见 `docs/ACCEPTANCE.md`。
