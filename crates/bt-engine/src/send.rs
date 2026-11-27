@@ -1157,6 +1157,119 @@ mod tests {
         engine.shutdown();
     }
 
+    struct PendingArtifactCleaner(PendingPackageStore);
+
+    impl crate::journal::ArtifactCleaner for PendingArtifactCleaner {
+        fn delete(&self, path: &std::path::Path) -> bool {
+            self.0.delete(path)
+        }
+    }
+
+    fn make_zip_engine(
+        tag: &str,
+    ) -> (
+        Arc<SendEngine>,
+        Arc<MockTransport>,
+        TempDir,
+        crate::package::PackedSource,
+    ) {
+        let dir = TempDir::new(tag);
+        let pending = dir.0.join("pending");
+        let source = dir.0.join("photo.bin");
+        std::fs::write(&source, b"zip-source").unwrap();
+        let packages = PendingPackageStore::new(pending.clone());
+        let packed = packages.create_zip_from_file(&source).unwrap();
+        let transport = Arc::new(MockTransport::new(Vec::new()));
+        let journal = Journal::new(dir.0.join("send-journal.bin"))
+            .with_base(&pending)
+            .with_cleaner(Arc::new(PendingArtifactCleaner(packages.clone())));
+        let settings = SendSettings {
+            mode: TransferMode::Assistant,
+            assistant_idle_timeout: std::time::Duration::from_millis(500),
+            ..SendSettings::default()
+        };
+        let engine = SendEngine::new(transport.clone(), journal, packages, settings, Arc::new(|_event| {})).unwrap();
+        (engine, transport, dir, packed)
+    }
+
+    fn wait_journal_sending(engine: &Arc<SendEngine>) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let entries = engine.resume_entries().unwrap();
+            if entries.len() == 1 && entries[0].state == JournalState::Sending {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "journal 条目未写入：{entries:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn cancel_keeps_produced_zip_until_journal_terminal_state() {
+        let (engine, transport, dir, packed) = make_zip_engine("zip-cancel");
+        let gate = transport.gate_next_connect();
+        let item = SendItem::from_source(SendSource::File(packed.path.clone()));
+        let id = engine
+            .enqueue(
+                &DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
+                "Pixel",
+                vec![item],
+                Some(Channel::Assistant),
+            )
+            .unwrap()[0];
+        wait_journal_sending(&engine);
+        engine.cancel_all_jobs().unwrap();
+        gate.release();
+        assert!(wait_state(&engine, id, JobState::Canceled));
+        let entries = engine.resume_entries().unwrap();
+        assert_eq!(entries.len(), 1, "取消后 journal 条目必须保留");
+        assert_eq!(entries[0].state, JournalState::Paused);
+        assert!(entries[0].produced, "zip 应为自产载荷");
+        assert!(packed.path.is_file(), "取消后自产 zip 必须保留以便续传");
+
+        let journal = Journal::new(dir.0.join("send-journal.bin"))
+            .with_base(dir.0.join("pending"))
+            .with_cleaner(Arc::new(PendingArtifactCleaner(PendingPackageStore::new(
+                dir.0.join("pending"),
+            ))));
+        journal.cancel(&entries[0].id_hex()).unwrap();
+        assert!(!packed.path.exists(), "显式取消后清理自产 zip");
+        engine.shutdown();
+    }
+
+    #[test]
+    fn completed_produced_zip_is_removed_with_journal_entry() {
+        let (engine, transport, _dir, packed) = make_zip_engine("zip-complete");
+        let content = std::fs::read(&packed.path).unwrap();
+        let sha = bt_core::hex_lower(&bt_core::sha256(&content));
+        let mut inbound = Vec::new();
+        inbound.extend_from_slice(
+            &crate::protocol::encode_offer(&crate::protocol::Offer::accept(0))
+                .unwrap()
+                .encode(),
+        );
+        inbound.extend_from_slice(&crate::protocol::encode_ack(content.len() as i64).unwrap().encode());
+        inbound.extend_from_slice(
+            &crate::protocol::encode_done(&crate::protocol::Done::new(true, sha))
+                .unwrap()
+                .encode(),
+        );
+        transport.script_connect(inbound);
+        let item = SendItem::from_source(SendSource::File(packed.path.clone()));
+        let id = engine
+            .enqueue(
+                &DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
+                "Pixel",
+                vec![item],
+                Some(Channel::Assistant),
+            )
+            .unwrap()[0];
+        assert!(wait_state(&engine, id, JobState::Completed));
+        assert!(engine.resume_entries().unwrap().is_empty(), "完成后 journal 条目应删除");
+        assert!(!packed.path.exists(), "完成后自产 zip 应清理");
+        engine.shutdown();
+    }
+
     #[test]
     fn lease_heartbeat_renews_after_interval() {
         let dir = TempDir::new("heartbeat");

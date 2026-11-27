@@ -33,31 +33,25 @@ pub struct SendResult {
 
 pub fn file(ctx: &Context, args: &SendPathsArgs) -> Result<u8, CliError> {
     let device = parse_device(&args.device)?;
-    let mut owned = OwnedFiles::default();
+    let mut owned: Vec<PathBuf> = Vec::new();
+    let result = send_owned_file_items(ctx, device, args, &mut owned);
+    for path in &owned {
+        bt_app::settle_owned_payload(&ctx.paths, path);
+    }
+    result
+}
+
+fn send_owned_file_items(
+    ctx: &Context,
+    device: bt_core::DeviceId,
+    args: &SendPathsArgs,
+    owned: &mut Vec<PathBuf>,
+) -> Result<u8, CliError> {
     let mut items = Vec::with_capacity(args.paths.len());
     for path in &args.paths {
-        items.push(file_item(ctx, path, args.zip, &mut owned)?);
+        items.push(file_item(ctx, path, args.zip, owned)?);
     }
     send_items(ctx, device, items, args.mode)
-}
-
-#[derive(Default)]
-struct OwnedFiles {
-    paths: Vec<PathBuf>,
-}
-
-impl OwnedFiles {
-    fn push(&mut self, path: PathBuf) {
-        self.paths.push(path);
-    }
-}
-
-impl Drop for OwnedFiles {
-    fn drop(&mut self) {
-        for path in &self.paths {
-            let _ = std::fs::remove_file(path);
-        }
-    }
 }
 
 pub fn text(ctx: &Context, args: &SendTextArgs) -> Result<u8, CliError> {
@@ -84,6 +78,16 @@ pub fn folder(ctx: &Context, args: &SendFolderArgs) -> Result<u8, CliError> {
         return Err(CliError::usage(format!("目录不存在：{}", args.dir.display()))
             .with_hint("确认路径拼写；文件夹会自动打包为 zip 后发送"));
     }
+    bt_app::check_zip_folder(&args.dir).map_err(|error| {
+        let error = CliError::from(error);
+        if error.kind() == BtErrorKind::Unsupported {
+            error.with_hint(
+                "文件夹累计内容达到 4 GiB 的 ZIP32 上限；请拆分成多个文件夹分批发送，或先自行压缩后用 send file 发送",
+            )
+        } else {
+            error
+        }
+    })?;
     let item = SendItem::from_source(SendSource::Folder(args.dir.clone()));
     send_items(ctx, device, vec![item], args.mode)
 }
@@ -104,7 +108,7 @@ pub fn send_items(
     Ok(if outcome.ok { EXIT_OK } else { EXIT_FAILED })
 }
 
-fn file_item(ctx: &Context, path: &Path, zip_enabled: bool, owned: &mut OwnedFiles) -> Result<SendItem, CliError> {
+fn file_item(ctx: &Context, path: &Path, zip_enabled: bool, owned: &mut Vec<PathBuf>) -> Result<SendItem, CliError> {
     if !path.is_file() {
         return Err(CliError::usage(format!("文件不存在：{}", path.display()))
             .with_hint("确认路径；发送多个文件时每个路径都必须存在"));

@@ -39,6 +39,13 @@ pub fn build_backend_with_options(paths: AppPaths, options: BackendOptions) -> R
     if mock_requested() {
         return Ok(Box::new(mock_backend(&paths)?));
     }
+    if let Some(transport) = scripted_test_transport() {
+        return Ok(Box::new(RealBackend::open_with_transport_options(
+            paths,
+            Some(transport),
+            options.auto_resume,
+        )?));
+    }
     Ok(Box::new(RealBackend::open_with_options(paths, options.auto_resume)?))
 }
 
@@ -52,7 +59,27 @@ pub fn build_backend_shared_with_options(paths: AppPaths, options: BackendOption
     if mock_requested() {
         return Ok(Arc::new(mock_backend(&paths)?));
     }
+    if let Some(transport) = scripted_test_transport() {
+        return Ok(Arc::new(RealBackend::open_with_transport_options(
+            paths,
+            Some(transport),
+            options.auto_resume,
+        )?));
+    }
     Ok(Arc::new(RealBackend::open_with_options(paths, options.auto_resume)?))
+}
+
+/// 调试构建专用测试入口：`BT_TEST_TRANSPORT=mock` 为真实后端注入脚本化传输层。
+/// 发布构建编译为空实现，生产二进制不暴露替身传输开关。
+fn scripted_test_transport() -> Option<Arc<dyn bt_transport::BluetoothTransport>> {
+    #[cfg(debug_assertions)]
+    {
+        let mode = std::env::var("BT_TEST_TRANSPORT").ok()?;
+        if mode.eq_ignore_ascii_case("mock") {
+            return Some(Arc::new(bt_transport::mock::MockTransport::new(Vec::new())));
+        }
+    }
+    None
 }
 
 pub fn mock_requested() -> bool {
@@ -184,6 +211,33 @@ pub fn cancel_resume(paths: &AppPaths, id: &str) -> Result<bool, BtError> {
     journal_for(paths).cancel(id)
 }
 
+/// 按 journal 引用收尾自产载荷：仍被未完成条目引用则保留，否则删除。
+/// 用户源文件不在 pending 目录，删除请求会被打包器拒绝。
+pub fn settle_owned_payload(paths: &AppPaths, payload: &Path) -> bool {
+    let packages = PendingPackageStore::new(paths.pending_dir.clone());
+    if !packages.is_owned(payload) {
+        return false;
+    }
+    if paths.journal_file.is_file() {
+        match journal_for(paths).read_all() {
+            Ok(entries) if entries.iter().any(|entry| same_payload(&entry.payload, payload)) => return false,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    packages.delete(payload)
+}
+
+fn same_payload(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 /// journal 删除自产条目时同步清理 pending/ 下的打包产物。
 fn journal_for(paths: &AppPaths) -> Journal {
     Journal::new(&paths.journal_file)
@@ -226,6 +280,11 @@ pub fn pack_zip_file_in(paths: &AppPaths, source: &Path) -> Result<PackedSource,
 pub fn pack_zip_folder_in(paths: &AppPaths, folder: &Path) -> Result<PackedSource, BtError> {
     paths.create_dirs()?;
     PendingPackageStore::new(paths.pending_dir.clone()).create_zip_from_folder(folder)
+}
+
+/// 校验文件夹打包是否满足 ZIP32 上限，不写产物；供命令层在入队前报错。
+pub fn check_zip_folder(folder: &Path) -> Result<(), BtError> {
+    bt_engine::check_folder_zip32(folder)
 }
 
 /// 把单个文件打包为待续传 zip；路径按 BT_HOME 或当前用户目录解析。
@@ -338,6 +397,45 @@ mod tests {
         assert_eq!(entries[0].state, "sending");
         assert!(cancel_resume(&paths, &entries[0].id).unwrap());
         assert!(list_resume(&paths).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&paths.data_dir);
+    }
+
+    #[test]
+    fn settle_owned_payload_follows_journal_references() {
+        let paths = temp_paths("settle");
+        paths.create_dirs().unwrap();
+        let source = paths.data_dir.join("source.bin");
+        std::fs::write(&source, b"source").unwrap();
+        let packages = PendingPackageStore::new(paths.pending_dir.clone());
+        let packed = packages.create_zip_from_file(&source).unwrap();
+        assert!(settle_owned_payload(&paths, &packed.path), "无 journal 引用时应删除");
+        assert!(!packed.path.exists());
+
+        let packed = packages.create_zip_from_file(&source).unwrap();
+        let entry = bt_engine::JournalEntry::new(
+            DeviceId::parse("AA:BB:CC:00:00:03").unwrap(),
+            packed.display_name.clone(),
+            packed.path.clone(),
+            bt_core::sha256(&std::fs::read(&packed.path).unwrap()),
+            std::fs::metadata(&packed.path).unwrap().len(),
+            bt_engine::JournalKind::FileZip,
+            true,
+        );
+        let journal = Journal::new(&paths.journal_file).with_base(&paths.pending_dir);
+        let id = journal.begin(entry).unwrap().entry.id_hex();
+        journal.pause(&id).unwrap();
+        assert!(
+            !settle_owned_payload(&paths, &packed.path),
+            "paused 条目引用的载荷必须保留"
+        );
+        assert!(packed.path.is_file());
+        assert!(
+            !settle_owned_payload(&paths, &source),
+            "用户源文件不在 pending，永不由本函数删除"
+        );
+        assert!(source.is_file());
+        assert!(cancel_resume(&paths, &id).unwrap());
+        assert!(!packed.path.exists(), "journal 删除条目时清理自产载荷");
         let _ = std::fs::remove_dir_all(&paths.data_dir);
     }
 

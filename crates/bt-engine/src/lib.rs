@@ -27,7 +27,10 @@ pub use journal::{
 };
 pub use obex::{auth_digest, ObexClient, ObexHeader, ObexPacket, ObexPushResult};
 pub use opp::{is_retryable, mime_for_name, push_file, push_file_with_retry, OppOptions, OppRetryPolicy};
-pub use package::{package_file, package_folder, plan_folder_package, PackagePlan, PackedSource, PendingPackageStore};
+pub use package::{
+    check_folder_zip32, package_file, package_folder, plan_folder_package, PackagePlan, PackedSource,
+    PendingPackageStore,
+};
 pub use protocol::{
     Ack, Cancel, DataSlice, Done, ErrorCode, ErrorMessage, Frame, FrameKind, Hello, Offer, OfferStatus, DATA_OVERHEAD,
     HEADER_LEN, MAX_CHUNK_SIZE, MAX_FRAME_SIZE, MAX_PAYLOAD,

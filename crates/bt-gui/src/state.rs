@@ -227,7 +227,7 @@ pub struct UiState {
     pub pending_external: Vec<bt_platform::SendRequest>,
     pub external_deadline: Option<Instant>,
     pub temp_files: Vec<PathBuf>,
-    pub temp_zip_jobs: HashMap<JobId, PathBuf>,
+    pub zip_payloads: HashMap<JobId, PathBuf>,
     pub last_job_states: HashMap<JobId, JobState>,
     pub focus_requested: bool,
     pub inbox_draining: bool,
@@ -306,7 +306,7 @@ impl UiState {
             pending_external: Vec::new(),
             external_deadline: None,
             temp_files: Vec::new(),
-            temp_zip_jobs: HashMap::new(),
+            zip_payloads: HashMap::new(),
             last_job_states: HashMap::new(),
             focus_requested: false,
             inbox_draining: false,
@@ -504,7 +504,7 @@ impl UiState {
                     None => self.jobs.push(job),
                 }
                 if terminal && previous != Some(new_state) {
-                    self.cleanup_job_zip(job_id);
+                    self.settle_zip_payload(job_id);
                     self.notify_job(new_state, &name, &device, error.as_deref());
                 }
                 self.reload_records();
@@ -582,10 +582,15 @@ impl UiState {
         }
     }
 
-    fn cleanup_job_zip(&mut self, job: JobId) {
-        if let Some(path) = self.temp_zip_jobs.remove(&job) {
-            let _ = std::fs::remove_file(&path);
-        }
+    /// 由 journal 终态决定 GUI 自产 zip 的去留：paused 保留，完成或取消清理。
+    fn settle_zip_payload(&mut self, job: JobId) {
+        let Some(path) = self.zip_payloads.remove(&job) else {
+            return;
+        };
+        let Some(paths) = self.app_paths.as_ref() else {
+            return;
+        };
+        bt_app::settle_owned_payload(paths, &path);
     }
 
     fn notify_receive(&mut self, ok: bool, name: &str, error: Option<&str>) {

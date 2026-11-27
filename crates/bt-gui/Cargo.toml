@@ -18,3 +18,6 @@ bt-app.workspace = true
 bt-platform.workspace = true
 crossbeam-channel = "0.5"
 eframe = { version = "0.37", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
+
+[dev-dependencies]
+bt-transport.workspace = true

@@ -290,6 +290,13 @@ fn check_zip32_limits(items: &[ZipItem]) -> Result<(), BtError> {
     Ok(())
 }
 
+/// 校验文件夹打包是否满足 ZIP32 上限，不写产物；供上层在入队前给出命令级错误。
+pub fn check_folder_zip32(folder: &Path) -> Result<(), BtError> {
+    let plan = plan_folder_package(folder)?;
+    let items = collect_zip_items(&plan.sources, &ZipMode::Folder)?;
+    check_zip32_limits(&items)
+}
+
 fn write_zip(target: &Path, sources: &[PathBuf], mode: ZipMode) -> Result<(), BtError> {
     let items = collect_zip_items(sources, &mode)?;
     check_zip32_limits(&items)?;
@@ -646,6 +653,22 @@ mod tests {
             error.message()
         );
         assert!(!target.exists(), "超限不得产出 zip 产物");
+    }
+
+    #[test]
+    fn folder_precheck_reports_limit_without_artifact() {
+        const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024;
+        let dir = TempDir::new("zip32-precheck");
+        let folder = dir.0.join("folder");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("small.txt"), b"ok").unwrap();
+        assert!(check_folder_zip32(&folder).is_ok());
+
+        sparse_file(&folder.join("big.bin"), FOUR_GIB);
+        let error = check_folder_zip32(&folder).unwrap_err();
+        assert_eq!(error.kind(), bt_core::BtErrorKind::Unsupported);
+        assert!(error.message().contains("4 GiB"));
+        assert!(!dir.0.join("folder.zip").exists(), "预检不得写产物");
     }
 
     #[cfg(unix)]

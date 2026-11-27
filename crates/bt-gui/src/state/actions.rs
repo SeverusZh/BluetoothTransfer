@@ -322,8 +322,10 @@ impl UiState {
                 let backend = self.backend.clone();
                 self.send.busy = true;
                 self.spawn_task(move || {
+                    let mut archive = None;
                     let result = (|| -> Result<(Vec<bt_api::JobId>, PathBuf), BtError> {
                         let packed = bt_app::pack_zip_file_in(&paths, &source)?;
+                        archive = Some(packed.path.clone());
                         let size = std::fs::metadata(&packed.path)
                             .map_err(|error| BtError::storage(format!("读取 zip 失败：{error}")))?
                             .len();
@@ -333,22 +335,24 @@ impl UiState {
                         let ids = backend.enqueue(&device, vec![item], channel)?;
                         Ok((ids, packed.path))
                     })();
+                    if result.is_err() {
+                        if let Some(path) = archive {
+                            bt_app::settle_owned_payload(&paths, &path);
+                        }
+                    }
                     Box::new(move |state: &mut UiState| {
                         state.send.busy = false;
                         match result {
                             Ok((ids, archive)) => {
-                                let mut kept = false;
-                                for id in ids {
-                                    let terminal = state.jobs.iter().any(|job| job.id == id && job.state.is_terminal());
-                                    if terminal {
-                                        let _ = std::fs::remove_file(&archive);
-                                    } else {
-                                        state.temp_zip_jobs.insert(id, archive.clone());
-                                        kept = true;
-                                    }
+                                for id in &ids {
+                                    state.zip_payloads.insert(*id, archive.clone());
                                 }
-                                if !kept {
-                                    let _ = std::fs::remove_file(&archive);
+                                for id in &ids {
+                                    let terminal =
+                                        state.jobs.iter().any(|job| job.id == *id && job.state.is_terminal());
+                                    if terminal {
+                                        state.settle_zip_payload(*id);
+                                    }
                                 }
                                 state.send.items.clear();
                                 state.succeed("已打包为 zip 并加入队列");
@@ -415,7 +419,7 @@ impl UiState {
         match self.backend.remove_job(job) {
             Ok(()) => {
                 self.jobs.retain(|entry| entry.id != job);
-                self.temp_zip_jobs.remove(&job);
+                self.settle_zip_payload(job);
                 self.info("任务已从队列移除");
             }
             Err(error) => self.fail(error),

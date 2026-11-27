@@ -509,6 +509,7 @@ dependencies = [
  "bt-app",
  "bt-core",
  "bt-platform",
+ "bt-transport",
  "crossbeam-channel",
  "eframe",
 ]
