@@ -1,13 +1,34 @@
 use std::io::{BufRead, IsTerminal, Write};
 
 use clap::Parser;
+use serde::Serialize;
 
 use crate::backend::Context;
 use crate::clap_message;
 use crate::cli::{Cli, Command};
 use crate::error::CliError;
-use crate::output::OutputMode;
+use crate::output::{emit_result, OutputMode};
 use crate::signal;
+
+const REPL_COMMANDS: &[&str] = &[
+    "devices list|scan|pair|alias|favorite|detect",
+    "send file|files|text|folder <ADDR> ...",
+    "records list|delete|clear|stats",
+    "export <csv|jsonl> <OUT>",
+    "config list|get|set",
+    "resume list|run|cancel",
+    "selftest",
+    "help 或 ? 显示本帮助",
+    "quit 或 exit 退出",
+];
+
+#[derive(Serialize)]
+struct ReplHelp {
+    ok: bool,
+    command: &'static str,
+    commands: Vec<&'static str>,
+    note: &'static str,
+}
 
 pub fn run(cli: &Cli) -> i32 {
     let mode = OutputMode::from_flags(cli.json, cli.events);
@@ -43,7 +64,7 @@ pub fn run(cli: &Cli) -> i32 {
             break;
         }
         if matches!(line, "help" | "?" | ":help") {
-            print_help();
+            print_help(mode);
             continue;
         }
         let tokens = split_args(line);
@@ -114,17 +135,23 @@ pub fn run(cli: &Cli) -> i32 {
     0
 }
 
-fn print_help() {
+fn print_help(mode: OutputMode) {
+    if !mode.is_human() {
+        emit_result(
+            mode,
+            &ReplHelp {
+                ok: true,
+                command: "repl.help",
+                commands: REPL_COMMANDS.to_vec(),
+                note: "输入中的双引号可保留空格，例如 send text AA:BB:CC:00:00:01 \"hello world\"",
+            },
+        );
+        return;
+    }
     eprintln!("repl 命令：与 bt 子命令相同，可附加 --json 或 --events");
-    eprintln!("  devices list|scan|pair|alias|favorite|detect");
-    eprintln!("  send file|files|text|folder <ADDR> ...");
-    eprintln!("  records list|delete|clear|stats");
-    eprintln!("  export <csv|jsonl> <OUT>");
-    eprintln!("  config list|get|set");
-    eprintln!("  resume list|run|cancel");
-    eprintln!("  selftest");
-    eprintln!("  help 或 ?     显示本帮助");
-    eprintln!("  quit 或 exit  退出");
+    for command in REPL_COMMANDS {
+        eprintln!("  {command}");
+    }
     eprintln!("输入中的双引号可保留空格，例如 send text AA:BB:CC:00:00:01 \"hello world\"");
 }
 

@@ -32,7 +32,8 @@ pub fn main_entry(args: Vec<String>) -> i32 {
 
 fn run_cli(cli: Cli) -> i32 {
     if cli.command.is_none() {
-        return default_command();
+        let mode = OutputMode::from_flags(cli.json, cli.events);
+        return default_command(mode);
     }
     if matches!(&cli.command, Some(Command::Repl)) {
         return commands::repl_entry(&cli);
@@ -107,18 +108,21 @@ pub fn recv_entry(args: Vec<String>) -> i32 {
     code
 }
 
-fn default_command() -> i32 {
+fn default_command(mode: OutputMode) -> i32 {
     #[cfg(feature = "gui")]
     {
         match run_gui() {
             Ok(code) => i32::from(code),
-            Err(error) => i32::from(error.report(OutputMode::Human, "gui")),
+            Err(error) => i32::from(error.report(mode, "gui")),
         }
     }
     #[cfg(not(feature = "gui"))]
     {
-        eprintln!("本构建不含图形界面；使用 bt --help 查看可用命令");
-        2
+        i32::from(
+            CliError::usage("当前构建为 cli-only，未启用图形界面")
+                .with_hint("使用 bt --help 查看命令行子命令")
+                .report(mode, "bt"),
+        )
     }
 }
 
