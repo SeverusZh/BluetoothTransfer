@@ -56,11 +56,13 @@
 
 ### 校验和
 
-发布页提供 `combined-sha256sums.txt`，逐行列出全部产物的 SHA-256；文件内路径带 `artifacts/<平台>-release/` 前缀，核对时取同名行与本地文件比对：
+发布页提供 `combined-sha256sums.txt`，逐行列出全部发布的产物，行内只写文件名；下载全部资产后可直接校验：
 
 ```bash
-sha256sum BluetoothTransfer-2.0.0-setup.exe
+sha256sum -c combined-sha256sums.txt
 ```
+
+构建作业另输出 `sha256sums-windows.txt` 与 `sha256sums-linux.txt`，按平台列出各自产物。
 
 构建未签名，Windows SmartScreen 会提示未知发布者。
 
@@ -264,7 +266,7 @@ cargo test -p bt-cli           # CLI 端到端用例，使用临时 BT_HOME 与 
 
 CI 在 `.github/workflows/ci.yml` 中运行三个作业：`质量门禁 (ubuntu-latest)` 与 `质量门禁 (windows-latest)` 依次执行 MSRV 元数据检查、格式化、静态检查、测试、发布构建、纯 CLI 构建与 GUI 自检；`MSRV 构建` 用 1.95.0 执行 `cargo check --workspace --all-targets` 校验声明的 MSRV。
 
-测试数量：`cargo test --workspace` 共 294 项通过、0 失败，1 项因缺少桌面会话 D-Bus 被忽略；9 个 doc-test 目标无用例。`cargo test -p bt-cli` 合计 61 项，其中 `crates/bt-cli/tests/` 下的端到端用例 47 项，使用临时 `BT_HOME` 与 `BT_BACKEND=mock`，不依赖蓝牙硬件。
+测试数量：`cargo test --workspace` 共 296 项通过、0 失败，1 项因缺少桌面会话 D-Bus 被忽略；9 个 doc-test 目标无用例。`cargo test -p bt-cli` 合计 61 项，其中 `crates/bt-cli/tests/` 下的端到端用例 47 项，使用临时 `BT_HOME` 与 `BT_BACKEND=mock`，不依赖蓝牙硬件。
 
 ## 平台与限制
 
@@ -286,7 +288,7 @@ CI 在 `.github/workflows/ci.yml` 中运行三个作业：`质量门禁 (ubuntu-
 2. Windows WinRT 运行时路径，只在 Linux 上做过交叉类型检查。
 3. Windows 安装器的实际安装、升级、静默安装、卸载、右键菜单与 SendTo。
 4. 图形界面的真实窗口渲染与交互，只验证了无窗口 `--selftest`。
-5. AppImage 产物：本机无 appimagetool，未生成也未运行。
+5. AppImage 产物：已生成并运行 `--selftest`，未在真实桌面会话验证窗口、托盘与桌面集成。
 6. deb 包的实际安装与卸载，只用 `dpkg-deb --info` 检查过产物结构。
 7. 带真实旧数据的迁移，只验证了空目录与缺失目录。
 8. 4 GiB 以上大文件的真实传输与磁盘满场景，只验证了 4 GiB 边界拒绝。

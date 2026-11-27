@@ -102,15 +102,17 @@ jobs:
       - name: 校验和
         shell: pwsh
         run: |
-          $version = "${{ needs.version.outputs.version }}"
-          Get-ChildItem dist -File | Where-Object { $_.Name -ne "sha256sums.txt" } | ForEach-Object {
+          Get-ChildItem dist -File | Where-Object { $_.Name -notlike "sha256sums-*" } | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             "$hash  $($_.Name)"
-          } | Set-Content dist/sha256sums.txt -Encoding ascii
+          } | Set-Content dist/sha256sums-windows.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
-          path: dist/*
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/sha256sums-windows.txt
           if-no-files-found: error
 
   linux:
@@ -156,11 +158,18 @@ jobs:
       - name: 校验和
         run: |
           cd dist
-          sha256sum * > sha256sums.txt
+          for file in *; do
+            if [ ! -f "$file" ]; then continue; fi
+            case "$file" in sha256sums-*) continue;; esac
+            sha256sum "$file"
+          done > sha256sums-linux.txt
       - uses: actions/upload-artifact@v4
         with:
           name: linux-release
-          path: dist/*
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/sha256sums-linux.txt
           if-no-files-found: error
 
   publish:
@@ -173,9 +182,17 @@ jobs:
           path: artifacts
       - uses: actions/checkout@v4
       - name: 合并校验和
+        shell: bash
         run: |
-          find artifacts -type f ! -name sha256sums.txt -printf '%f\n' | sort
-          find artifacts -type f ! -name sha256sums.txt -exec sha256sum {} \; > combined-sha256sums.txt
+          for dir in artifacts/windows-release artifacts/linux-release; do
+            echo "$dir:"
+            ls -l "$dir"
+          done
+          : > combined-sha256sums.txt
+          while IFS= read -r file; do
+            (cd "$(dirname "$file")" && sha256sum "$(basename "$file")") >> "$PWD/combined-sha256sums.txt"
+          done < <(find artifacts/windows-release artifacts/linux-release -maxdepth 1 -type f ! -name 'sha256sums-*' | sort)
+          cat combined-sha256sums.txt
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
