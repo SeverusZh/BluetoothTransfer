@@ -80,10 +80,10 @@ Linux：
 
 | 产物 | 上限 | 本机实测 | 说明 |
 | --- | --- | --- | --- |
-| cli-only 二进制 `bt` | 8 MB | 3,597,360 字节（3.43 MiB） | `cargo build -p bt-cli --no-default-features --release` |
-| cli-only 二进制 `btrecv` | 8 MB | 3,345,136 字节（3.19 MiB） | 同上，两个二进制合计 6.93 MB |
-| 完整 `bt` | 无独立上限 | 11,676,568 字节（11.14 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
-| GUI 单文件 `bt-gui` | 20 MB | 11,166,104 字节（10.65 MiB） | 已开启 strip/LTO/opt-level z |
+| cli-only 二进制 `bt` | 8 MB | 3,602,864 字节（3.44 MiB） | `cargo build -p bt-cli --no-default-features --release` |
+| cli-only 二进制 `btrecv` | 8 MB | 3,349,872 字节（3.19 MiB） | 同上，两个二进制合计 6.94 MB |
+| 完整 `bt` | 无独立上限 | 11,682,712 字节（11.14 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
+| GUI 单文件 `bt-gui` | 20 MB | 11,171,480 字节（10.65 MiB） | 已开启 strip/LTO/opt-level z |
 | NSIS 安装器 | 15 MB | 未生成 | 本机无 makensis、无 MSVC 链接器，只能在 CI 的 Windows runner 生成 |
 | `.deb` | 20 MB（CI 断言） | 5,554,490 字节（5.30 MiB） | 用真实 release 二进制构建，含 GUI、cli-only bt、btrecv、桌面文件与图标 |
 | AppImage | 25 MB（建议值，未在 CI 断言） | 未生成 | 无 appimagetool，下载超时 |

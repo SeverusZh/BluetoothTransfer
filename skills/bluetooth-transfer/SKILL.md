@@ -72,7 +72,7 @@ bt devices list --json
 | 1 | 操作失败 | 读取 `error.kind` 与 `error.hint` |
 | 2 | 用法错误 | 修参数，不要重试 |
 | 3 | 已有实例在运行 | 停止旧接收端或等待任务结束 |
-| 4 | 权限或锁失败 | 修目录权限，不要用 sudo 跑 GUI |
+| 4 | 权限或锁失败 | 修目录权限或等待锁释放，不要用 sudo 跑 GUI |
 | 5 | 目标未找到 | 先 `devices scan` 或 `records list` 获取有效目标 |
 
 `devices detect` 例外：`present=0`、`absent=1`、`unknown=5`。`absent` 只表示私有助手通道不可用，OPP 仍可能可用。
@@ -80,7 +80,7 @@ bt devices list --json
 ## JSON 读取规则
 
 - `--json`：stdout 恰好一个对象；不要从 stderr 读数据。
-- `--events`：每行一个对象；最后一行 `type=result` 或 `type=error`。
+- `--events`：每行一个对象；最后一行 `type=result` 或 `type=error`；参数解析失败也会输出 `type=error` 行。
 - 失败对象：`{"ok":false,"command":"send.file","type":"error","error":{"kind":"not_found","message":"...","hint":"..."}}`。
 - 成功对象一律含 `ok: true`；发送结果含 `jobs` 与 `summary`；记录结果含 `records` 与 `count`。
 - 字段为 snake_case，时间 UTC RFC 3339。完整 schema 见 `docs/CLI.md`。
@@ -130,7 +130,9 @@ bt resume list --json
 bt resume run --json
 ```
 
-`resume run` 按 BTJ1 journal 恢复计划重新入队：pending 与 paused 条目强制走助手通道；缺失载荷、超过 7 天或超过重试上限的条目会被清除并写入 `warnings`。成功完成的条目从 journal 删除。`resume cancel` 取消全部待续传条目，空 journal 返回 `canceled=0`。
+`resume run` 按 BTJ1 journal 恢复计划重新入队：pending 与 paused 条目强制走助手通道；缺失载荷、超过 7 天或超过重试上限的条目会被清除并写入 `warnings`。成功完成的条目从 journal 删除。`resume cancel` 取消全部待续传条目，空 journal 返回 `canceled=0`。发送被 Ctrl+C 取消后条目以 paused 保留，不会被隐式删除；只有显式 `resume cancel`、完成或 7 天 TTL 清理会移除。
+
+查询、配置、导出与 `resume list` 打开后端时不会自动恢复 journal；续传只由 `resume run` 或 `send`/`recv`/`gui` 流程触发。
 
 ### 导出与统计
 
@@ -160,7 +162,7 @@ REPL 内每行一个 JSON；stdin 非 TTY 时不打印提示符。
 | detect 返回 1 | 对端助手不可用 | 改用 `--mode opp`，或让对方启动接收端 |
 | detect 返回 5 | 未知/超时 | 确认设备在线、已配对；必要时 `devices pair` |
 | 传输 failed | 对端断开、超时、协议拒绝 | 看 `jobs[].error`；重跑同一命令触发续传；必要时调大 `opp_send_idle_timeout_s` |
-| 发送被 Ctrl+C | 任务 canceled，journal 保留 | `resume list` 后 `resume run` |
+| 发送被 Ctrl+C | 任务 canceled，journal 条目转为 paused 并保留载荷 | `resume list` 后 `resume run` |
 | 接收被拒绝 | 非交互 + ask | 用 `--no-ask` 或先在终端确认 |
 | 配置越界 | 值被收敛 | 读 `config get` 的实际值 |
 

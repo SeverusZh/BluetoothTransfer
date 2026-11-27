@@ -10,7 +10,8 @@
 - `--json`：stdout 恰好一个 JSON 对象，不混入日志与进度。
 - `--events`：stdout 为 NDJSON，每行一个事件；最后一行固定为 `type=result`，失败时为 `type=error`。
 - 错误对象字段：`ok=false`、`command`、`type=error`、`error.kind`、`error.message`、`error.hint`。
-- 参数解析失败时若带 `--json`，同样输出错误对象，`command` 为 `bt` 或 `btrecv`。
+- 参数解析失败时若带 `--json` 或 `--events`，同样按各自模式输出错误对象或错误行，`command` 为 `bt` 或 `btrecv`，退出码 2。
+- REPL 内每条非空命令输出一个对象；用法错误、未知命令与被禁命令同样输出错误对象，不静默写 stderr。
 - 事件对象字段见「NDJSON 事件」一节。
 
 字段命名一律 snake_case。时间一律为 UTC RFC 3339，形如 `2026-01-01T00:00:00Z`。
@@ -23,7 +24,7 @@
 | 1 | 操作失败 | 传输失败、自检未通过、`gui` 创建窗口失败、续传条目全部跳过 |
 | 2 | 用法错误 | 未知命令、缺参数、地址非法、`--mode` 非法、清空记录缺少 `--yes` |
 | 3 | 已有实例在运行 | 接收服务或任务队列被占用，后端返回 busy |
-| 4 | 权限或锁失败 | 配置、数据、接收目录不可写，单实例锁冲突 |
+| 4 | 权限或锁失败 | 配置、数据、接收目录、导出目标不可写；配置、journal 或单实例锁等待超时 |
 | 5 | 目标未找到 | 设备地址不在缓存、记录编号不存在、导出目标不可达 |
 
 `devices detect` 使用独立三态映射：`present=0`、`absent=1`、`unknown=5`。
@@ -193,7 +194,11 @@ bt send file <ADDR> <PATH>... [--zip] [--mode auto|assistant|opp] [--json] [--ev
 bt send files <ADDR> <PATH>... [--zip] [--mode auto|assistant|opp] [--json] [--events]
 ```
 
-顺序发送一个或多个文件并汇总。`--zip` 由 bt-app 的打包器把每个输入文件写成 STORE zip 再发送，CLI 与 GUI 共用同一实现；产物位于数据目录 `pending/`，传输结束或失败后清理；单文件 zip 不支持 ZIP64，4 GiB 及以上文件会报错。`--mode` 省略时使用配置的 `mode`；显式 `auto` 表示交给后端按配置与探测结果选择。
+顺序发送一个或多个文件并汇总。`--zip` 由 bt-app 的打包器把每个输入文件写成 Deflate zip 再发送，CLI 与 GUI 共用同一实现；产物位于数据目录 `pending/`，传输结束或失败后清理。
+
+zip 走 ZIP32 字段，不做 ZIP64：单个文件或文件夹累计未压缩大小达到 4 GiB 时拒绝打包，退出码 1，`error.kind=unsupported`，`error.hint` 给出拆分或不打包发送的建议；打包失败不产出 zip、不残留 `pending/` 半成品。压缩后大小或条目偏移超出 ZIP32 上限时同样失败并清理产物。`--mode` 省略时使用配置的 `mode`；显式 `auto` 表示交给后端按配置与探测结果选择。
+
+发送被 Ctrl+C 取消时，命令以 1 退出，任务状态为 canceled；journal 条目转为 paused 并保留自产载荷，可用 `bt resume list` 查看、`bt resume run` 继续。只有 `bt resume cancel`、传输完成或 7 天 TTL 清理会移除条目。
 
 JSON：
 
@@ -336,7 +341,7 @@ bt resume run [--json] [--events]
 bt resume cancel [--json]
 ```
 
-`list` 通过 bt-app 读取 BTJ1 journal 索引；`run` 按 journal 恢复计划重新入队：pending 与 paused 条目强制走助手通道，缺失载荷、超过 7 天或超过重试上限的条目按 abandon 规则清除并写入 `warnings`，正在其他进程发送的条目标记为跳过。成功完成的条目从 journal 删除。`cancel` 删除全部待续传条目及自产载荷。这三个命令打开后端时不自动恢复 journal，避免查询或取消前触发发送；journal 为空时三个命令都以 0 退出，`run` 有条目但全部跳过时退出 1。
+`list` 通过 bt-app 读取 BTJ1 journal 索引；`run` 按 journal 恢复计划重新入队：pending 与 paused 条目强制走助手通道，缺失载荷、超过 7 天或超过重试上限的条目按 abandon 规则清除并写入 `warnings`，正在其他进程发送的条目标记为跳过。成功完成的条目从 journal 删除。`cancel` 删除全部待续传条目及自产载荷。取消的发送会以 paused 条目保留，`run` 会继续它。这三个命令打开后端时不自动恢复 journal，避免查询或取消前触发发送；只有 `send`、`recv` 与 `gui` 在打开后端时才自动恢复 journal，`devices`、`records`、`stats`、`export`、`config`、`resume list` 等查询命令不会触发发送。journal 为空时三个命令都以 0 退出，`run` 有条目但全部跳过时退出 1。
 
 JSON：
 
@@ -374,7 +379,7 @@ bt --help
 
 `gui` 启动图形界面；cli-only 构建返回明确错误并以 1 退出。无子命令的 `bt` 在带 GUI 的构建中打开窗口，在 cli-only 构建中打印用法并以 2 退出。
 
-`repl` 从 stdin 逐行读取命令，双引号或单引号保留空格；支持 `help`、`?`、`quit`、`exit`。同一会话复用后端，`--json` 时每行命令输出一个 JSON 对象。`gui`、`recv`、`repl` 不能在 repl 内运行；`config set auth-password` 也会被拒绝。
+`repl` 从 stdin 逐行读取命令，双引号或单引号保留空格；支持 `help`、`?`、`quit`、`exit`。同一会话复用后端，`--json` 时每行命令输出一个 JSON 对象，`--events` 时每行输出一个 NDJSON 对象；参数解析失败、未知命令与被禁命令也输出错误对象。repl 打开后端时不自动恢复 journal，避免仅查询时触发发送。`gui`、`recv`、`repl` 不能在 repl 内运行；`config set auth-password` 也会被拒绝。
 
 ## NDJSON 事件
 

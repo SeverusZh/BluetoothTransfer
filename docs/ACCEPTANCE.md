@@ -44,12 +44,12 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | SND-02 | 多文件顺序发送与汇总 | `bt send files <ADDR> <PATH>...`；e2e 同上 | 契约已验证 |
 | SND-03 | 文本发送 | `bt send text <ADDR> <TEXT>`；e2e `send_text_returns_jobs_and_summary` | 契约已验证 |
 | SND-04 | 文件夹自动打包发送 | `bt send folder <ADDR> <DIR>`；e2e `send_file_and_folder_and_zip` | 契约已验证（引擎打包）；真实 OPP 发送未验证 |
-| SND-05 | 单文件 zip | `bt send file <ADDR> <PATH> --zip`；e2e `send_file_and_folder_and_zip` 校验名称与 pending 清理；GUI 与 CLI 共用 bt-app 打包器，selftest 校验产物 | 契约已验证（含清理；真实 OPP 未验证） |
+| SND-05 | 单文件 zip | `bt send file <ADDR> <PATH> --zip`；e2e `send_file_and_folder_and_zip` 校验名称与 pending 清理、`zip_rejects_4gib_source_and_leaves_no_artifact` 校验 4 GiB 上限；GUI 与 CLI 共用 bt-app 打包器，selftest 校验产物 | 契约已验证（含 4 GiB 拒绝与清理；真实 OPP 未验证） |
 | SND-06 | 通道模式 auto/assistant/opp | `--mode`；e2e 校验 assistant 通道与记录 | 契约已验证；真实助手通道未验证 |
 | SND-07 | 助手通道探测与发送 | `devices detect` + `send --mode assistant`；bt-app e2e `assistant_send_end_to_end_uses_journal_and_records_completed` | 协议与引擎已用脚本化传输验证；真实 RFCOMM 未验证 |
 | SND-08 | 断点续传 | `bt resume list/run/cancel`；e2e `resume_list_run_and_cancel_use_the_real_journal`、`resume_run_recovers_paused_entries_and_prunes_missing_payloads` | 契约已验证：BTJ1 journal 计划、paused 恢复与 abandon 清理；真实断线续传未验证 |
 | SND-09 | 顺序队列与逐任务暂停/继续/取消/重试/移除 | 引擎队列单元测试与 GUI 队列页动作 | 已接线；无长传输可验证真实暂停与重试 |
-| SND-10 | Ctrl+C 取消发送并保留续传信息 | 代码路径调用 `cancel_all_jobs`，失败任务保留 journal | 未验证（无长传输可打断；需真机） |
+| SND-10 | Ctrl+C 取消发送并保留续传信息 | e2e `cancel_keeps_resume_entry_and_resume_run_finishes_it`：脚本化传输取消后 journal 保持 paused，CLI `resume list/run` 可继续；引擎单测 `cancel_preserves_paused_journal_entry` | 契约已验证；真实长传输 Ctrl+C 未验证 |
 | SND-11 | 进度与速率 | `--events` 的 `job_progress`；e2e `send_events_are_ndjson_with_result_line` | 契约已验证 |
 | SND-12 | 剪贴板与拖放发起 | GUI 发送页动作与平台剪贴板测试 | 已接线；无显示环境未验证真实剪贴板 |
 
@@ -110,14 +110,16 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | --- | --- | --- | --- |
 | CLI-01 | 全部命令支持 `--json`，stdout 单对象 | e2e 各用例用 `serde_json::from_slice` 整体解析 | 已验证 |
 | CLI-02 | 长任务 `--events` 输出 NDJSON，末行 result | e2e `send_events_are_ndjson_with_result_line`、`devices_scan_reports_devices_and_events` | 已验证 |
-| CLI-03 | 退出码 0/1/2/3/4/5 | e2e `usage_errors_exit_2`、`send_errors_have_stable_codes_and_shapes`、detect 三态 | 已验证（3/4 依赖后端 busy/permission，mock 未覆盖） |
+| CLI-03 | 退出码 0/1/2/3/4/5 | e2e `usage_errors_exit_2`、`send_errors_have_stable_codes_and_shapes`、detect 三态、`permission_errors_exit_4_with_permission_kind`；`exit_code_for` 单测覆盖全部错误分类 | 已验证（3 依赖真实占用未触发；4 用只读目录与导出目标实测） |
 | CLI-04 | 诊断走 stderr，数据走 stdout | e2e 解析 stdout 为 JSON，stderr 不参与 | 已验证 |
 | CLI-05 | 密码不入 argv/日志/JSON | e2e 密码用例 | 已验证 |
 | CLI-06 | 隐藏兼容别名 | e2e `hidden_compat_aliases_work` | 已验证 |
 | CLI-07 | `bt --version`、`--help`、逐命令 `--help` | e2e `help_and_version_are_available` | 已验证 |
 | CLI-08 | btrecv 透明转发参数 | `btrecv --help`、无参监听、`btrecv recv` | 已验证 |
 | CLI-09 | 默认人类可读输出 CJK 对齐 | 人工检查表格宽度 | 已验证（人工） |
-| CLI-10 | 未知命令/缺参数退出 2，带 --json 时输出错误对象 | e2e `usage_errors_exit_2`、`usage_errors_are_json_when_requested` | 已验证 |
+| CLI-10 | 未知命令/缺参数退出 2，带 --json 或 --events 时输出错误对象 | e2e `usage_errors_exit_2`、`usage_errors_are_json_when_requested`、`events_parse_errors_emit_ndjson_error` | 已验证 |
+| CLI-15 | REPL 内错误输出结构化对象 | e2e `repl_json_reports_errors_as_objects`、`repl_events_reports_errors_as_ndjson` | 已验证 |
+| CLI-16 | 查询命令不触发 journal 续传 | `Command::auto_resumes_journal` 单测覆盖命令矩阵；bt-app `backend_can_open_without_auto_resuming_the_journal`、`backend_auto_resume_enqueues_journal_entries`；e2e `read_only_commands_do_not_touch_the_resume_journal` | 契约已验证 |
 | CLI-11 | 数据根隔离 | `BT_HOME` 便携布局：配置与数据分居 `.config` 与 `.local/share` | 已验证 |
 | CLI-12 | 模拟后端可用 | `BT_BACKEND=mock`，由 bt-app 装配层选择 MockBackend | 已验证 |
 | CLI-13 | REPL 同一会话状态 | e2e 记录、配置、别名流程 | 已验证 |
@@ -127,8 +129,8 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 
 | 指标 | 上限 | 当前状态 |
 | --- | --- | --- |
-| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,597,360 字节、`btrecv` 3,345,136 字节（本机 release，无 GUI 特性） |
-| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,166,104 字节 |
+| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,602,864 字节、`btrecv` 3,349,872 字节（本机 release，无 GUI 特性） |
+| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,171,480 字节 |
 | .deb | 20 MB | 已验证：5,554,490 字节 |
 | NSIS 安装器 | 15 MB | 未生成：本机无 makensis 与 Windows 链接器 |
 | 接收最终文件额外字节 | 0 | 已验证：bt-app e2e 断言落盘长度等于载荷 |
@@ -146,7 +148,7 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 4. Windows WinRT 路径、Windows 安装器、资源管理器集成；无 Windows 环境。
 5. GUI 窗口渲染与真实交互、托盘宿主面板与桌面通知；无显示环境，只验证了无窗口自检与平台调用路径。
 6. 真实迁移旧 .NET 数据；迁移实现与空目录/缺失目录已验证，但缺少旧数据样本做端到端验证。
-7. 退出码 3 与 4 的真实后端触发路径；mock 未覆盖 busy/permission。
-8. Ctrl+C 打断真实长传输与接收；mock 无长任务。
+7. 退出码 3 的真实后端触发路径；mock 不跨进程 busy。
+8. Ctrl+C 打断真实长传输；取消后的 journal 保留已用脚本化传输与 CLI e2e 验证，真实长传输未验证。
 9. 真实断线后的续传：journal 的 list/run/cancel 与 abandon 规则已用 mock 后端和真实 BTJ1 文件验证；接收端半成品偏移与真实链路重连未验证。
-10. 大文件、磁盘满、权限拒绝场景；需专门环境。
+10. 4 GiB 以上的真实大文件传输与磁盘满；4 GiB 边界与只读目录权限拒绝已有单元/e2e 验证。

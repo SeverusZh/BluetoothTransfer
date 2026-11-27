@@ -50,7 +50,7 @@ bt-core ← bt-api ← bt-store / bt-transport ← bt-engine ← bt-app ← bt-g
 
 ### 从源码构建
 
-开发机若提供仓库内工具链，先加载环境；没有该目录时使用系统 Rust 1.85 及以上版本：
+开发机若提供仓库内工具链，先加载环境；没有该目录时使用系统 Rust 1.95 及以上版本（最低版本由 eframe/egui 0.37 的 `rust-version` 决定）：
 
 ```bash
 git clone https://github.com/SeverusZh/BluetoothTransfer.git
@@ -73,7 +73,7 @@ cargo build --release -p bt-cli
 # 产物：target/release/bt-gui 与 target/release/bt
 ```
 
-系统已安装 Rust 1.85 及以上版本并可编译 eframe 依赖时，可跳过 `.toolchain/env.sh`。
+系统已安装 Rust 1.95 及以上版本时可跳过 `.toolchain/env.sh`；`cargo xtask msrv` 可校验声明与依赖要求一致。
 
 ## 使用
 
@@ -148,8 +148,8 @@ bt selftest --json
 | 导出 CSV 单行 | 200 字节 | 表头 74 字节，数据 94 字节 |
 | OPP 协议开销 | 0.03% 以内 | 0.00923% |
 | 助手协议开销 | 0.01% 以内 | 0.00725% |
-| cli-only 发布体积 | 8 MB | `bt` 3,597,360 字节，`btrecv` 3,345,136 字节 |
-| GUI 单文件 | 20 MB | 11,166,104 字节 |
+| cli-only 发布体积 | 8 MB | `bt` 3,602,864 字节，`btrecv` 3,349,872 字节 |
+| GUI 单文件 | 20 MB | 11,171,480 字节 |
 | .deb | 20 MB | 5,554,490 字节 |
 | NSIS 安装器 | 15 MB | 本机无 makensis，未生成 |
 
