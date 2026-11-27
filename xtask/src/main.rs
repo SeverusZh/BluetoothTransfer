@@ -5,8 +5,8 @@ use std::process::ExitCode;
 const HELP: &str = "用法：cargo xtask <任务>
 
 任务：
-  dist        打包发布产物，待实现
-  bundle      生成安装器，待实现
+  dist        发布打包入口，实际执行见发布工作流
+  bundle      安装器入口，实际执行见发布工作流
   help        显示本帮助";
 
 fn main() -> ExitCode {
@@ -17,11 +17,11 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("dist") => {
-            eprintln!("dist 任务待实现：发布打包属于 T6");
+            eprintln!("dist 由 .github/workflows/release.yml 或 packaging/linux 脚本执行");
             ExitCode::from(1)
         }
         Some("bundle") => {
-            eprintln!("bundle 任务待实现：安装器属于 T6");
+            eprintln!("bundle 由 .github/workflows/release.yml 的 Windows runner 执行");
             ExitCode::from(1)
         }
         Some(other) => {

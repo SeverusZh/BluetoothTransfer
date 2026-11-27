@@ -21,7 +21,7 @@
 - 迁移工具
 - 自检
 
-首轮交付只冻结契约与骨架，蓝牙与界面行为由后续任务补齐。
+当前交付为 2.0.0 重构版本：GUI、CLI、引擎、存储与平台集成均已接线，真实蓝牙与 Windows 路径的验证边界见下文。
 
 ## crate 依赖图与职责边界
 
@@ -58,7 +58,7 @@
 
 核心类型：
 
-- 标识：JobId、AskId、PinRequestId、TransferId 为 32 字节 SHA-256。
+- 标识：JobId、AskId、PinRequestId 为进程内单调递增的 u64；TransferId 为整文件 SHA-256 的 32 字节值。
 - 状态：JobState、RecordStatus、AssistantState、Channel、Direction、TransferMode、ProtectionLevel。
 - 数据：Device、JobSnapshot、SendItem、Record、Stats、DayStat、CopyPlan、ExportSummary、SelftestReport、MigrateReport、ConfigPatch。
 
@@ -69,6 +69,8 @@ Log、ScanStarted、ScanFinished、DeviceList、DeviceUpdated、PairPrompt、Pai
 错误模型：统一 BtError，带 BtErrorKind 分类，便于上层按类分支而不解析文本。
 
 密码边界：配置共 13 项设置语义，Config 承载其中 12 项；第 13 项 OPP 认证密码不进入 Config 与配置文件，只经 set_auth_password 落到系统私密存储或权限 0600 的独立文件。
+
+配对应答：confirm 类请求走 answer_prompt，PIN 类请求走 answer_pin；传输层的 PromptHandler 返回 Accept、Reject 或携带 PIN 的应答，PIN 只用于本次配对，不进入日志、记录与 JSON。
 
 配置项与默认值：
 
@@ -87,36 +89,38 @@ Log、ScanStarted、ScanFinished、DeviceList、DeviceUpdated、PairPrompt、Pai
 | receive_ask | true | 布尔 |
 | mode | auto | auto、assistant、opp |
 
-opp_chunk_size 的默认值取协议单包上限 65023。设计说明给定的 65536 超过同一份说明中的上限，两者不能同时成立，故以「取上限」实现，避免默认值被静默钳制。
+opp_chunk_size 的默认值取协议单包上限 65023；设计说明曾给出超过上限的默认值，两者不能同时成立，故以「取上限」实现，避免默认值被静默钳制。
 
 助手通道分片上限由单帧 1 MiB 扣除 7 字节帧头与 12 字节 DATA 字段得到，即 1048557。
 
-MockBackend 提供内存实现：可预置设备与事件脚本、可查询调用记录，供 GUI 与 CLI 在无硬件条件下开发与测试。
+MockBackend 提供内存实现：可预置设备、事件脚本与配对交互类型，可查询调用记录，供 GUI 与 CLI 在无硬件条件下开发与测试。PIN 应答在 MockBackend 中只记录长度，不保存明文。
 
 ## 结果文件轻量化指标
 
-| 指标 | 上限 | 说明 |
-| --- | --- | --- |
-| 接收最终文件额外字节 | 0 | 不追加尾部元数据，不写临时后缀残留 |
-| 半成品 sidecar | 64 字节 | 实际 45 字节，魔数加传输标识加偏移加状态位 |
-| journal 单条目 | 256 字节 | 竖线分隔文本，超长直接拒绝 |
-| config 文件 | 只写非默认值 | 全默认时文件为空 |
-| 导出 JSONL | 250 字节每行 | 紧凑字段集，空字段省略 |
-| 导出 CSV | 200 字节每行 | 定长表头加转义 |
-| OPP 协议开销 | 0.03% 以内 | 64 KiB 分片下的 OBEX 头占比 |
-| 助手协议开销 | 0.01% 以内 | 256 KiB 分片下的 19 字节开销 |
-| cli-only 发布体积 | 8 MB 以内 | 关闭 gui 特性的 bt 与 btrecv |
-| GUI 单文件体积 | 20 MB 以内 | strip 与 opt-level z 之后 |
-| NSIS 安装器 | 15 MB 以内 | 压缩后 |
+| 指标 | 上限 | 实测 | 说明 |
+| --- | --- | --- | --- |
+| 接收最终文件额外字节 | 0 | 0 | bt-app e2e 断言 16 字节载荷落盘 16 字节 |
+| 半成品 sidecar | 64 字节 | 53 字节 | 魔数 4 加传输标识 32 加偏移 8 加总长 8 加状态 1 |
+| journal 单条目 | 256 字节 | 182 字节典型，253 字节最坏 | BTJ1 二进制条目，超长拒绝 |
+| config 文件 | 只写非默认值 | 全默认 0 字节；mode=opp 13 字节 | TOML 空文件不落盘 |
+| 导出 JSONL | 250 字节每行 | 内容 205 字节，含换行 206 字节 | 一条文本记录 |
+| 导出 CSV | 200 字节每行 | 表头 74 字节，数据行 94 字节 | 一条含 CJK 名称的记录 |
+| OPP 协议开销 | 0.03% 以内 | 0.00923% | 65023 字节分片，6 字节 OBEX 头 |
+| 助手协议开销 | 0.01% 以内 | 0.00725% | 262144 字节分片，19 字节帧开销 |
+| cli-only bt | 8 MB 以内 | 3,597,360 字节 | 关闭 gui 特性的 release 构建 |
+| cli-only btrecv | 8 MB 以内 | 3,345,136 字节 | 同上 |
+| GUI 单文件 bt-gui | 20 MB 以内 | 11,166,104 字节 | strip、LTO、opt-level=z |
+| NSIS 安装器 | 15 MB 以内 | 未生成 | 本机无 makensis 与 Windows 链接器 |
+| .deb | 20 MB 以内 | 5,554,490 字节 | 含 GUI、cli-only bt 与 btrecv |
 
 测量方法：
 
-- 文件与安装器体积用 stat 或 du -b 取字节数，发布前在 CI 里对产物断言。
-- 接收额外字节用 sha256 对比发送端源文件与接收端落盘文件，两者必须一致。
-- sidecar 与 journal 用 wc -c 或长度断言，单元测试已固化上限常量。
-- 导出体积按行统计字节数，用 awk 或 Rust 断言单行上限。
-- 协议开销等于线上字节数减去有效载荷字节数再除以有效载荷字节数，分片大小取配置默认值。
-- 配置体积用文件字节数断言：全默认配置必须为空文件。
+- 文件与安装器体积用 stat 取字节数；发布工作流对 GUI、CLI 与安装器产物做上限断言。
+- 接收额外字节由 bt-app 的接收端到端测试断言落盘长度等于载荷长度；协议不写尾部元数据。
+- sidecar 与 journal 由 bt-engine 的 size_budget 测试构造典型与最坏条目并断言上限。
+- 导出体积在同一 REPL 会话发送一条文本记录后执行 export，用 wc -c 与 awk 统计字节。
+- 协议开销按 (帧头 + DATA 字段开销) / 分片大小计算，分片取默认配置。
+- 配置体积用全默认配置不落盘、仅写一个非默认值后 stat 验证。
 
 ## 平台策略
 
@@ -146,8 +150,9 @@ Windows：
 - cargo fmt --all --check
 - cargo clippy --workspace --all-targets -- -D warnings
 - cargo test --workspace
-- cargo build --workspace
+- cargo build --workspace --release
 - cargo build -p bt-cli --no-default-features
+- cargo test -p bt-cli 的端到端用例
 - bt --version 与 bt --help 的端到端命令
 - bt-gui --selftest 以退出码 0 结束
 - cargo xtask --help 可运行
@@ -158,7 +163,8 @@ Windows：
 - 整个工作区共用单一版本号，当前为 2.0.0，写在根 Cargo.toml 的 workspace.package 中。
 - 发布标签形如 v2.0.0；标签必须与工作区版本一致，由 CI 校验。
 - CI 矩阵覆盖 ubuntu-latest 与 windows-latest，执行格式化、静态检查、测试、发布构建与 GUI 自检。
-- 发布产物：cli-only 压缩包、GUI 单文件可执行、NSIS 安装器；发布流程只允许在 CI 里执行。
+- 发布产物：cli-only 压缩包、GUI 单文件可执行、NSIS 安装器、deb 与 AppImage；发布流程只允许在 CI 里执行。
+- CLI 的 --version、GUI 标题版本、安装器脚本与 CI 版本校验都读取同一份 workspace.package.version；变更记录写入 CHANGELOG.md。
 - 契约版本记在 bt-api 的 CONTRACT_VERSION，破坏性变更必须同时递增版本并在本文档记录。
 
 ## 界面页面清单
@@ -175,48 +181,34 @@ Windows：
 
 | 命令 | 用途 | 退出码 |
 | --- | --- | --- |
-| bt --version | 打印工作区版本 | 0 |
-| bt --help | 打印命令与参数 | 0 |
-| bt selftest | 逐项自检并输出结果 | 全部通过 0，否则 3 |
-| bt send | 发送文件、文件夹或文本 | 待 T2 实现，当前 3 |
-| bt recv | 启动接收服务 | 待 T2 实现，当前 3 |
-| btrecv | 只做接收的薄壳 | 待 T2 实现，当前 3 |
-| bt 无子命令 | 有 gui 特性时打开窗口，否则提示用法 | 打开失败 3，无界面构建 2 |
+| `bt --version`、`bt --help` | 版本与命令帮助 | 0 |
+| `bt devices list/scan/pair/alias/favorite` | 设备发现、配对、收藏与别名 | 成功 0；操作失败 1；参数 2；占用 3；权限 4；未找到 5 |
+| `bt devices detect` | 助手通道三态探测 | present 0、absent 1、unknown 5 |
+| `bt send file/files/text/folder` | 顺序发送并等待终态 | 成功 0；任一失败或取消 1；用法 2 |
+| `bt recv`、`btrecv` | 接收服务；`btrecv` 无参直接监听 | Ctrl+C 停止 0；启动失败 1/3/4 |
+| `bt records list/delete/clear/stats` | 记录查询、单条删除、清空与统计 | 成功 0；记录不存在 5；清空缺少 --yes 2 |
+| `bt export csv\|jsonl` | 流式导出记录 | 成功 0；目标不可写 1/5 |
+| `bt config list/get/set` | 查看与修改 12 项配置 | 成功 0；未知键或非法值 2/5 |
+| `bt resume list/run/cancel` | 按 BTJ1 journal 查询、恢复与取消 | 成功 0；有条目但全部跳过 1 |
+| `bt migrate` | 迁移旧版 .NET 数据 | 成功 0；来源不存在 5 |
+| `bt selftest` | 无硬件自检 | 全部通过 0，否则 1 |
+| `bt repl` | 同一后端会话执行多条命令 | 0 |
+| `bt gui` 或无子命令 | 打开图形界面 | 成功 0；无显示或无 gui 特性 1/2 |
+| `opp-scan` 等旧命令名 | 隐藏别名转发到新命令 | 与原命令一致 |
 
-退出码约定：0 成功，1 自检未通过，2 用法错误，3 未实现或运行失败。
+退出码约定：0 成功，1 操作失败，2 用法错误，3 已有实例或忙碌，4 权限或锁失败，5 未找到。配对 PIN 由 `answer_pin` 从 CLI 或 GUI 回填到传输层；`--pin` 不进入日志、JSON 与记录。
 
-## 后续任务边界
+## 构建与验证入口
 
-为避免写冲突，按目录划分归属；共享文件只有根 Cargo.toml、rust-toolchain.toml 与本文件，改动需先协商。
+开发机与 CI 使用同一组命令：
 
-T2 传输与协议
+- `. ./.toolchain/env.sh` 加载仓库内工具链；系统 Rust 1.85 及以上也可直接构建。
+- `cargo fmt --all --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `cargo build --workspace --release`
+- `cargo build -p bt-cli --no-default-features`
+- `cargo run -p bt-gui -- --selftest`
+- `cargo test -p bt-cli` 运行 CLI 端到端测试，使用临时 BT_HOME 与 BT_BACKEND=mock，不依赖蓝牙硬件。
 
-- 归属：crates/bt-transport 全部，crates/bt-engine 的 protocol 与 detect 子模块。
-- 内容：BlueZ D-Bus 与 AF_BLUETOOTH 实现、WinRT 实现、OBEX 对象推送、助手帧状态机、配对与探测。
-- 不改 bt-api 契约，不改 GUI 与 CLI。
-
-T3 引擎与持久化
-
-- 归属：crates/bt-engine 其余模块、crates/bt-store 全部、crates/bt-app 全部。
-- 内容：顺序队列与调度、断点续传、journal、打包、接收服务、记录查询与统计、配置落盘、旧数据迁移、真实装配。
-- 依赖 T2 的传输实现，可先用 bt-transport 的 mock 并行开发。
-
-T4 界面与平台
-
-- 归属：crates/bt-gui 全部、crates/bt-platform 全部、README.md。
-- 内容：全部页面与交互、CJK 字体选择、托盘与通知、单实例、外部收件箱、Shell 集成、自启、窗口状态、README 重写。
-- 只通过 bt-api 与 bt-app 取数据。
-
-T5 归档与清理
-
-- 归属：archive 目录与旧源码处置。
-- 内容：把 src、tests、tools 与解决方案按功能对等清单归档，移除不再维护的构建脚本，保留历史可追溯。
-- 不修改新工作区代码。
-
-T6 CLI、发布与 Skill
-
-- 归属：crates/bt-cli 全部、xtask 全部、.github/workflows、installers、skills。
-- 内容：完整 CLI 命令与机器可读输出、退出码约定、xtask 打包任务、NSIS 与 CI 发布、面向 Agent 的 Skill 文档。
-- 不修改核心引擎与 GUI 实现。
-
-蓝牙硬件与 Windows 真机验收由 T2 与 T4 各自负责记录证据。
+旧 .NET 实现归档在 `legacy/dotnet/`，只读参考且不参与构建。真实蓝牙、Windows 安装器与 GUI 窗口的未验证边界见 `docs/ACCEPTANCE.md` 与 `docs/RELEASE.md`。
