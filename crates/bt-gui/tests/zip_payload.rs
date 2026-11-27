@@ -102,3 +102,38 @@ fn canceled_zip_job_keeps_payload_for_resume() {
     drop(state);
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn pending_source_is_rejected_before_packing() {
+    let root = temp_root("pending-source");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let paths = AppPaths::under(&root);
+    paths.create_dirs().unwrap();
+    let source = paths.pending_dir.join("user-source.txt");
+    std::fs::write(&source, b"user data").unwrap();
+
+    let backend: SharedBackend = Arc::new(bt_app::mock_backend(&paths).unwrap());
+    let config = backend.config();
+    let mut state = UiState::new(
+        backend.clone(),
+        Some(root.clone()),
+        Some(paths.clone()),
+        config,
+        bt_platform::SendRequest::default(),
+    );
+    state.add_files(vec![source.clone()]);
+    state.send.zip_single = true;
+    state.send.selected_device = Some(bt_core::DeviceId::parse("AA:BB:CC:00:00:21").unwrap());
+    state.send_pending();
+
+    assert!(!state.send.busy, "拒绝时不得进入后台打包");
+    assert!(backend.jobs().is_empty(), "拒绝时不得入队");
+    let notice = state.notice.as_ref().expect("必须给出拒绝提示").text.clone();
+    assert!(notice.contains("pending"), "{notice}");
+    assert!(notice.contains("移出"), "{notice}");
+    assert!(source.is_file(), "源文件不得被删除");
+    let entries = std::fs::read_dir(&paths.pending_dir).unwrap().count();
+    assert_eq!(entries, 1, "不得在 pending 生成新的打包产物");
+    let _ = std::fs::remove_dir_all(&root);
+}

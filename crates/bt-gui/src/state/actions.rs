@@ -307,6 +307,19 @@ impl UiState {
             return;
         }
         let items = self.send.items.clone();
+        if let Some(paths) = self.app_paths.as_ref() {
+            let pending = items.iter().find_map(|item| match &item.source {
+                SendSource::File(path) if bt_app::is_pending_source(paths, path) => Some(path.clone()),
+                _ => None,
+            });
+            if let Some(path) = pending {
+                self.fail(BtError::invalid(format!(
+                    "源文件位于待续传目录 pending/：{}；请把源文件移出该目录后再发送，该目录只存放本应用生成的待续传载荷",
+                    path.display()
+                )));
+                return;
+            }
+        }
         let channel = self.send.channel.channel();
         let zip_single = self.send.zip_single;
         if zip_single && items.len() > 1 {
