@@ -1,0 +1,10 @@
+[package]
+name = "bt-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "平台集成：单实例、外部收件箱、Shell 集成、通知、剪贴板、自启与窗口状态"
+
+[dependencies]
+bt-core.workspace = true
