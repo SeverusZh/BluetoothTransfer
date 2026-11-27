@@ -23,8 +23,8 @@
 | 0 | 成功 | 命令完成、`selftest` 全部通过、接收被 Ctrl+C 停止 |
 | 1 | 操作失败 | 传输失败、自检未通过、`gui` 创建窗口失败、续传条目全部跳过 |
 | 2 | 用法错误 | 未知命令、缺参数、地址非法、`--mode` 非法、清空记录缺少 `--yes` |
-| 3 | 已有实例在运行 | 接收服务或任务队列被占用，后端返回 busy |
-| 4 | 权限或锁失败 | 配置、数据、接收目录、导出目标不可写；配置、journal 或单实例锁等待超时 |
+| 3 | 已有实例或任务占用 | 接收服务、任务队列或单实例被占用，后端返回 busy |
+| 4 | 权限或锁失败 | 配置、数据、接收目录、导出目标不可写；配置或 journal 锁等待超时 |
 | 5 | 目标未找到 | 设备地址不在缓存、记录编号不存在、导出目标不可达 |
 
 `devices detect` 使用独立三态映射：`present=0`、`absent=1`、`unknown=5`。
@@ -195,7 +195,7 @@ bt send file <ADDR> <PATH>... [--zip] [--mode auto|assistant|opp] [--json] [--ev
 bt send files <ADDR> <PATH>... [--zip] [--mode auto|assistant|opp] [--json] [--events]
 ```
 
-顺序发送一个或多个文件并汇总。`--zip` 由 bt-app 的打包器把每个输入文件写成 Deflate zip 再发送，CLI 与 GUI 共用同一实现；产物位于数据目录 `pending/`，其去留由 journal 条目决定：取消后保留供续传，传输完成、显式 `resume cancel`、abandon 规则或 TTL 清理时删除，用户源文件永不删除。
+顺序发送一个或多个文件并汇总。`--zip` 由 bt-app 的打包器把每个输入文件写成 Deflate zip 再发送，CLI 与 GUI 共用同一实现；产物位于数据目录 `pending/`，其去留由 journal 条目的自产标志决定：取消后保留供续传，传输完成、显式 `resume cancel`、abandon 规则或 TTL 清理时只删除自产载荷，用户源文件永不删除。`pending/` 只存放本应用生成的续传载荷：源文件位于该目录时命令直接拒绝，退出码 2、`error.kind=invalid_argument`，`error.hint` 提示把源文件移出该目录。
 
 zip 走 ZIP32 字段，不做 ZIP64：单个文件或文件夹累计未压缩大小达到 4 GiB 时拒绝打包，退出码 1，`error.kind=unsupported`，`error.hint` 给出拆分或不打包发送的建议；打包失败不产出 zip、不残留 `pending/` 半成品。压缩后大小或条目偏移超出 ZIP32 上限时同样失败并清理产物。`--mode` 省略时使用配置的 `mode`；显式 `auto` 表示交给后端按配置与探测结果选择。
 
@@ -376,7 +376,7 @@ bt --version
 bt --help
 ```
 
-`selftest` 全部通过退出 0，否则 1。JSON：`{"ok":true,"checks":[{"name":"config","ok":true,"detail":"..."}],"failed":[]}`。
+`selftest` 全部通过退出 0，否则 1。JSON：`{"ok":true,"checks":[{"name":"config","ok":true,"detail":"..."}],"failed":[]}`。环境不满足而未执行的项带 `skipped=true`（`ok=false`），不计入 `failed` 也不阻断退出码；人类模式标记为 `[skip]`。
 
 `gui` 启动图形界面；cli-only 构建返回明确错误并以 1 退出。无子命令的 `bt` 在带 GUI 的构建中打开窗口；cli-only 构建输出用法错误（`--json`/`--events` 下为结构化错误对象）并以 2 退出。
 

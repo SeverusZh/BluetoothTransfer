@@ -107,11 +107,11 @@ MockBackend 提供内存实现：可预置设备、事件脚本与配对交互�
 | 导出 CSV | 200 字节每行 | 表头 74 字节，数据行 94 字节 | 一条含 CJK 名称的记录 |
 | OPP 协议开销 | 0.03% 以内 | 0.00923% | 65023 字节分片，6 字节 OBEX 头 |
 | 助手协议开销 | 0.01% 以内 | 0.00725% | 262144 字节分片，19 字节帧开销 |
-| cli-only bt | 8 MB 以内 | 3,607,088 字节 | 关闭 gui 特性的 release 构建 |
-| cli-only btrecv | 8 MB 以内 | 3,350,000 字节 | 同上 |
-| GUI 单文件 bt-gui | 20 MB 以内 | 11,173,528 字节 | strip、LTO、opt-level=z |
+| cli-only bt | 8 MB 以内 | 3,609,904 字节 | 关闭 gui 特性的 release 构建 |
+| cli-only btrecv | 8 MB 以内 | 3,352,048 字节 | 同上 |
+| GUI 单文件 bt-gui | 20 MB 以内 | 11,175,704 字节 | strip、LTO、opt-level=z |
 | NSIS 安装器 | 15 MB 以内 | 未生成 | 本机无 makensis 与 Windows 链接器 |
-| .deb | 20 MB 以内 | 约 5.60 MB（多次重建 5,603,710–5,603,912 字节） | 含 GUI、cli-only bt 与 btrecv；dpkg-deb 打包时间戳可致数 KB 差异 |
+| .deb | 20 MB 以内 | 约 5.67 MB（本次重建 5,670,756 字节；可致数十 KB 差异） | 含 GUI、cli-only bt 与 btrecv；dpkg-deb 打包时间戳可致差异 |
 
 测量方法：
 
@@ -127,6 +127,7 @@ MockBackend 提供内存实现：可预置设备、事件脚本与配对交互�
 - journal 条目认领时写入状态 sending、持有者 PID 与启动标识、6 分钟租约。进程存活判定可靠的平台优先看进程是否仍存活，无法判定时退回租约。
 - 发送进度回调每 60 秒调用一次 heartbeat：一次加锁内续租到当前时间加 6 分钟并更新已确认偏移。心跳只在有进度时触发；Linux 与 Windows 以进程存活判定为准，无进度也不会被误接管，其它平台在超过 6 分钟无进度时仍可能按租约被接管，边界见 docs/PROTOCOL.md。
 - 用户取消把条目转为 paused 并保留自产载荷；只有 `bt resume cancel`、传输完成、abandon 规则（载荷缺失、内容变化、超过尝试上限）或 7 天 TTL 清理会删除条目。
+- journal 条目的 produced 标志由打包或恢复步骤显式写入，cleaner 只删除该标志为真的载荷；CLI、GUI 与引擎入队都会拒绝 pending 内的用户源文件。
 - CLI 只在 `send`、`recv` 与 `gui` 流程启用 journal 自动恢复；查询与配置命令打开后端时不触发发送，续传由 `resume run` 显式执行。
 
 ## 平台策略

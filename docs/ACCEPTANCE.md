@@ -44,7 +44,7 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | SND-02 | 多文件顺序发送与汇总 | `bt send files <ADDR> <PATH>...`；e2e 同上 | 契约已验证 |
 | SND-03 | 文本发送 | `bt send text <ADDR> <TEXT>`；e2e `send_text_returns_jobs_and_summary` | 契约已验证 |
 | SND-04 | 文件夹自动打包发送 | `bt send folder <ADDR> <DIR>`；e2e `send_file_and_folder_and_zip`、`send_folder_rejects_zip32_limit_with_unsupported_error` | 契约已验证（引擎打包与 ZIP32 命令级预检）；真实 OPP 发送未验证 |
-| SND-05 | 单文件 zip | `bt send file <ADDR> <PATH> --zip`；e2e `send_file_and_folder_and_zip` 校验名称与 pending 清理、`zip_rejects_4gib_source_and_leaves_no_artifact` 校验 4 GiB 上限；e2e `zip_cancel_keeps_payload_and_resume_run_finishes_it` 校验取消保留、续传完成清理与显式取消清理；GUI `canceled_zip_job_keeps_payload_for_resume` 校验同一语义 | 契约已验证（含 4 GiB 拒绝、取消保留与终态清理；真实 OPP 未验证） |
+| SND-05 | 单文件 zip | `bt send file <ADDR> <PATH> --zip`；e2e `send_file_and_folder_and_zip` 校验名称与 pending 清理、`zip_rejects_4gib_source_and_leaves_no_artifact` 校验 4 GiB 上限；e2e `zip_cancel_keeps_payload_and_resume_run_finishes_it` 校验取消保留、续传完成清理与显式取消清理；e2e `send_rejects_user_source_inside_pending` 校验 pending 内源文件被拒绝且不删除；引擎 `enqueue_rejects_user_file_inside_pending`、journal `complete_keeps_payload_when_produced_flag_is_false` 校验显式 provenance；GUI `canceled_zip_job_keeps_payload_for_resume` 校验同一语义 | 契约已验证（含 4 GiB 拒绝、取消保留、显式 provenance 与终态清理；真实 OPP 未验证） |
 | SND-06 | 通道模式 auto/assistant/opp | `--mode`；e2e 校验 assistant 通道与记录 | 契约已验证；真实助手通道未验证 |
 | SND-07 | 助手通道探测与发送 | `devices detect` + `send --mode assistant`；bt-app e2e `assistant_send_end_to_end_uses_journal_and_records_completed` | 协议与引擎已用脚本化传输验证；真实 RFCOMM 未验证 |
 | SND-08 | 断点续传 | `bt resume list/run/cancel`；e2e `resume_list_run_and_cancel_use_the_real_journal`、`resume_run_recovers_paused_entries_and_prunes_missing_payloads` | 契约已验证：BTJ1 journal 计划、paused 恢复与 abandon 清理；真实断线续传未验证 |
@@ -94,13 +94,13 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 
 | 编号 | 功能 | 验证方法 | 状态 |
 | --- | --- | --- | --- |
-| SYS-01 | 无硬件自检 | `bt selftest --json`；e2e `selftest_reports_checks`；真实后端无 BlueZ 时硬件项标记环境跳过 | 已验证：mock 与真实后端均退出 0 |
-| SYS-02 | 单实例与外部收件箱 | bt-platform 单元测试；e2e `second_instance_forwards_message_to_primary` | 单实例与载荷转发已验证；无显示环境未验证窗口激活 |
+| SYS-01 | 无硬件自检 | `bt selftest --json`；e2e `selftest_reports_checks`；真实后端无 BlueZ 时 transport/engine 标记 `skipped=true` | 已验证：mock 与真实后端均退出 0 |
+| SYS-02 | 单实例与外部收件箱 | bt-platform 单元测试；e2e `second_instance_forwards_message_to_primary`；`single_instance_busy_maps_to_exit_3` 校验占用映射 3 | 单实例与载荷转发已验证；无显示环境未验证窗口激活 |
 | SYS-03 | 托盘、通知、通知点击 | bt-platform 托盘与通知单元测试 | 调用路径已验证；无托盘宿主与通知守护进程，未验证实际显示 |
 | SYS-04 | Windows 资源管理器集成 | NSIS 脚本静态检查 | 脚本覆盖注册表项；无 Windows 运行环境，未验证 |
 | SYS-05 | Linux 桌面集成 | .desktop、AppRun 与打包脚本静态检查 | 文件存在且脚本可重复执行；未在桌面环境验证 |
 | SYS-06 | GUI 页面与交互 | 设备、发送、队列、接收、记录、日志、设置 | 页面状态与动作已接线；无显示环境未验证真实交互 |
-| SYS-07 | GUI selftest | `cargo run -p bt-gui -- --selftest` | 已验证：16 项检查退出 0 |
+| SYS-07 | GUI selftest | `cargo run -p bt-gui -- --selftest` | 已验证：16 项检查退出 0；环境不满足项以 skipped 标记，不计入失败 |
 | SYS-08 | Windows 安装器 | NSIS 构建与安装/卸载/升级 | 脚本曾用 NSIS 编译；未在 Windows 安装/卸载/升级 |
 | SYS-09 | GitHub Actions 发布 | release.yml 静态检查 | 版本校验、矩阵与产物断言已接线；未在 GitHub 实际运行 |
 
@@ -129,9 +129,9 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 
 | 指标 | 上限 | 当前状态 |
 | --- | --- | --- |
-| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,607,088 字节、`btrecv` 3,350,000 字节（本机 release，无 GUI 特性） |
-| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,173,528 字节 |
-| .deb | 20 MB | 已验证：重建实测约 5.60 MB（5,603,710–5,603,912 字节，方法与波动说明见 docs/RELEASE.md） |
+| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,609,904 字节、`btrecv` 3,352,048 字节（本机 release，无 GUI 特性） |
+| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,175,704 字节 |
+| .deb | 20 MB | 已验证：重建实测约 5.67 MB（本次重建 5,670,756 字节，方法与波动说明见 docs/RELEASE.md） |
 | NSIS 安装器 | 15 MB | 未生成：本机无 makensis 与 Windows 链接器 |
 | 接收最终文件额外字节 | 0 | 已验证：bt-app e2e 断言落盘长度等于载荷 |
 | 半成品 sidecar | 64 字节 | 已验证：53 字节 |

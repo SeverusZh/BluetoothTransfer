@@ -24,6 +24,8 @@ Rust 重写版本，取代原 Windows .NET 8 WPF 实现。
 - MSRV 由 1.85 修正为 1.95，依据 eframe/egui 0.37 的 `rust-version`；`cargo xtask msrv` 与 CI 校验声明一致性。
 - `send folder` 在入队前预检 ZIP32 上限，超限时输出 `error.kind=unsupported` 与拆分建议，而不是仅落到任务错误字符串。
 - CLI e2e 增加真实后端路径：只读命令不改 journal，`send` 触发自动续传；并用真实进程 SIGINT 与停顿链路验证取消后保留 zip 载荷。
+- 发送 provenance 显式化：打包与恢复步骤写入自产标志，journal cleaner 只清理自产载荷；pending 内的用户源文件在 CLI/GUI/引擎入队被拒绝。损坏 journal 与 symlink 或 `..` 逃逸不再触发 settle 误删。
+- GUI selftest 支持 skipped 状态；CLI 退出码文档把单实例占用归入 3，与 Busy 实现一致。
 
 ### 破坏性变更
 

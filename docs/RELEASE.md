@@ -80,12 +80,12 @@ Linux：
 
 | 产物 | 上限 | 本机实测 | 说明 |
 | --- | --- | --- | --- |
-| cli-only 二进制 `bt` | 8 MB | 3,607,088 字节（3.44 MiB） | `cargo build -p bt-cli --no-default-features --release` |
-| cli-only 二进制 `btrecv` | 8 MB | 3,350,000 字节（3.19 MiB） | 同上，两个二进制合计 6.96 MB |
-| 完整 `bt` | 无独立上限 | 11,687,448 字节（11.15 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
-| GUI 单文件 `bt-gui` | 20 MB | 11,173,528 字节（10.66 MiB） | 已开启 strip/LTO/opt-level z |
+| cli-only 二进制 `bt` | 8 MB | 3,609,904 字节（3.44 MiB） | `cargo build -p bt-cli --no-default-features --release` |
+| cli-only 二进制 `btrecv` | 8 MB | 3,352,048 字节（3.20 MiB） | 同上，两个二进制合计 6.96 MB |
+| 完整 `bt` | 无独立上限 | 11,690,264 字节（11.15 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
+| GUI 单文件 `bt-gui` | 20 MB | 11,175,704 字节（10.66 MiB） | 已开启 strip/LTO/opt-level z |
 | NSIS 安装器 | 15 MB | 未生成 | 本机无 makensis、无 MSVC 链接器，只能在 CI 的 Windows runner 生成 |
-| `.deb` | 20 MB（CI 断言） | 约 5.60 MB；多次重建 5,603,710–5,603,912 字节 | `VERSION=2.0.0 packaging/linux/build-deb.sh` 用 release 二进制构建；dpkg-deb 的 ar/tar 时间戳与压缩实现不同可致数 KB 差异，因此文档记录方法与实测区间，不做字节级断言 |
+| `.deb` | 20 MB（CI 断言） | 约 5.67 MB；本次重建 5,670,756 与 5,670,778 字节 | `VERSION=2.0.0 packaging/linux/build-deb.sh` 用 release 二进制构建；二进制变化、dpkg-deb 时间戳与压缩实现可致数十 KB 差异，因此文档记录方法与本次实测，不做字节级断言 |
 | AppImage | 25 MB（建议值，未在 CI 断言） | 未生成 | 无 appimagetool，下载超时 |
 
 体积上限的依据：cli-only 目标来自架构文档；GUI 20 MB 与安装器 15 MB 来自任务验收目标，release 配置已开启 strip、LTO 与 `opt-level z`。本机没有 makensis 与 MSVC 链接器，NSIS 安装器无法生成，不用占位二进制伪造体积；真实安装器由 CI 的 Windows runner 构建并断言。
@@ -110,7 +110,7 @@ Linux：
 - `cargo build -p bt-gui --release` 与 `cargo build -p bt-cli --no-default-features --release` 通过并记录体积。
 - Linux 托盘：在会话 D-Bus 上启动并持有 `org.kde.StatusNotifierItem` 名称；本机没有托盘宿主面板，图标未实际显示。
 - NSIS 脚本：PATH 无 `makensis`，使用 gitignored 的 NSIS 3.10 解包副本复核：未传 `VERSION` 时脚本按设计失败，传 `-DVERSION=2.0.0` 加占位载荷可编译；产物只用于脚本验证，不作为发布产物，Windows 安装/卸载/升级仍未验证。
-- `.deb` 构建脚本：用 release 二进制运行 `VERSION=2.0.0 packaging/linux/build-deb.sh`，多次重建落在 5,603,710–5,603,912 字节（差异来自打包时间戳与压缩），均通过 `dpkg-deb --info` 检查；该值随二进制与打包时间戳变化，引用构建脚本输出而非固定字节数。
+- `.deb` 构建脚本：用 release 二进制运行 `VERSION=2.0.0 packaging/linux/build-deb.sh`，本次两次重建 5,670,756 与 5,670,778 字节（差异来自打包时间戳与压缩），均通过 `dpkg-deb --info` 检查；该值随二进制与打包时间戳变化，引用构建脚本输出而非固定字节数。
 
 未验证（环境缺失，不伪造结论）：
 
