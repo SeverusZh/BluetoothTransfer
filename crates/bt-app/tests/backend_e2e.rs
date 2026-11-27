@@ -214,6 +214,51 @@ fn backend_auto_resume_enqueues_journal_entries() {
 }
 
 #[test]
+fn auto_resume_keeps_payload_for_non_produced_entry() {
+    let dir = TempDir::new("auto-resume-user-payload");
+    let paths = dir.paths();
+    paths.create_dirs().unwrap();
+    let content = b"legacy-resume";
+    let payload = paths.pending_dir.join("legacy-payload.bin");
+    std::fs::write(&payload, content).unwrap();
+    let entry = bt_engine::JournalEntry::new(
+        device(),
+        "legacy.bin",
+        payload.clone(),
+        bt_core::sha256(content),
+        content.len() as u64,
+        bt_engine::JournalKind::File,
+        false,
+    );
+    let journal = bt_engine::Journal::new(&paths.journal_file).with_base(&paths.pending_dir);
+    let begun = journal.begin(entry).unwrap();
+    journal.release(&begun.entry.id_hex(), false).unwrap();
+
+    let hello = Hello::new("legacy.bin", content.len() as i64, hex_lower(&sha256(content)), 4096);
+    let mut inbound = Vec::new();
+    inbound.extend_from_slice(&encode_offer(&Offer::accept(0)).unwrap().encode());
+    inbound.extend_from_slice(&encode_ack(content.len() as i64).unwrap().encode());
+    inbound.extend_from_slice(
+        &encode_done(&Done::new(true, hello.expected_sha256.clone()))
+            .unwrap()
+            .encode(),
+    );
+    let transport = Arc::new(MockTransport::new(Vec::new()));
+    transport.script_connect(inbound);
+    let backend = RealBackend::open_with_transport_options(paths.clone(), Some(transport), true).unwrap();
+    assert!(
+        wait_for(
+            || backend.jobs().first().map(|job| job.state) == Some(JobState::Completed),
+            Duration::from_secs(10)
+        ),
+        "自动续传未完成：{:?}",
+        backend.jobs()
+    );
+    assert!(list_resume(&dir.paths()).unwrap().is_empty(), "完成后 journal 应清空");
+    assert!(payload.is_file(), "非自产恢复载荷不得被 cleaner 删除");
+    backend.shutdown();
+}
+#[test]
 fn pin_pairing_reaches_the_transport_handler() {
     let dir = TempDir::new("pin");
     let transport = Arc::new(MockTransport::new(Vec::new()));

@@ -1446,6 +1446,26 @@ mod tests {
     }
 
     #[test]
+    fn complete_keeps_payload_when_produced_flag_is_false() {
+        let dir = TempDir::new("complete-user");
+        let payload = write_payload(&dir, "user-source.bin", b"user");
+        let cleaner = Arc::new(TestCleaner::default());
+        let cleaner_dyn: Arc<dyn ArtifactCleaner> = cleaner.clone();
+        let journal = Journal::new(dir.0.join("send-journal.bin"))
+            .with_liveness(Arc::new(FixedLiveness(false)))
+            .with_clock(Arc::new(|| 1_000))
+            .with_process(1, 1)
+            .with_cleaner(cleaner_dyn);
+        let item = entry(&dir, payload.clone(), "user-source.bin");
+        assert!(!item.produced);
+        let id = journal.begin(item).unwrap().entry.id_hex();
+        assert!(journal.complete(&id).unwrap());
+        assert!(journal.read_all().unwrap().is_empty());
+        assert!(cleaner.deleted.lock().unwrap().is_empty(), "非自产载荷不得清理");
+        assert!(payload.is_file(), "用户源文件必须保留");
+    }
+
+    #[test]
     fn no_temporary_file_remains() {
         let dir = TempDir::new("atomic");
         let payload = write_payload(&dir, "a.bin", b"hello");

@@ -134,16 +134,32 @@ impl PendingPackageStore {
         })
     }
 
-    /// 路径是否位于本产物目录内，删除只允许命中自己生成的产物。
+    /// 严格判定：路径必须是 pending 内的真实普通文件，解析后仍在目录内。
+    /// 拒绝 symlink 与 `..` 逃逸；删除只允许命中本应用生成的产物。
     pub fn is_owned(&self, path: &Path) -> bool {
-        let Ok(root) = self
-            .directory
-            .canonicalize()
-            .or_else(|_| absolute_lexical(&self.directory))
-        else {
+        let Ok(root) = self.directory.canonicalize() else {
             return false;
         };
-        let candidate = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return false;
+        }
+        let Ok(real) = path.canonicalize() else {
+            return false;
+        };
+        real.starts_with(&root) && real != root
+    }
+
+    /// 词法判定路径是否落在 pending 内，不要求文件存在；用于拒绝 pending 内的源文件。
+    pub fn contains(&self, path: &Path) -> bool {
+        let Ok(root) = absolute_lexical(&self.directory) else {
+            return false;
+        };
+        let Ok(candidate) = absolute_lexical(path) else {
+            return false;
+        };
         candidate.starts_with(&root) && candidate != root
     }
 
@@ -593,6 +609,47 @@ mod tests {
         let zipped = store.create_zip_from_file(&source).unwrap();
         assert!(zipped.display_name.ends_with("a.bin.zip"));
         assert!(zipped.path.exists());
+    }
+
+    #[test]
+    fn ownership_rejects_parent_and_symlink_escapes() {
+        let dir = TempDir::new("pending-escape");
+        let pending = dir.0.join("pending");
+        std::fs::create_dir_all(&pending).unwrap();
+        let store = PendingPackageStore::new(&pending);
+        let inside = pending.join("payload.bin");
+        std::fs::write(&inside, b"payload").unwrap();
+        assert!(store.is_owned(&inside));
+        assert!(store.contains(&inside));
+
+        let missing = pending.join("missing.bin");
+        assert!(!store.is_owned(&missing), "不存在的路径不允许删除");
+        assert!(store.contains(&missing), "源文件守卫不要求文件存在");
+
+        let outside = dir.0.join("victim.txt");
+        std::fs::write(&outside, b"victim").unwrap();
+        assert!(!store.contains(&outside));
+        let escape = pending.join("..").join("victim.txt");
+        assert!(!store.is_owned(&escape), "pending/../ 必须拒绝");
+        assert!(!store.delete(&escape));
+        assert!(outside.is_file(), "pending 外文件不得被删除");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let link = pending.join("outside-link");
+            symlink(&outside, &link).unwrap();
+            assert!(!store.is_owned(&link), "symlink 不得视为自产载荷");
+            assert!(!store.delete(&link));
+            assert!(link.symlink_metadata().is_ok(), "不得删除 symlink 本身");
+
+            let dangling = dir.0.join("dangling-target");
+            let dangling_link = pending.join("dangling-link");
+            symlink(&dangling, &dangling_link).unwrap();
+            assert!(!store.is_owned(&dangling_link), "悬挂 symlink 不得删除");
+            assert!(!store.delete(&dangling_link));
+            assert!(dangling_link.symlink_metadata().is_ok());
+        }
     }
 
     #[test]

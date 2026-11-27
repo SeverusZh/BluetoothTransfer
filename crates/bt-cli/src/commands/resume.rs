@@ -127,6 +127,8 @@ pub fn run(ctx: &Context) -> Result<u8, CliError> {
         let mut item = SendItem::from_source(SendSource::File(payload));
         item.display_name = info.display_name.clone();
         item.total_bytes = Some(info.size);
+        item.produced = info.produced;
+        item.recovered = true;
         match ctx.backend.enqueue(&device, vec![item], Some(Channel::Assistant)) {
             Ok(job_ids) => {
                 if let Some(job_id) = job_ids.first() {

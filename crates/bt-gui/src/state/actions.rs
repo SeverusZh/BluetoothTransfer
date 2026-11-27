@@ -329,9 +329,11 @@ impl UiState {
                         let size = std::fs::metadata(&packed.path)
                             .map_err(|error| BtError::storage(format!("读取 zip 失败：{error}")))?
                             .len();
+                        let produced = packed.owned;
                         let mut item = SendItem::from_source(SendSource::File(packed.path.clone()));
                         item.display_name = packed.display_name;
                         item.total_bytes = Some(size);
+                        item.produced = produced;
                         let ids = backend.enqueue(&device, vec![item], channel)?;
                         Ok((ids, packed.path))
                     })();

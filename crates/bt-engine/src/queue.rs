@@ -384,6 +384,8 @@ mod tests {
             display_name: "hello".into(),
             total_bytes: Some(100),
             kind: RecordKind::Text,
+            produced: false,
+            recovered: false,
         }
     }
 

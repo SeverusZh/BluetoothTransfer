@@ -109,6 +109,12 @@ pub fn send_items(
 }
 
 fn file_item(ctx: &Context, path: &Path, zip_enabled: bool, owned: &mut Vec<PathBuf>) -> Result<SendItem, CliError> {
+    if bt_app::is_pending_source(&ctx.paths, path) {
+        return Err(
+            CliError::usage(format!("源文件位于待续传目录 pending/：{}", path.display()))
+                .with_hint("把源文件移出 pending/ 后再发送；该目录只存放本应用生成的待续传载荷"),
+        );
+    }
     if !path.is_file() {
         return Err(CliError::usage(format!("文件不存在：{}", path.display()))
             .with_hint("确认路径；发送多个文件时每个路径都必须存在"));
@@ -128,9 +134,11 @@ fn file_item(ctx: &Context, path: &Path, zip_enabled: bool, owned: &mut Vec<Path
         let size = std::fs::metadata(&packed.path)
             .map_err(|error| CliError::failed(format!("读取 zip 失败：{error}")))?
             .len();
+        let produced = packed.owned;
         let mut item = SendItem::from_source(SendSource::File(packed.path));
         item.display_name = packed.display_name;
         item.total_bytes = Some(size);
+        item.produced = produced;
         return Ok(item);
     }
     let size = std::fs::metadata(path)

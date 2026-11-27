@@ -266,6 +266,9 @@ impl SendEngine {
         if items.is_empty() {
             return Err(BtError::invalid("发送条目为空"));
         }
+        for item in &items {
+            self.ensure_sendable_source(item)?;
+        }
         let mut added = Vec::new();
         {
             let mut state = self.state.lock().map_err(|_| BtError::internal("发送队列被投毒"))?;
@@ -281,6 +284,24 @@ impl SendEngine {
             }
         }
         Ok(added)
+    }
+
+    /// 用户源文件位于 pending 时拒绝入队；该目录只容纳本应用生成的续传载荷。
+    fn ensure_sendable_source(&self, item: &SendItem) -> Result<(), BtError> {
+        let paths: Vec<&std::path::Path> = match &item.source {
+            SendSource::File(path) => vec![path.as_path()],
+            SendSource::Files(paths) => paths.iter().map(std::path::PathBuf::as_path).collect(),
+            SendSource::Folder(_) | SendSource::Text(_) => Vec::new(),
+        };
+        for path in paths {
+            if !item.produced && !item.recovered && self.packages.contains(path) {
+                return Err(BtError::invalid(format!(
+                    "源文件位于待续传目录 pending/：{}；请把源文件移出该目录后再发送",
+                    path.display()
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn jobs(&self) -> Vec<JobSnapshot> {
@@ -421,6 +442,8 @@ impl SendEngine {
                 display_name: entry.display_name.clone(),
                 total_bytes: Some(entry.size),
                 kind,
+                produced: entry.produced,
+                recovered: true,
             };
             let device_name = entry.peer.to_string();
             if self
@@ -685,7 +708,7 @@ impl SendEngine {
                     path: path.clone(),
                     display_name: job.item.display_name.clone(),
                     journal_kind: JournalKind::File,
-                    produced: self.packages.is_owned(path),
+                    produced: job.item.produced && self.packages.contains(path),
                     size,
                 });
             }
@@ -1208,7 +1231,8 @@ mod tests {
     fn cancel_keeps_produced_zip_until_journal_terminal_state() {
         let (engine, transport, dir, packed) = make_zip_engine("zip-cancel");
         let gate = transport.gate_next_connect();
-        let item = SendItem::from_source(SendSource::File(packed.path.clone()));
+        let mut item = SendItem::from_source(SendSource::File(packed.path.clone()));
+        item.produced = true;
         let id = engine
             .enqueue(
                 &DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
@@ -1255,7 +1279,8 @@ mod tests {
                 .encode(),
         );
         transport.script_connect(inbound);
-        let item = SendItem::from_source(SendSource::File(packed.path.clone()));
+        let mut item = SendItem::from_source(SendSource::File(packed.path.clone()));
+        item.produced = true;
         let id = engine
             .enqueue(
                 &DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
@@ -1267,6 +1292,28 @@ mod tests {
         assert!(wait_state(&engine, id, JobState::Completed));
         assert!(engine.resume_entries().unwrap().is_empty(), "完成后 journal 条目应删除");
         assert!(!packed.path.exists(), "完成后自产 zip 应清理");
+        engine.shutdown();
+    }
+
+    #[test]
+    fn enqueue_rejects_user_file_inside_pending() {
+        let (engine, _transport, dir, _source) = make_engine("pending-guard");
+        let pending = dir.0.join("pending");
+        std::fs::create_dir_all(&pending).unwrap();
+        let user_file = pending.join("user-source.bin");
+        std::fs::write(&user_file, b"user data").unwrap();
+        let item = SendItem::from_source(SendSource::File(user_file.clone()));
+        let error = engine
+            .enqueue(
+                &DeviceId::parse("AA:BB:CC:DD:EE:20").unwrap(),
+                "Pixel",
+                vec![item],
+                Some(Channel::Assistant),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), BtErrorKind::InvalidArgument);
+        assert!(error.message().contains("pending"), "{}", error.message());
+        assert!(user_file.is_file(), "拒绝入队不得删除源文件");
         engine.shutdown();
     }
 

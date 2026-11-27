@@ -444,6 +444,7 @@ dependencies = [
  "bt-core",
  "crossbeam-channel",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

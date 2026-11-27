@@ -327,6 +327,29 @@ fn send_events_are_ndjson_with_result_line() {
 }
 
 #[test]
+fn send_rejects_user_source_inside_pending() {
+    let env = Env::new();
+    let pending = env.path(".local/share/BluetoothTransfer/pending");
+    std::fs::create_dir_all(&pending).unwrap();
+    let source = pending.join("user-source.txt");
+    std::fs::write(&source, b"user data").unwrap();
+
+    for extra in [Vec::new(), vec!["--zip"]] {
+        let mut args = vec!["send", "file", PHONE, source.to_str().unwrap(), "--json"];
+        args.extend(extra.iter().copied());
+        let output = run(&env, "bt", &args);
+        assert_eq!(code(&output), 2, "stderr={}", String::from_utf8_lossy(&output.stderr));
+        let value = json(&output);
+        assert_eq!(value["type"], "error");
+        assert_eq!(value["error"]["kind"], "invalid_argument");
+        let hint = value["error"]["hint"].as_str().unwrap();
+        assert!(hint.contains("pending"), "hint 需指出 pending：{hint}");
+        assert!(hint.contains("移出"), "hint 需可操作：{hint}");
+        assert!(source.is_file(), "拒绝不得删除源文件");
+    }
+}
+
+#[test]
 fn send_file_and_folder_and_zip() {
     let env = Env::new();
     let first = env.path("a.txt");

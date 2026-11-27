@@ -901,6 +901,8 @@ mod tests {
             display_name: "hello".into(),
             total_bytes: Some(5),
             kind: bt_core::RecordKind::Text,
+            produced: false,
+            recovered: false,
         };
         let jobs = backend.enqueue(&id, vec![item], None).unwrap();
         assert_eq!(jobs.len(), 1);

@@ -80,6 +80,12 @@ pub struct SendItem {
     pub display_name: String,
     pub total_bytes: Option<u64>,
     pub kind: RecordKind,
+    /// 是否为本应用生成的待续传载荷；只允许打包或续传路径置真，不进入公开 JSON。
+    #[serde(default, skip_serializing)]
+    pub produced: bool,
+    /// 是否从 journal 恢复；恢复载荷允许存放在 pending 内，不进入公开 JSON。
+    #[serde(default, skip_serializing)]
+    pub recovered: bool,
 }
 
 impl SendItem {
@@ -96,6 +102,8 @@ impl SendItem {
             source,
             total_bytes: None,
             kind,
+            produced: false,
+            recovered: false,
         }
     }
 }
@@ -400,6 +408,9 @@ pub struct SelftestCheck {
     pub name: String,
     pub ok: bool,
     pub detail: String,
+    /// 环境不满足导致未执行；不计入失败，序列化时仅在为真时出现。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skipped: bool,
 }
 
 /// 自检汇总。
@@ -408,9 +419,13 @@ pub struct SelftestReport {
     pub checks: Vec<SelftestCheck>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 impl SelftestReport {
     pub fn passed(&self) -> bool {
-        !self.checks.is_empty() && self.checks.iter().all(|check| check.ok)
+        !self.checks.is_empty() && self.checks.iter().all(|check| check.ok || check.skipped)
     }
 
     pub fn push(&mut self, name: impl Into<String>, ok: bool, detail: impl Into<String>) {
@@ -418,13 +433,24 @@ impl SelftestReport {
             name: name.into(),
             ok,
             detail: detail.into(),
+            skipped: false,
+        });
+    }
+
+    /// 环境不满足而跳过：不参与失败判定，但显式标记为 skipped。
+    pub fn push_skip(&mut self, name: impl Into<String>, detail: impl Into<String>) {
+        self.checks.push(SelftestCheck {
+            name: name.into(),
+            ok: false,
+            detail: detail.into(),
+            skipped: true,
         });
     }
 
     pub fn failed_names(&self) -> Vec<&str> {
         self.checks
             .iter()
-            .filter(|check| !check.ok)
+            .filter(|check| !check.ok && !check.skipped)
             .map(|check| check.name.as_str())
             .collect()
     }
@@ -613,6 +639,32 @@ mod tests {
         assert_eq!(device.label(), "Pixel 9");
         device.alias = Some("工作手机".to_string());
         assert_eq!(device.label(), "工作手机");
+    }
+
+    #[test]
+    fn selftest_skip_is_not_failure() {
+        let mut report = SelftestReport::default();
+        report.push("config", true, "ok");
+        report.push_skip("font", "缺少字体");
+        assert!(report.passed(), "跳过项不阻断自检");
+        assert!(report.failed_names().is_empty());
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["checks"][1]["skipped"], true);
+        assert!(json["checks"][0].get("skipped").is_none(), "正常项不输出 skipped");
+
+        report.push("store", false, "损坏");
+        assert!(!report.passed());
+        assert_eq!(report.failed_names(), vec!["store"]);
+    }
+
+    #[test]
+    fn send_item_produced_flag_is_not_serialized() {
+        let mut item = SendItem::from_source(SendSource::Text("hello".into()));
+        item.produced = true;
+        let json = serde_json::to_value(&item).unwrap();
+        assert!(json.get("produced").is_none(), "内部来源标志不进入 JSON");
+        let back: SendItem = serde_json::from_value(json).unwrap();
+        assert!(!back.produced, "缺失字段反序列化为非自产");
     }
 
     #[test]

@@ -120,6 +120,8 @@ pub struct ResumeInfo {
     pub state: &'static str,
     pub attempts: u32,
     pub updated_at: String,
+    /// 是否为本应用生成的续传载荷；恢复时据此保留或清理。
+    pub produced: bool,
 }
 
 pub fn list_resume(paths: &AppPaths) -> Result<Vec<ResumeInfo>, BtError> {
@@ -217,16 +219,21 @@ pub fn cancel_resume(paths: &AppPaths, id: &str) -> Result<bool, BtError> {
 }
 
 /// 按 journal 引用收尾自产载荷：仍被未完成条目引用则保留，否则删除。
-/// 用户源文件不在 pending 目录，删除请求会被打包器拒绝。
+/// journal 损坏被隔离或读取失败时保守保留；用户源文件不在 pending 目录，删除请求会被打包器拒绝。
 pub fn settle_owned_payload(paths: &AppPaths, payload: &Path) -> bool {
     let packages = PendingPackageStore::new(paths.pending_dir.clone());
     if !packages.is_owned(payload) {
         return false;
     }
     if paths.journal_file.is_file() {
-        match journal_for(paths).read_all() {
+        let result = journal_for(paths).read_all();
+        match result {
             Ok(entries) if entries.iter().any(|entry| same_payload(&entry.payload, payload)) => return false,
-            Ok(_) => {}
+            Ok(_) => {
+                if !paths.journal_file.is_file() {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }
@@ -272,6 +279,7 @@ fn resume_info(entry: &bt_engine::JournalEntry) -> ResumeInfo {
         state: entry.state.as_str(),
         attempts: entry.attempts,
         updated_at: bt_core::rfc3339_from_unix(i64::from(entry.updated)),
+        produced: entry.produced,
     }
 }
 
@@ -290,6 +298,11 @@ pub fn pack_zip_folder_in(paths: &AppPaths, folder: &Path) -> Result<PackedSourc
 /// 校验文件夹打包是否满足 ZIP32 上限，不写产物；供命令层在入队前报错。
 pub fn check_zip_folder(folder: &Path) -> Result<(), BtError> {
     bt_engine::check_folder_zip32(folder)
+}
+
+/// 判断用户选择的路径是否位于待续传目录；不要求文件存在。
+pub fn is_pending_source(paths: &AppPaths, path: &Path) -> bool {
+    PendingPackageStore::new(paths.pending_dir.clone()).contains(path)
 }
 
 /// 把单个文件打包为待续传 zip；路径按 BT_HOME 或当前用户目录解析。
@@ -442,6 +455,36 @@ mod tests {
         assert!(cancel_resume(&paths, &id).unwrap());
         assert!(!packed.path.exists(), "journal 删除条目时清理自产载荷");
         let _ = std::fs::remove_dir_all(&paths.data_dir);
+    }
+
+    #[test]
+    fn settle_keeps_payload_when_journal_is_corrupt() {
+        let paths = temp_paths("settle-corrupt");
+        paths.create_dirs().unwrap();
+        let source = paths.data_dir.join("source.bin");
+        std::fs::write(&source, b"source").unwrap();
+        let packages = PendingPackageStore::new(paths.pending_dir.clone());
+        let packed = packages.create_zip_from_file(&source).unwrap();
+        std::fs::write(&paths.journal_file, b"corrupt-journal-bytes").unwrap();
+
+        assert!(!settle_owned_payload(&paths, &packed.path), "损坏 journal 不得触发删除");
+        assert!(packed.path.is_file(), "损坏 journal 时载荷必须保留");
+        let quarantined = std::fs::read_dir(&paths.journal_dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".corrupt."))
+            .count();
+        assert!(quarantined >= 1, "损坏 journal 必须改名留证");
+        let _ = std::fs::remove_dir_all(&paths.data_dir);
+    }
+
+    #[test]
+    fn pending_source_detection_is_lexical() {
+        let paths = temp_paths("pending-source");
+        assert!(is_pending_source(&paths, &paths.pending_dir.join("missing.bin")));
+        assert!(!is_pending_source(&paths, &paths.data_dir.join("user.bin")));
+        let escape = paths.pending_dir.join("..").join("user.bin");
+        assert!(!is_pending_source(&paths, &escape));
     }
 
     #[test]
