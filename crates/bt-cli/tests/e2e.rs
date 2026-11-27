@@ -48,6 +48,7 @@ fn run_with_stdin(env: &Env, program: &str, args: &[&str], stdin: Option<&str>) 
     command.output().expect("命令可执行")
 }
 
+#[cfg(unix)]
 fn run_with_home_real(program: &str, home: &Path, args: &[&str]) -> Output {
     let mut command = assert_cmd::Command::cargo_bin(program).expect("二进制存在");
     command
