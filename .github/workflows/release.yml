@@ -83,7 +83,8 @@ jobs:
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (!(Test-Path $makensis)) { $makensis = "$env:ProgramFiles\NSIS\makensis.exe" }
           if (!(Test-Path $makensis)) { throw "未找到 makensis.exe" }
-          & $makensis "/DVERSION=$version" "/DBUILD_DIR=$build" "/DOUTPUT_FILE=$output" packaging/windows/installer.nsi
+          $script = (Resolve-Path packaging/windows/installer.nsi).Path
+          & $makensis "/DVERSION=$version" "/DBUILD_DIR=$build" "/DOUTPUT_FILE=$output" $script
           if ($LASTEXITCODE -ne 0 -or !(Test-Path $output)) { throw "NSIS 生成失败" }
       - name: 体积断言
         shell: pwsh
