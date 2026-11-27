@@ -48,6 +48,19 @@ fn run_with_stdin(env: &Env, program: &str, args: &[&str], stdin: Option<&str>) 
     command.output().expect("命令可执行")
 }
 
+fn run_with_home_real(program: &str, home: &Path, args: &[&str]) -> Output {
+    let mut command = assert_cmd::Command::cargo_bin(program).expect("二进制存在");
+    command
+        .env("BT_HOME", home)
+        .env_remove("BT_BACKEND")
+        .env_remove("APPDATA")
+        .env_remove("LOCALAPPDATA")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("XDG_DATA_HOME")
+        .args(args);
+    command.output().expect("命令可执行")
+}
+
 fn code(output: &Output) -> i32 {
     output.status.code().unwrap_or(-1)
 }
@@ -714,4 +727,238 @@ fn usage_errors_are_json_when_requested() {
     assert_eq!(value["type"], "error");
     assert_eq!(value["error"]["kind"], "invalid_argument");
     assert!(value["error"]["hint"].as_str().unwrap().contains("--help"));
+}
+
+#[test]
+fn zip_rejects_4gib_source_and_leaves_no_artifact() {
+    let env = Env::new();
+    let huge = env.path("huge.bin");
+    let file = std::fs::File::create(&huge).unwrap();
+    file.set_len(4 * 1024 * 1024 * 1024).unwrap();
+    let output = run(
+        &env,
+        "bt",
+        &["send", "file", PHONE, huge.to_str().unwrap(), "--zip", "--json"],
+    );
+    assert_eq!(code(&output), 1, "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let value = json(&output);
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["type"], "error");
+    assert_eq!(value["error"]["kind"], "unsupported");
+    assert!(value["error"]["hint"].as_str().unwrap().contains("4 GiB"));
+    let pending = env.path(".local/share/BluetoothTransfer/pending");
+    if pending.is_dir() {
+        assert_eq!(
+            std::fs::read_dir(&pending).unwrap().count(),
+            0,
+            "失败后不得残留打包产物"
+        );
+    }
+}
+
+#[test]
+fn cancel_keeps_resume_entry_and_resume_run_finishes_it() {
+    use bt_api::{Backend, ConfigPatch, JobState, SendItem};
+    use bt_core::{Channel, DeviceId, SendSource, TransferMode};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let env = Env::new();
+    let paths = bt_app::AppPaths::portable(env.home());
+    let transport = Arc::new(bt_transport::mock::MockTransport::new(Vec::new()));
+    let backend =
+        bt_app::RealBackend::open_with_transport_options(paths.clone(), Some(transport.clone()), false).unwrap();
+    backend
+        .update_config(ConfigPatch {
+            mode: Some(TransferMode::Assistant),
+            ..Default::default()
+        })
+        .unwrap();
+    let gate = transport.gate_next_connect();
+    let item = SendItem::from_source(SendSource::Text("cancel-resume".to_string()));
+    let device = DeviceId::parse(PHONE).unwrap();
+    let job = backend.enqueue(&device, vec![item], Some(Channel::Assistant)).unwrap()[0];
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let entries = bt_app::list_resume(&paths).unwrap();
+        if entries.iter().any(|entry| entry.state == "sending") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "journal 条目未写入：{entries:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    backend.cancel_all_jobs().unwrap();
+    gate.release();
+    loop {
+        if backend
+            .jobs()
+            .iter()
+            .any(|snapshot| snapshot.id == job && snapshot.state == JobState::Canceled)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "任务未进入取消终态：{:?}", backend.jobs());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    backend.shutdown();
+    drop(backend);
+
+    let listed = run(&env, "bt", &["resume", "list", "--json"]);
+    assert_eq!(code(&listed), 0);
+    let value = json(&listed);
+    assert_eq!(value["count"], 1, "取消后 resume list 必须能看到条目");
+    assert_eq!(value["entries"][0]["state"], "paused");
+
+    let resumed = run(&env, "bt", &["resume", "run", "--json"]);
+    assert_eq!(code(&resumed), 0, "stderr={}", String::from_utf8_lossy(&resumed.stderr));
+    let value = json(&resumed);
+    assert_eq!(value["resumed"], 1);
+    assert_eq!(value["summary"]["completed"], 1);
+    assert_eq!(value["jobs"][0]["item"]["display_name"], "bt-note.txt");
+
+    let after = run(&env, "bt", &["resume", "list", "--json"]);
+    assert_eq!(json(&after)["count"], 0, "续传完成后应清理条目");
+    let pending = env.path(".local/share/BluetoothTransfer/pending");
+    if pending.is_dir() {
+        assert_eq!(
+            std::fs::read_dir(&pending).unwrap().count(),
+            0,
+            "续传完成后应清理自产载荷"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_errors_exit_4_with_permission_kind() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::new();
+    let readonly = env.path("readonly-home");
+    std::fs::create_dir_all(&readonly).unwrap();
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let writable = std::fs::write(readonly.join("probe"), b"x").is_ok();
+    if writable {
+        let _ = std::fs::remove_file(readonly.join("probe"));
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("跳过：当前用户对只读目录仍有写权限，无法触发权限错误");
+        return;
+    }
+    let config = run_with_home_real("bt", &readonly, &["config", "set", "mode", "opp", "--json"]);
+    let devices = run_with_home_real("bt", &readonly, &["devices", "list", "--json"]);
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for output in [&config, &devices] {
+        assert_eq!(code(output), 4, "stderr={}", String::from_utf8_lossy(&output.stderr));
+        let value = json(output);
+        assert_eq!(value["type"], "error");
+        assert_eq!(value["error"]["kind"], "permission");
+        assert!(value["error"]["hint"].as_str().unwrap().contains("权限"));
+    }
+
+    let env = Env::new();
+    let readonly = env.path("readonly-out");
+    std::fs::create_dir_all(&readonly).unwrap();
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let target = readonly.join("records.csv");
+    let export = run_with_home_real("bt", env.home(), &["export", "csv", target.to_str().unwrap(), "--json"]);
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code(&export), 4, "stderr={}", String::from_utf8_lossy(&export.stderr));
+    assert_eq!(json(&export)["error"]["kind"], "permission");
+}
+
+#[test]
+fn events_parse_errors_emit_ndjson_error() {
+    let env = Env::new();
+    let output = run(&env, "bt", &["frobnicate", "--events"]);
+    assert_eq!(code(&output), 2);
+    let lines = ndjson(&output);
+    let last = lines.last().expect("events 模式必须输出错误行");
+    assert_eq!(last["type"], "error");
+    assert_eq!(last["ok"], false);
+    assert_eq!(last["command"], "bt");
+    assert_eq!(last["error"]["kind"], "invalid_argument");
+    assert!(last["error"]["hint"].as_str().unwrap().contains("--help"));
+
+    let missing = run(&env, "bt", &["send", "--events"]);
+    assert_eq!(code(&missing), 2);
+    assert_eq!(ndjson(&missing).last().unwrap()["type"], "error");
+
+    let recv = run(&env, "btrecv", &["--bogus", "--events"]);
+    assert_eq!(code(&recv), 2);
+    let last = ndjson(&recv).pop().expect("btrecv events 必须输出错误行");
+    assert_eq!(last["command"], "btrecv");
+    assert_eq!(last["error"]["kind"], "invalid_argument");
+}
+
+#[test]
+fn repl_json_reports_errors_as_objects() {
+    let env = Env::new();
+    let input = "frobnicate\ngui\nrecv\n\ndevices list --json\nquit\n";
+    let output = run_with_stdin(&env, "bt", &["repl", "--json"], Some(input));
+    assert_eq!(code(&output), 0);
+    let lines = ndjson(&output);
+    assert_eq!(lines.len(), 4, "每个非空命令输出一个对象：{lines:?}");
+    assert_eq!(lines[0]["type"], "error");
+    assert_eq!(lines[0]["error"]["kind"], "invalid_argument");
+    assert_eq!(lines[1]["type"], "error");
+    assert_eq!(lines[1]["command"], "gui");
+    assert_eq!(lines[2]["type"], "error");
+    assert_eq!(lines[2]["command"], "recv");
+    assert_eq!(lines[3]["ok"], true);
+}
+
+#[test]
+fn repl_events_reports_errors_as_ndjson() {
+    let env = Env::new();
+    let input = "frobnicate\ndevices list --json\nquit\n";
+    let output = run_with_stdin(&env, "bt", &["repl", "--events"], Some(input));
+    assert_eq!(code(&output), 0);
+    let lines = ndjson(&output);
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["type"], "error");
+    assert_eq!(lines[1]["type"], "result");
+    assert_eq!(lines[1]["count"], 2);
+}
+
+#[test]
+fn repl_honors_line_level_events_on_parse_errors() {
+    let env = Env::new();
+    let output = run_with_stdin(&env, "bt", &["repl"], Some("frobnicate --events\nquit\n"));
+    assert_eq!(code(&output), 0);
+    let lines = ndjson(&output);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0]["type"], "error");
+    assert_eq!(lines[0]["error"]["kind"], "invalid_argument");
+}
+
+#[test]
+fn read_only_commands_do_not_touch_the_resume_journal() {
+    let env = Env::new();
+    let (id, _payload) = seed_journal(&env, "只读.bin", b"readonly-journal", false);
+    let journal = env.path(".local/share/BluetoothTransfer/journal/send-journal.bin");
+    let before = std::fs::read(&journal).unwrap();
+    let export = env.path("records.jsonl");
+    let commands: Vec<Vec<&str>> = vec![
+        vec!["devices", "list", "--json"],
+        vec!["records", "list", "--json"],
+        vec!["records", "stats", "--json"],
+        vec!["config", "list", "--json"],
+        vec!["config", "set", "mode", "opp", "--json"],
+        vec!["export", "jsonl", export.to_str().unwrap(), "--json"],
+        vec!["resume", "list", "--json"],
+        vec!["selftest", "--json"],
+    ];
+    for args in commands {
+        let output = run(&env, "bt", &args);
+        assert_eq!(
+            code(&output),
+            0,
+            "{args:?} 失败：{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read(&journal).unwrap(), before, "{args:?} 不得改写 journal");
+    }
+    let listed = run(&env, "bt", &["resume", "list", "--json"]);
+    assert_eq!(json(&listed)["count"], 1);
+    assert_eq!(json(&listed)["entries"][0]["id"], id);
 }

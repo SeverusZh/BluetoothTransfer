@@ -184,6 +184,36 @@ fn backend_can_open_without_auto_resuming_the_journal() {
 }
 
 #[test]
+fn backend_auto_resume_enqueues_journal_entries() {
+    let dir = TempDir::new("auto-resume");
+    let paths = dir.paths();
+    paths.create_dirs().unwrap();
+    let payload = paths.pending_dir.join("resume-payload.bin");
+    std::fs::write(&payload, b"resume-me").unwrap();
+    let entry = bt_engine::JournalEntry::new(
+        device(),
+        "resume.bin",
+        payload,
+        bt_core::sha256(b"resume-me"),
+        9,
+        bt_engine::JournalKind::File,
+        false,
+    );
+    let journal = bt_engine::Journal::new(&paths.journal_file).with_base(&paths.pending_dir);
+    let begun = journal.begin(entry).unwrap();
+    journal.release(&begun.entry.id_hex(), false).unwrap();
+
+    let transport = Arc::new(MockTransport::new(Vec::new()));
+    let backend = RealBackend::open_with_transport_options(paths, Some(transport), true).unwrap();
+    assert!(
+        wait_for(|| !backend.jobs().is_empty(), Duration::from_secs(5)),
+        "auto_resume=true 应把 journal 条目重新入队"
+    );
+    assert_eq!(backend.jobs()[0].item.display_name, "resume.bin");
+    backend.shutdown();
+}
+
+#[test]
 fn pin_pairing_reaches_the_transport_handler() {
     let dir = TempDir::new("pin");
     let transport = Arc::new(MockTransport::new(Vec::new()));

@@ -469,6 +469,7 @@ dependencies = [
  "bt-core",
  "bt-engine",
  "bt-gui",
+ "bt-transport",
  "clap",
  "crossbeam-channel",
  "ctrlc",
