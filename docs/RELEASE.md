@@ -104,7 +104,7 @@ Linux：
 - `cargo build --workspace --release` 通过，记录 cli-only、GUI 与完整 bt 的体积。
 - `cargo fmt -p bt-platform -p bt-gui --check` 通过。
 - `cargo clippy -p bt-platform -p bt-gui --all-targets -- -D warnings` 通过。
-- `cargo test -p bt-platform -p bt-gui` 通过：bt-platform 22 项（另有 1 项需要桌面会话 D-Bus 的 ignored）、bt-gui 9 项（8 项单元测试加 1 项 zip 载荷生命周期集成测试）。
+- `cargo test -p bt-platform -p bt-gui` 通过：bt-platform 22 项（另有 1 项需要桌面会话 D-Bus 的 ignored）、bt-gui 10 项（8 项单元测试加 2 项载荷生命周期集成测试）。
 - `cargo run -p bt-gui -- --selftest` 在无显示环境退出 0，16 项检查覆盖 7 个页面、配对对话框、PIN 回填、GUI zip 入队与清理、后端 mock 事件、收件箱往返、zip 往返与日志落盘。
 - `cargo check -p bt-platform --target x86_64-pc-windows-msvc` 通过。
 - `cargo build -p bt-gui --release` 与 `cargo build -p bt-cli --no-default-features --release` 通过并记录体积。
