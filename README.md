@@ -1,12 +1,12 @@
 # 蓝牙传输
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 跨平台蓝牙文件传输工具，Rust 重写版本。图形界面与命令行共用同一套后端，覆盖设备发现、配对、OPP 与私有助手通道发送、断点续传、接收、记录、迁移与自检。
 
 - 仓库：https://github.com/SeverusZh/BluetoothTransfer
-- 版本：2.0.0
+- 版本：2.0.1
 - 许可证：MIT
 - 工具链：固定 1.100.1，MSRV 1.95
 
@@ -23,34 +23,34 @@
 
 ## 下载与安装
 
-发布产物由 `.github/workflows/release.yml` 在推送 `v*` 标签时构建，版本号取自根 `Cargo.toml` 的 `workspace.package.version`。v2.0.0 资产在推送 `v2.0.0` 标签后生成。
+发布产物由 `.github/workflows/release.yml` 在推送 `v*` 标签时构建，版本号取自根 `Cargo.toml` 的 `workspace.package.version`。v2.0.1 资产在推送 `v2.0.1` 标签后生成。
 
 | 平台 | 产物 | 文件名 |
 | --- | --- | --- |
-| Windows | 安装器 | `BluetoothTransfer-2.0.0-setup.exe` |
-| Windows | 图形界面绿色包 | `BluetoothTransfer-2.0.0-windows-x64.zip` |
-| Windows | cli-only 包 | `BluetoothTransfer-2.0.0-cli-windows-x64.zip` |
-| Linux | deb 包 | `bluetooth-transfer_2.0.0_amd64.deb` |
-| Linux | AppImage | `BluetoothTransfer-2.0.0-x86_64.AppImage` |
+| Windows | 安装器 | `BluetoothTransfer-2.0.1-setup.exe` |
+| Windows | 图形界面绿色包 | `BluetoothTransfer-2.0.1-windows-x64.zip` |
+| Windows | cli-only 包 | `BluetoothTransfer-2.0.1-cli-windows-x64.zip` |
+| Linux | deb 包 | `bluetooth-transfer_2.0.1_amd64.deb` |
+| Linux | AppImage | `BluetoothTransfer-2.0.1-x86_64.AppImage` |
 
-下载地址形如 `https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/<文件名>`：
+下载地址形如 `https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/<文件名>`：
 
-- [BluetoothTransfer-2.0.0-setup.exe](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-setup.exe)
-- [BluetoothTransfer-2.0.0-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-windows-x64.zip)
-- [BluetoothTransfer-2.0.0-cli-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-cli-windows-x64.zip)
-- [bluetooth-transfer_2.0.0_amd64.deb](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/bluetooth-transfer_2.0.0_amd64.deb)
-- [BluetoothTransfer-2.0.0-x86_64.AppImage](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-x86_64.AppImage)
+- [BluetoothTransfer-2.0.1-setup.exe](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-setup.exe)
+- [BluetoothTransfer-2.0.1-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-windows-x64.zip)
+- [BluetoothTransfer-2.0.1-cli-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-cli-windows-x64.zip)
+- [bluetooth-transfer_2.0.1_amd64.deb](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/bluetooth-transfer_2.0.1_amd64.deb)
+- [BluetoothTransfer-2.0.1-x86_64.AppImage](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-x86_64.AppImage)
 
 ### Windows
 
-- 安装器：per-user 安装到 `%LOCALAPPDATA%\Programs\BluetoothTransfer`，写入 `HKCU`，不申请管理员权限；默认创建开始菜单项与卸载入口，可选资源管理器右键菜单、SendTo 快捷方式与开机自启。静默安装为 `BluetoothTransfer-2.0.0-setup.exe /S`。
+- 安装器：per-user 安装到 `%LOCALAPPDATA%\Programs\BluetoothTransfer`，写入 `HKCU`，不申请管理员权限；默认创建开始菜单项与卸载入口，可选资源管理器右键菜单、SendTo 快捷方式与开机自启。静默安装为 `BluetoothTransfer-2.0.1-setup.exe /S`。
 - 绿色包：解压后直接运行 `bt-gui.exe`，包内附 `LICENSE`，仓库存在 `README.md` 时一并打入。
 - cli-only 包：`bt.exe` 与 `btrecv.exe`，不链接 GUI 依赖，适合脚本与服务器环境。
 - 升级只覆盖程序文件，保留 `%LOCALAPPDATA%\BlueToothTransfer` 与 `%APPDATA%\BlueToothTransfer` 下的配置、记录与日志。
 
 ### Linux
 
-- deb 包：`sudo apt install ./bluetooth-transfer_2.0.0_amd64.deb`，安装 `/usr/bin/bt-gui`、`/usr/bin/bt`、`/usr/bin/btrecv`、桌面文件与图标。`postinst`/`postrm` 只尝试刷新桌面数据库与图标缓存，失败不阻断安装。
+- deb 包：`sudo apt install ./bluetooth-transfer_2.0.1_amd64.deb`，安装 `/usr/bin/bt-gui`、`/usr/bin/bt`、`/usr/bin/btrecv`、桌面文件与图标。`postinst`/`postrm` 只尝试刷新桌面数据库与图标缓存，失败不阻断安装。
 - AppImage：`chmod +x` 后直接运行；无 FUSE 环境使用 `APPIMAGE_EXTRACT_AND_RUN=1`。
 - 运行依赖 BlueZ 提供的 `org.bluez` D-Bus 服务；图形界面还需要 X11 或 Wayland 会话。
 

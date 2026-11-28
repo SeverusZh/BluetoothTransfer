@@ -2,7 +2,7 @@
 
 ## 版本
 
-- 工作区单一版本号写在根 `Cargo.toml` 的 `workspace.package.version`，当前为 2.0.0。
+- 工作区单一版本号写在根 `Cargo.toml` 的 `workspace.package.version`，当前为 2.0.1。
 - 发布标签必须是 `v<version>`；`release.yml` 的版本校验作业会在标签与工作区版本不一致时直接失败。
 - 发布流程只允许在 CI 中执行；本地脚本用于验证打包逻辑，不代替 Windows 真机安装验证。
 
@@ -134,11 +134,11 @@ cargo build --release -p bt-gui -p bt-cli
 cargo build --release -p bt-cli --no-default-features
 
 # Linux 包
-VERSION=2.0.0 packaging/linux/build-deb.sh
-VERSION=2.0.0 APPIMAGETOOL=/path/to/appimagetool packaging/linux/build-appimage.sh
+VERSION=2.0.1 packaging/linux/build-deb.sh
+VERSION=2.0.1 APPIMAGETOOL=/path/to/appimagetool packaging/linux/build-appimage.sh
 
 # Windows 安装器与 runner 命令
-makensis /DVERSION=2.0.0 /DBUILD_DIR=target/release /DOUTPUT_FILE=dist/setup.exe packaging/windows/installer.nsi
+makensis /DVERSION=2.0.1 /DBUILD_DIR=target/release /DOUTPUT_FILE=dist/setup.exe packaging/windows/installer.nsi
 ```
 
 ## 图标
