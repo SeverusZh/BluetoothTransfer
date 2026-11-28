@@ -100,24 +100,27 @@ pub fn show(state: &mut UiState, ui: &mut egui::Ui) {
         return;
     }
     let records: Vec<Record> = state.records.clone();
-    egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Grid::new("records-grid")
-            .num_columns(10)
-            .striped(true)
-            .spacing([12.0, 6.0])
-            .show(ui, |ui| {
-                for header in [
-                    "时间", "方向", "类型", "对端", "名称", "大小", "状态", "通道", "备注", "操作",
-                ] {
-                    ui.label(RichText::new(header).strong().size(12.0));
-                }
-                ui.end_row();
-                for record in &records {
-                    record_row(state, ui, record);
+    egui::ScrollArea::horizontal()
+        .id_salt("records-horizontal")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            egui::Grid::new("records-grid")
+                .num_columns(10)
+                .striped(true)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    for header in [
+                        "时间", "方向", "类型", "对端", "名称", "大小", "状态", "通道", "备注", "操作",
+                    ] {
+                        ui.label(RichText::new(header).strong().size(12.0));
+                    }
                     ui.end_row();
-                }
-            });
-    });
+                    for record in &records {
+                        record_row(state, ui, record);
+                        ui.end_row();
+                    }
+                });
+        });
 
     if state.filter.clear_confirm {
         clear_modal(state, ui);

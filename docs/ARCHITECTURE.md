@@ -21,7 +21,7 @@
 - 迁移工具
 - 自检
 
-当前交付为 2.0.0 重构版本：GUI、CLI、引擎、存储与平台集成均已接线，真实蓝牙与 Windows 路径的验证边界见下文。
+当前交付为 2.0.1 重构版本：GUI、CLI、引擎、存储与平台集成均已接线，真实蓝牙与 Windows 路径的验证边界见下文。
 
 ## crate 依赖图与职责边界
 
@@ -168,10 +168,10 @@ Windows：
 
 ## 版本与发布
 
-- 整个工作区共用单一版本号，当前为 2.0.0，写在根 Cargo.toml 的 workspace.package 中。
+- 整个工作区共用单一版本号，当前为 2.0.1，写在根 Cargo.toml 的 workspace.package 中。
 - 构建工具链固定在根 `rust-toolchain.toml`，当前为 1.100.1，含 rustfmt 与 clippy；质量门禁与发布构建使用同一版本。
 - MSRV 当前为 1.95，与 `clippy.toml` 的 `msrv`、README 和 CI 的 MSRV 构建任务一致；`cargo xtask msrv` 校验 workspace 声明不低于依赖要求。
-- 发布标签形如 v2.0.0；标签必须与工作区版本一致，由 CI 校验。
+- 发布标签形如 v2.0.1；标签必须与工作区版本一致，由 CI 校验。
 - CI 矩阵覆盖 ubuntu-latest 与 windows-latest，执行格式化、静态检查、测试、发布构建与 GUI 自检。
 - 发布产物：cli-only 压缩包、GUI 单文件可执行、NSIS 安装器、deb 与 AppImage；发布流程只允许在 CI 里执行。
 - CLI 的 --version、GUI 标题版本、安装器脚本与 CI 版本校验都读取同一份 workspace.package.version；变更记录写入 CHANGELOG.md。

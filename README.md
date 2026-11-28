@@ -1,12 +1,13 @@
 # 蓝牙传输
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](CHANGELOG.md)
+[![CI](https://github.com/SeverusZh/BluetoothTransfer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SeverusZh/BluetoothTransfer/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-2.0.1-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 跨平台蓝牙文件传输工具，Rust 重写版本。图形界面与命令行共用同一套后端，覆盖设备发现、配对、OPP 与私有助手通道发送、断点续传、接收、记录、迁移与自检。
 
 - 仓库：https://github.com/SeverusZh/BluetoothTransfer
-- 版本：2.0.0
+- 版本：2.0.1
 - 许可证：MIT
 - 工具链：固定 1.100.1，MSRV 1.95
 
@@ -23,34 +24,37 @@
 
 ## 下载与安装
 
-发布产物由 `.github/workflows/release.yml` 在推送 `v*` 标签时构建，版本号取自根 `Cargo.toml` 的 `workspace.package.version`。v2.0.0 资产在推送 `v2.0.0` 标签后生成。
+发布由 `.github/workflows/ci.yml` 负责：`main` 上的质量门禁与 Windows、Linux 打包全部通过后，自动读取根 `Cargo.toml` 的 `workspace.package.version`，创建 `v<version>` 标签并发布 Release，不需要人工打标签或手动触发。推送 `v*` 标签与在 `main` 上手动 dispatch 是兼容与兜底路径；同名 Release 已存在时幂等跳过。v2.0.1 资产在流水线首次于 `main` 通过后生成。
 
 | 平台 | 产物 | 文件名 |
 | --- | --- | --- |
-| Windows | 安装器 | `BluetoothTransfer-2.0.0-setup.exe` |
-| Windows | 图形界面绿色包 | `BluetoothTransfer-2.0.0-windows-x64.zip` |
-| Windows | cli-only 包 | `BluetoothTransfer-2.0.0-cli-windows-x64.zip` |
-| Linux | deb 包 | `bluetooth-transfer_2.0.0_amd64.deb` |
-| Linux | AppImage | `BluetoothTransfer-2.0.0-x86_64.AppImage` |
+| Windows | 安装器 | `BluetoothTransfer-2.0.1-setup.exe` |
+| Windows | 图形界面绿色包 | `BluetoothTransfer-2.0.1-windows-x64.zip` |
+| Windows | cli-only 包 | `BluetoothTransfer-2.0.1-cli-windows-x64.zip` |
+| Linux | deb 包 | `bluetooth-transfer_2.0.1_amd64.deb` |
+| Linux | AppImage | `BluetoothTransfer-2.0.1-x86_64.AppImage` |
 
-下载地址形如 `https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/<文件名>`：
+下载地址形如 `https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/<文件名>`：
 
-- [BluetoothTransfer-2.0.0-setup.exe](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-setup.exe)
-- [BluetoothTransfer-2.0.0-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-windows-x64.zip)
-- [BluetoothTransfer-2.0.0-cli-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-cli-windows-x64.zip)
-- [bluetooth-transfer_2.0.0_amd64.deb](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/bluetooth-transfer_2.0.0_amd64.deb)
-- [BluetoothTransfer-2.0.0-x86_64.AppImage](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.0/BluetoothTransfer-2.0.0-x86_64.AppImage)
+- [BluetoothTransfer-2.0.1-setup.exe](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-setup.exe)
+- [BluetoothTransfer-2.0.1-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-windows-x64.zip)
+- [BluetoothTransfer-2.0.1-cli-windows-x64.zip](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-cli-windows-x64.zip)
+- [bluetooth-transfer_2.0.1_amd64.deb](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/bluetooth-transfer_2.0.1_amd64.deb)
+- [BluetoothTransfer-2.0.1-x86_64.AppImage](https://github.com/SeverusZh/BluetoothTransfer/releases/download/v2.0.1/BluetoothTransfer-2.0.1-x86_64.AppImage)
 
 ### Windows
 
-- 安装器：per-user 安装到 `%LOCALAPPDATA%\Programs\BluetoothTransfer`，写入 `HKCU`，不申请管理员权限；默认创建开始菜单项与卸载入口，可选资源管理器右键菜单、SendTo 快捷方式与开机自启。静默安装为 `BluetoothTransfer-2.0.0-setup.exe /S`。
+- 安装器：per-user 安装到 `%LOCALAPPDATA%\Programs\BluetoothTransfer`，写入 `HKCU`，不申请管理员权限；默认创建开始菜单项与卸载入口，可选资源管理器右键菜单、SendTo 快捷方式与开机自启。静默安装为 `BluetoothTransfer-2.0.1-setup.exe /S`。
 - 绿色包：解压后直接运行 `bt-gui.exe`，包内附 `LICENSE`，仓库存在 `README.md` 时一并打入。
 - cli-only 包：`bt.exe` 与 `btrecv.exe`，不链接 GUI 依赖，适合脚本与服务器环境。
 - 升级只覆盖程序文件，保留 `%LOCALAPPDATA%\BlueToothTransfer` 与 `%APPDATA%\BlueToothTransfer` 下的配置、记录与日志。
+- 图标：`bt-gui.exe` 内嵌应用图标，窗口、任务栏、资源管理器右键菜单与 SendTo 快捷方式使用同一图标。
+- 无控制台窗口：`bt-gui.exe` 为 Windows GUI 子系统，双击启动不弹出命令行窗口；`bt.exe` 与 `btrecv.exe` 保持控制台子系统，保留标准输出与退出码。
+- 界面自检：`bt-gui.exe --selftest` 没有控制台输出，默认把 JSON 报告写到 `%TEMP%\bt-gui-selftest.json`；可用 `--selftest --report <路径>` 指定报告文件。
 
 ### Linux
 
-- deb 包：`sudo apt install ./bluetooth-transfer_2.0.0_amd64.deb`，安装 `/usr/bin/bt-gui`、`/usr/bin/bt`、`/usr/bin/btrecv`、桌面文件与图标。`postinst`/`postrm` 只尝试刷新桌面数据库与图标缓存，失败不阻断安装。
+- deb 包：`sudo apt install ./bluetooth-transfer_2.0.1_amd64.deb`，安装 `/usr/bin/bt-gui`、`/usr/bin/bt`、`/usr/bin/btrecv`、桌面文件与图标。`postinst`/`postrm` 只尝试刷新桌面数据库与图标缓存，失败不阻断安装。
 - AppImage：`chmod +x` 后直接运行；无 FUSE 环境使用 `APPIMAGE_EXTRACT_AND_RUN=1`。
 - 运行依赖 BlueZ 提供的 `org.bluez` D-Bus 服务；图形界面还需要 X11 或 Wayland 会话。
 
@@ -264,7 +268,7 @@ cargo run -p bt-gui -- --selftest
 cargo test -p bt-cli           # CLI 端到端用例，使用临时 BT_HOME 与 BT_BACKEND=mock
 ```
 
-CI 在 `.github/workflows/ci.yml` 中运行三个作业：`质量门禁 (ubuntu-latest)` 与 `质量门禁 (windows-latest)` 依次执行 MSRV 元数据检查、格式化、静态检查、测试、发布构建、纯 CLI 构建与 GUI 自检；`MSRV 构建` 用 1.95.0 执行 `cargo check --workspace --all-targets` 校验声明的 MSRV。
+CI 在 `.github/workflows/ci.yml` 中按触发事件运行：`版本校验` 读取工作区版本并校验标签一致性；`质量门禁 (ubuntu-latest)` 与 `质量门禁 (windows-latest)` 依次执行 MSRV 元数据检查、格式化、静态检查、测试、发布构建、纯 CLI 构建与 GUI 自检；`MSRV 构建` 用 1.95.0 执行 `cargo check --workspace --all-targets` 校验声明的 MSRV；`Windows 打包` 与 `Linux 打包` 生成安装器、GUI 包、cli-only 包、`.deb` 与 AppImage，并断言体积与校验和。门禁与打包全部通过后，`main` 上的运行由 `发布 Release` 作业自动创建标签与 Release；PR 运行只验证不发布。
 
 测试数量：`cargo test --workspace` 共 296 项通过、0 失败，1 项因缺少桌面会话 D-Bus 被忽略；9 个 doc-test 目标无用例。`cargo test -p bt-cli` 合计 61 项，其中 `crates/bt-cli/tests/` 下的端到端用例 47 项，使用临时 `BT_HOME` 与 `BT_BACKEND=mock`，不依赖蓝牙硬件。
 

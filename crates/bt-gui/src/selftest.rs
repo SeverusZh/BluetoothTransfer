@@ -13,7 +13,7 @@ use crate::app::render_headless;
 use crate::state::{Page, UiState};
 use crate::theme;
 
-pub fn run() -> Result<u8, bt_core::BtError> {
+pub fn run(report_file: Option<&Path>) -> Result<u8, bt_core::BtError> {
     let report = self_check();
     for check in &report.checks {
         let mark = if check.skipped {
@@ -25,7 +25,55 @@ pub fn run() -> Result<u8, bt_core::BtError> {
         };
         println!("[{mark}] {}: {}", check.name, check.detail);
     }
+    if let Some(path) = report_file {
+        write_report(&report, path)?;
+        println!("自检报告已写入 {}", path.display());
+    }
     Ok(if report.passed() { 0 } else { 1 })
+}
+
+/// 解析自检报告路径：显式 `--report` 优先，Windows 无控制台时默认写临时目录。
+pub fn report_path(args: &[String]) -> Result<Option<PathBuf>, bt_core::BtError> {
+    let mut index = 0;
+    while index < args.len() {
+        let token = args[index].as_str();
+        if token == "--report" {
+            return match args.get(index + 1) {
+                Some(value) if !value.starts_with("--") => Ok(Some(PathBuf::from(value))),
+                _ => Err(bt_core::BtError::invalid("--report 后缺少报告文件路径")),
+            };
+        }
+        if let Some(value) = token.strip_prefix("--report=") {
+            if value.is_empty() {
+                return Err(bt_core::BtError::invalid("--report= 后缺少报告文件路径"));
+            }
+            return Ok(Some(PathBuf::from(value)));
+        }
+        index += 1;
+    }
+    Ok(default_report_path())
+}
+
+#[cfg(windows)]
+fn default_report_path() -> Option<PathBuf> {
+    Some(std::env::temp_dir().join("bt-gui-selftest.json"))
+}
+
+#[cfg(not(windows))]
+fn default_report_path() -> Option<PathBuf> {
+    None
+}
+
+fn write_report(report: &SelftestReport, path: &Path) -> Result<(), bt_core::BtError> {
+    if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            bt_core::BtError::internal(format!("创建自检报告目录失败 {}：{error}", parent.display()))
+        })?;
+    }
+    let json = serde_json::to_string_pretty(report)
+        .map_err(|error| bt_core::BtError::internal(format!("序列化自检报告失败：{error}")))?;
+    std::fs::write(path, json)
+        .map_err(|error| bt_core::BtError::internal(format!("写入自检报告失败 {}：{error}", path.display())))
 }
 
 pub fn self_check() -> SelftestReport {
@@ -448,5 +496,61 @@ mod tests {
             let report = handle.join().expect("自检线程不应 panic");
             assert!(report.passed(), "{:?}", report.checks);
         }
+    }
+
+    #[test]
+    fn report_path_honours_explicit_argument() {
+        let args = vec![
+            "--selftest".to_string(),
+            "--report".to_string(),
+            "/tmp/自检报告.json".to_string(),
+        ];
+        assert_eq!(
+            super::report_path(&args).expect("路径合法"),
+            Some(PathBuf::from("/tmp/自检报告.json"))
+        );
+        let args = vec!["--report=/tmp/report.json".to_string()];
+        assert_eq!(
+            super::report_path(&args).expect("路径合法"),
+            Some(PathBuf::from("/tmp/report.json"))
+        );
+    }
+
+    #[test]
+    fn report_path_rejects_missing_value() {
+        assert!(super::report_path(&["--report".to_string()]).is_err());
+        assert!(super::report_path(&["--report=".to_string()]).is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn report_path_defaults_to_stdout_on_linux() {
+        assert_eq!(super::report_path(&["--selftest".to_string()]).expect("默认可用"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn report_path_defaults_to_temp_on_windows() {
+        let path = super::report_path(&["--selftest".to_string()]).expect("默认可用");
+        assert_eq!(path, Some(std::env::temp_dir().join("bt-gui-selftest.json")));
+    }
+
+    #[test]
+    fn report_flag_writes_json_report() {
+        let dir = unique_temp_dir();
+        let path = dir.join("report.json");
+        let args = vec![
+            "--selftest".to_string(),
+            "--report".to_string(),
+            path.display().to_string(),
+        ];
+        let code = crate::main_entry(args).expect("自检可执行");
+        assert_eq!(code, 0);
+        let bytes = std::fs::read(&path).expect("报告文件已写入");
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("报告是合法 JSON");
+        let checks = json["checks"].as_array().expect("报告包含 checks 数组");
+        assert!(!checks.is_empty(), "报告至少包含一项检查");
+        assert!(checks.iter().all(|check| check["name"].is_string()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

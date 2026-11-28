@@ -54,11 +54,9 @@ pub fn show(state: &mut UiState, ui: &mut egui::Ui) {
         empty_state(ui, "尚未发现设备", "点击扫描；请确认对端蓝牙已开启并处于可被发现状态");
         return;
     }
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for device in &devices {
-            device_row(state, ui, device);
-        }
-    });
+    for device in &devices {
+        device_row(state, ui, device);
+    }
 
     show_alias_modal(state, ui);
 }

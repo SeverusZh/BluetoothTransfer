@@ -43,6 +43,19 @@ impl Page {
         Page::Settings,
     ];
 
+    /// 稳定的滚动状态标识，不随界面文案变化。
+    pub const fn key(self) -> &'static str {
+        match self {
+            Page::Devices => "devices",
+            Page::Send => "send",
+            Page::Queue => "queue",
+            Page::Receive => "receive",
+            Page::Records => "records",
+            Page::Logs => "logs",
+            Page::Settings => "settings",
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Page::Devices => "设备",

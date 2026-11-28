@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "bt-api"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bt-core",
  "crossbeam-channel",
@@ -449,7 +449,7 @@ dependencies = [
 
 [[package]]
 name = "bt-app"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bt-api",
  "bt-core",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "bt-cli"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "assert_cmd",
  "bt-api",
@@ -484,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "bt-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "serde",
  "sha2",
@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "bt-engine"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bt-api",
  "bt-core",
@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "bt-gui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bt-api",
  "bt-app",
@@ -513,11 +513,14 @@ dependencies = [
  "bt-transport",
  "crossbeam-channel",
  "eframe",
+ "image",
+ "serde_json",
+ "winresource",
 ]
 
 [[package]]
 name = "bt-platform"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "arboard",
  "bt-core",
@@ -534,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "bt-store"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bt-api",
  "bt-core",
@@ -546,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "bt-transport"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bt-core",
  "libc",
@@ -4350,6 +4353,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winresource"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2bc6d36480b829272a5bdabf08e6dca8004761c1da7e35efef800540c66221b"
+dependencies = [
+ "toml",
+ "version_check",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4444,7 +4457,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "yoke"

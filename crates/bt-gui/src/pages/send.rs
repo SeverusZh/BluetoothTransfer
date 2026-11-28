@@ -116,40 +116,35 @@ pub fn show(state: &mut UiState, ui: &mut egui::Ui) {
     if state.send.items.is_empty() {
         empty_state(ui, "待发送列表为空", "拖入文件或文件夹，或用上方按钮选择内容");
     } else {
-        egui::ScrollArea::vertical()
-            .max_height(260.0)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                let mut remove = None;
-                for (index, item) in state.send.items.iter().enumerate() {
-                    egui::Frame::new()
-                        .fill(theme::SURFACE)
-                        .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                        .corner_radius(egui::CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(10, 6))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(kind_label(item));
-                                ui.label(RichText::new(&item.display_name).strong());
-                                if let Some(bytes) = item.total_bytes {
-                                    ui.label(
-                                        RichText::new(format::bytes(bytes))
-                                            .size(11.0)
-                                            .color(theme::TEXT_SECONDARY),
-                                    );
-                                }
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button("移除").clicked() {
-                                        remove = Some(index);
-                                    }
-                                });
-                            });
+        let mut remove = None;
+        for (index, item) in state.send.items.iter().enumerate() {
+            egui::Frame::new()
+                .fill(theme::SURFACE)
+                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(kind_label(item));
+                        ui.label(RichText::new(&item.display_name).strong());
+                        if let Some(bytes) = item.total_bytes {
+                            ui.label(
+                                RichText::new(format::bytes(bytes))
+                                    .size(11.0)
+                                    .color(theme::TEXT_SECONDARY),
+                            );
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("移除").clicked() {
+                                remove = Some(index);
+                            }
                         });
-                }
-                if let Some(index) = remove {
-                    state.remove_send_item(index);
-                }
-            });
+                    });
+                });
+        }
+        if let Some(index) = remove {
+            state.remove_send_item(index);
+        }
     }
 
     if !state.send.warnings.is_empty() {

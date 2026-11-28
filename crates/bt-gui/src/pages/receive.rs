@@ -110,49 +110,47 @@ pub fn show(state: &mut UiState, ui: &mut egui::Ui) {
         empty_state(ui, "本会话暂无接收文件", "点击开始接收后，收到的文件会显示在这里");
         return;
     }
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for entry in &state.receive.completed {
-            egui::Frame::new()
-                .fill(theme::SURFACE)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                .corner_radius(egui::CornerRadius::same(6))
-                .inner_margin(egui::Margin::symmetric(10, 6))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        status_chip(
-                            ui,
-                            if entry.ok { "完成" } else { "失败" },
-                            if entry.ok {
-                                StatusKind::Success
-                            } else {
-                                StatusKind::Danger
-                            },
-                        );
-                        ui.label(RichText::new(&entry.name).strong());
-                        if entry.size > 0 {
-                            ui.label(
-                                RichText::new(format::bytes(entry.size))
-                                    .size(11.0)
-                                    .color(theme::TEXT_SECONDARY),
-                            );
-                        }
+    for entry in &state.receive.completed {
+        egui::Frame::new()
+            .fill(theme::SURFACE)
+            .stroke(egui::Stroke::new(1.0, theme::BORDER))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    status_chip(
+                        ui,
+                        if entry.ok { "完成" } else { "失败" },
+                        if entry.ok {
+                            StatusKind::Success
+                        } else {
+                            StatusKind::Danger
+                        },
+                    );
+                    ui.label(RichText::new(&entry.name).strong());
+                    if entry.size > 0 {
                         ui.label(
-                            RichText::new(format::timestamp(&entry.at))
-                                .size(11.0)
-                                .color(theme::TEXT_SECONDARY),
-                        );
-                    });
-                    if let Some(path) = &entry.path {
-                        ui.label(
-                            RichText::new(path.display().to_string())
+                            RichText::new(format::bytes(entry.size))
                                 .size(11.0)
                                 .color(theme::TEXT_SECONDARY),
                         );
                     }
-                    if let Some(error) = &entry.error {
-                        ui.label(RichText::new(error).color(theme::DANGER).size(12.0));
-                    }
+                    ui.label(
+                        RichText::new(format::timestamp(&entry.at))
+                            .size(11.0)
+                            .color(theme::TEXT_SECONDARY),
+                    );
                 });
-        }
-    });
+                if let Some(path) = &entry.path {
+                    ui.label(
+                        RichText::new(path.display().to_string())
+                            .size(11.0)
+                            .color(theme::TEXT_SECONDARY),
+                    );
+                }
+                if let Some(error) = &entry.error {
+                    ui.label(RichText::new(error).color(theme::DANGER).size(12.0));
+                }
+            });
+    }
 }
