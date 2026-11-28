@@ -13,6 +13,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   APPIMAGE_EXTRACT_AND_RUN: "1"
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
 
 jobs:
   version:
