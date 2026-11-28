@@ -1,15 +1,48 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+    tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  APPIMAGE_EXTRACT_AND_RUN: "1"
 
 jobs:
+  version:
+    name: 版本校验
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 读取工作区版本
+        id: read
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(awk '/^\[workspace\.package\]/{block=1;next} /^\[/{block=0} block && /^version[[:space:]]*=/{gsub(/[^0-9.]/,"");print;exit}' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "无法从 Cargo.toml 读取 workspace.package.version" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "版本号 $version 不是 x.y.z 形式" >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "标签 ${GITHUB_REF_NAME} 与工作区版本 v${version} 不一致" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
   quality:
     name: 质量门禁
     runs-on: ${{ matrix.os }}
@@ -71,3 +104,272 @@ jobs:
 
       - name: 按声明的 MSRV 构建
         run: cargo check --workspace --all-targets
+
+  windows-package:
+    name: Windows 打包
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 发布构建
+        run: cargo build --release -p bt-gui -p bt-cli
+
+      - name: 纯 CLI 构建
+        run: cargo build --release -p bt-cli --no-default-features
+
+      - name: NSIS 脚本编码校验
+        run: python packaging/windows/check-nsi-encoding.py
+
+      - name: 安装 NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: 生成安装器
+        run: python packaging/windows/build-installer.py --version ${{ needs.version.outputs.version }} --build-dir target/release --output dist/BluetoothTransfer-${{ needs.version.outputs.version }}-setup.exe
+
+      - name: PE 子系统与资源校验
+        run: python packaging/windows/verify-pe.py target/release/bt-gui.exe target/release/bt.exe target/release/btrecv.exe
+
+      - name: 组装绿色包
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.version }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $guiStage = "dist/gui"
+          New-Item -ItemType Directory -Force $guiStage | Out-Null
+          Copy-Item target/release/bt-gui.exe $guiStage
+          Copy-Item LICENSE $guiStage
+          if (Test-Path README.md) { Copy-Item README.md $guiStage }
+          Compress-Archive -Path "$guiStage/*" -DestinationPath "dist/BluetoothTransfer-$version-windows-x64.zip" -Force
+          $cliStage = "dist/cli"
+          New-Item -ItemType Directory -Force $cliStage | Out-Null
+          Copy-Item target/release/bt.exe $cliStage
+          Copy-Item target/release/btrecv.exe $cliStage
+          Copy-Item LICENSE $cliStage
+          Compress-Archive -Path "$cliStage/*" -DestinationPath "dist/BluetoothTransfer-$version-cli-windows-x64.zip" -Force
+
+      - name: 体积断言
+        shell: pwsh
+        run: |
+          $version = "${{ needs.version.outputs.version }}"
+          $checks = @(
+            @{ Path = "target/release/bt-gui.exe"; Limit = 20MB; Label = "GUI 单文件" },
+            @{ Path = "dist/BluetoothTransfer-$version-setup.exe"; Limit = 15MB; Label = "NSIS 安装器" },
+            @{ Path = "target/release/bt.exe"; Limit = 8MB; Label = "CLI 二进制" }
+          )
+          foreach ($check in $checks) {
+            $size = (Get-Item $check.Path).Length
+            Write-Host ("{0}: {1:N0} 字节" -f $check.Label, $size)
+            if ($size -gt $check.Limit) { throw ("{0} 超过体积上限 {1}" -f $check.Label, $check.Limit) }
+          }
+
+      - name: 校验和
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File | Where-Object { $_.Name -notlike "sha256sums-*" } | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content dist/sha256sums-windows.txt -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/sha256sums-windows.txt
+          if-no-files-found: error
+
+  linux-package:
+    name: Linux 打包
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libxi-dev libxcursor-dev \
+            libxrandr-dev libxinerama-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev pkg-config dpkg-dev file
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 发布构建
+        run: cargo build --release -p bt-gui -p bt-cli
+
+      - name: 纯 CLI 构建
+        run: cargo build --release -p bt-cli --no-default-features
+
+      - name: 生成 deb
+        run: VERSION=${{ needs.version.outputs.version }} packaging/linux/build-deb.sh
+
+      - name: 下载 appimagetool
+        run: |
+          curl -fsSL -o appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool.AppImage
+
+      - name: 生成 AppImage
+        run: VERSION=${{ needs.version.outputs.version }} APPIMAGETOOL=$PWD/appimagetool.AppImage packaging/linux/build-appimage.sh
+
+      - name: 体积断言
+        run: |
+          version=${{ needs.version.outputs.version }}
+          check() {
+            size=$(stat -c %s "$1")
+            limit=$2
+            echo "$3: $size 字节"
+            if [ "$size" -gt "$limit" ]; then echo "$3 超过体积上限 $limit" >&2; exit 1; fi
+          }
+          check target/release/bt-gui 20971520 "GUI 单文件"
+          check target/release/bt 8388608 "CLI 二进制"
+          check "dist/bluetooth-transfer_${version}_amd64.deb" 20971520 "deb"
+
+      - name: 校验和
+        run: |
+          cd dist
+          for file in *; do
+            if [ ! -f "$file" ]; then continue; fi
+            case "$file" in sha256sums-*) continue;; esac
+            sha256sum "$file"
+          done > sha256sums-linux.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+            dist/sha256sums-linux.txt
+          if-no-files-found: error
+
+  publish:
+    name: 发布 Release
+    needs: [version, quality, msrv, windows-package, linux-package]
+    if: >-
+      github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: publish-v${{ needs.version.outputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 发布前检查
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          if gh release view "$tag" --json tagName >/dev/null 2>&1; then
+            echo "::notice::Release ${tag} 已存在，跳过发布，不覆盖已发布资产"
+            echo "create=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/${tag}^{commit}" >/dev/null 2>&1; then
+            tag_commit=$(git rev-parse "refs/tags/${tag}^{commit}")
+            if [ "$tag_commit" != "$GITHUB_SHA" ]; then
+              echo "::notice::标签 ${tag} 已存在且指向 ${tag_commit}，当前提交 ${GITHUB_SHA} 不是标签目标；不移动标签，跳过发布"
+              echo "create=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "create=true" >> "$GITHUB_OUTPUT"
+
+      - name: 生成合并校验和
+        if: steps.check.outputs.create == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          find artifacts -type f -printf '%f\t%p\n' | sort | while IFS=$'\t' read -r name path; do
+            printf '%s  %s\n' "$(sha256sum "$path" | cut -d' ' -f1)" "$name"
+          done > combined-sha256sums.txt
+          count=$(wc -l < combined-sha256sums.txt)
+          if [ "$count" -lt 7 ]; then
+            echo "产物文件数量异常：$count" >&2
+            cat combined-sha256sums.txt >&2
+            exit 1
+          fi
+          cat combined-sha256sums.txt
+
+      - name: 生成发布说明
+        if: steps.check.outputs.create == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 packaging/release-notes.py --version "$VERSION" --output release-notes.md || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::notice::使用 CHANGELOG.md 中 ${VERSION} 的段落"
+          elif [ "$status" -eq 3 ]; then
+            echo "::notice::CHANGELOG.md 缺少 ${VERSION} 段落，回退到自动生成说明"
+            rm -f release-notes.md
+          else
+            exit "$status"
+          fi
+
+      - name: 创建 Release
+        if: steps.check.outputs.create == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          args=(release create "$tag" --target "$GITHUB_SHA" --title "蓝牙传输 ${tag}")
+          if [ -f release-notes.md ]; then
+            args+=(--notes-file release-notes.md)
+          else
+            args+=(--generate-notes)
+          fi
+          mapfile -t assets < <(find artifacts -type f | sort)
+          if [ "${#assets[@]}" -lt 7 ]; then
+            echo "下载到的产物不足：${#assets[@]}" >&2
+            exit 1
+          fi
+          args+=("${assets[@]}" combined-sha256sums.txt)
+          gh "${args[@]}"
+
+      - name: 发布后校验
+        if: steps.check.outputs.create == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${VERSION}"
+          is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft')
+          is_prerelease=$(gh release view "$tag" --json isPrerelease --jq '.isPrerelease')
+          if [ "$is_draft" != "false" ] || [ "$is_prerelease" != "false" ]; then
+            echo "Release ${tag} 状态异常：draft=${is_draft} prerelease=${is_prerelease}" >&2
+            exit 1
+          fi
+          count=$(gh release view "$tag" --json assets --jq '.assets | length')
+          echo "::notice::Release ${tag} 已发布，资产 ${count} 个"
