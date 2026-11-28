@@ -97,6 +97,8 @@ MockBackend 提供内存实现：可预置设备、事件脚本与配对交互�
 
 ## 结果文件轻量化指标
 
+体积数值取 v2.0.1 发布产物，本机 Linux 构建参考值见 `docs/RELEASE.md`。
+
 | 指标 | 上限 | 实测 | 说明 |
 | --- | --- | --- | --- |
 | 接收最终文件额外字节 | 0 | 0 | bt-app e2e 断言 16 字节载荷落盘 16 字节 |
@@ -107,15 +109,15 @@ MockBackend 提供内存实现：可预置设备、事件脚本与配对交互�
 | 导出 CSV | 200 字节每行 | 表头 74 字节，数据行 94 字节 | 一条含 CJK 名称的记录 |
 | OPP 协议开销 | 0.03% 以内 | 0.00923% | 65023 字节分片，6 字节 OBEX 头 |
 | 助手协议开销 | 0.01% 以内 | 0.00725% | 262144 字节分片，19 字节帧开销 |
-| cli-only bt | 8 MB 以内 | 3,609,904 字节 | 关闭 gui 特性的 release 构建 |
-| cli-only btrecv | 8 MB 以内 | 3,352,048 字节 | 同上 |
-| GUI 单文件 bt-gui | 20 MB 以内 | 11,176,216 字节 | strip、LTO、opt-level=z |
-| NSIS 安装器 | 15 MB 以内 | 未生成 | 本机无 makensis 与 Windows 链接器 |
-| .deb | 20 MB 以内 | 约 5.67 MB（字节数不可复现，随二进制与打包时间戳波动） | 含 GUI、cli-only bt 与 btrecv |
+| cli-only bt | 8 MB 以内 | 2,322,432 字节 | v2.0.1 包内 bt.exe，关闭 gui 特性的 release 构建 |
+| cli-only btrecv | 8 MB 以内 | 2,098,176 字节 | v2.0.1 包内 btrecv.exe，同上 |
+| GUI 单文件 bt-gui | 20 MB 以内 | 7,521,792 字节 | v2.0.1 包内 bt-gui.exe，strip、LTO、opt-level=z |
+| NSIS 安装器 | 15 MB 以内 | 3,449,137 字节 | v2.0.1 发布资产，由 CI 的 Windows runner 构建并通过 15 MB 上限断言 |
+| .deb | 20 MB 以内 | 5,553,444 字节 | v2.0.1 发布资产；重建不保证同字节，含 GUI、cli-only bt 与 btrecv |
 
 测量方法：
 
-- 文件与安装器体积用 stat 取字节数；发布工作流对 GUI、CLI 与安装器产物做上限断言。
+- 包内二进制与分发包体积用 stat 取字节数；发布工作流对 GUI、CLI bt、安装器与 deb 做上限断言。
 - 接收额外字节由 bt-app 的接收端到端测试断言落盘长度等于载荷长度；协议不写尾部元数据。
 - sidecar 与 journal 由 bt-engine 的 size_budget 测试构造典型与最坏条目并断言上限。
 - 导出体积在同一 REPL 会话发送一条文本记录后执行 export，用 wc -c 与 awk 统计字节。
