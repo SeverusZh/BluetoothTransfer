@@ -48,36 +48,31 @@ pub fn show(state: &mut UiState, ui: &mut egui::Ui) {
         ui.label(RichText::new("暂无日志").color(theme::TEXT_SECONDARY));
         return;
     }
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .stick_to_bottom(state.log_follow)
-        .show(ui, |ui| {
-            for entry in &entries {
-                let color = match entry.level {
-                    LogLevel::Debug => theme::TEXT_SECONDARY,
-                    LogLevel::Info => theme::TEXT,
-                    LogLevel::Warn => theme::WARNING,
-                    LogLevel::Error => theme::DANGER,
-                };
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(format::timestamp(&entry.at))
-                            .monospace()
-                            .size(11.0)
-                            .color(theme::TEXT_SECONDARY),
-                    );
-                    status_chip(
-                        ui,
-                        format::log_level(entry.level),
-                        match entry.level {
-                            LogLevel::Debug => StatusKind::Neutral,
-                            LogLevel::Info => StatusKind::Neutral,
-                            LogLevel::Warn => StatusKind::Warning,
-                            LogLevel::Error => StatusKind::Danger,
-                        },
-                    );
-                    ui.label(RichText::new(&entry.message).size(12.0).color(color));
-                });
-            }
+    for entry in &entries {
+        let color = match entry.level {
+            LogLevel::Debug => theme::TEXT_SECONDARY,
+            LogLevel::Info => theme::TEXT,
+            LogLevel::Warn => theme::WARNING,
+            LogLevel::Error => theme::DANGER,
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(format::timestamp(&entry.at))
+                    .monospace()
+                    .size(11.0)
+                    .color(theme::TEXT_SECONDARY),
+            );
+            status_chip(
+                ui,
+                format::log_level(entry.level),
+                match entry.level {
+                    LogLevel::Debug => StatusKind::Neutral,
+                    LogLevel::Info => StatusKind::Neutral,
+                    LogLevel::Warn => StatusKind::Warning,
+                    LogLevel::Error => StatusKind::Danger,
+                },
+            );
+            ui.label(RichText::new(&entry.message).size(12.0).color(color));
         });
+    }
 }

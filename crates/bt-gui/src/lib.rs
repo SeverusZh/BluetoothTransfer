@@ -5,6 +5,7 @@
 pub mod app;
 pub mod copy;
 pub mod format;
+pub mod icon;
 pub mod log_sink;
 pub mod pages;
 pub mod selftest;
@@ -25,7 +26,8 @@ pub const INSTANCE_NAME: &str = "BluetoothTransfer.Gui";
 /// 命令行入口：识别 `--selftest` 后退出，其余情况打开窗口。
 pub fn main_entry(args: Vec<String>) -> Result<u8, BtError> {
     if args.iter().any(|arg| arg == "--selftest") {
-        return selftest::run();
+        let report_file = selftest::report_path(&args)?;
+        return selftest::run(report_file.as_deref());
     }
     run_window(args)
 }
@@ -140,6 +142,9 @@ fn run_native(runtime: GuiRuntime, window_state: bt_platform::WindowState) -> Re
         .with_min_inner_size([900.0, 600.0])
         .with_title(format!("蓝牙传输 {}", env!("CARGO_PKG_VERSION")))
         .with_app_id("bluetooth-transfer");
+    if let Some(icon) = icon::window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     if window_state.maximized {
         viewport = viewport.with_maximized(true);
     } else {

@@ -1,4 +1,4 @@
-; 蓝牙传输 Windows 安装器：per-user，无需管理员，只写 HKCU 与本应用目录。
+﻿; 蓝牙传输 Windows 安装器：per-user，无需管理员，只写 HKCU 与本应用目录。
 Unicode true
 SetCompressor /SOLID lzma
 SetCompressorDictSize 64

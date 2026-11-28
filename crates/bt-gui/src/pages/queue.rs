@@ -30,12 +30,10 @@ pub fn show(state: &mut UiState, ui: &mut egui::Ui) {
         empty_state(ui, "队列为空", "在发送页选择内容与设备后即可入队");
         return;
     }
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        let jobs: Vec<JobSnapshot> = state.jobs.clone();
-        for job in &jobs {
-            job_row(state, ui, job);
-        }
-    });
+    let jobs: Vec<JobSnapshot> = state.jobs.clone();
+    for job in &jobs {
+        job_row(state, ui, job);
+    }
 }
 
 fn job_row(state: &mut UiState, ui: &mut egui::Ui, job: &JobSnapshot) {

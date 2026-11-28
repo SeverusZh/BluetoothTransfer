@@ -135,6 +135,8 @@ def main():
     large = render(master)
     with open(os.path.join(linux, 'icons', 'bluetooth-transfer-256.png'), 'wb') as handle:
         handle.write(png_bytes(master, large))
+    with open(os.path.join(windows, 'app.png'), 'wb') as handle:
+        handle.write(png_bytes(master, large))
 
     sizes = [16, 32, 48, 64, 128, 256]
     images = []

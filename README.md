@@ -47,6 +47,9 @@
 - 绿色包：解压后直接运行 `bt-gui.exe`，包内附 `LICENSE`，仓库存在 `README.md` 时一并打入。
 - cli-only 包：`bt.exe` 与 `btrecv.exe`，不链接 GUI 依赖，适合脚本与服务器环境。
 - 升级只覆盖程序文件，保留 `%LOCALAPPDATA%\BlueToothTransfer` 与 `%APPDATA%\BlueToothTransfer` 下的配置、记录与日志。
+- 图标：`bt-gui.exe` 内嵌应用图标，窗口、任务栏、资源管理器右键菜单与 SendTo 快捷方式使用同一图标。
+- 无控制台窗口：`bt-gui.exe` 为 Windows GUI 子系统，双击启动不弹出命令行窗口；`bt.exe` 与 `btrecv.exe` 保持控制台子系统，保留标准输出与退出码。
+- 界面自检：`bt-gui.exe --selftest` 没有控制台输出，默认把 JSON 报告写到 `%TEMP%\bt-gui-selftest.json`；可用 `--selftest --report <路径>` 指定报告文件。
 
 ### Linux
 
