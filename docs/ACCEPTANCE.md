@@ -129,7 +129,7 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 
 | 指标 | 上限 | 当前状态 |
 | --- | --- | --- |
-| cli-only 发布体积 | 8 MB | 已验证：v2.0.1 的 cli-only 包 2,471,238 字节，包内 `bt.exe` 2,322,432 字节、`btrecv.exe` 2,098,176 字节 |
+| cli-only 发布体积 | 8 MB | 已验证：v2.0.1 的 cli-only 包 2,471,238 字节，包内 `bt.exe` 2,322,432 字节、`btrecv.exe` 2,098,176 字节；CI 断言 `bt.exe` 上限 |
 | GUI 单文件 | 20 MB | 已验证：v2.0.1 GUI 绿色包 3,434,227 字节，包内 `bt-gui.exe` 7,521,792 字节 |
 | .deb | 20 MB | 已验证：v2.0.1 发布资产 5,553,444 字节；重建字节数不可复现，见 docs/RELEASE.md |
 | NSIS 安装器 | 15 MB | 已验证：v2.0.1 发布资产 3,449,137 字节，CI 断言通过；Windows 真机安装未验证 |

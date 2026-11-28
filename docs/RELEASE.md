@@ -149,7 +149,7 @@ v2.0.1 发布产物：
 | 产物 | 上限 | 实测 |
 | --- | --- | --- |
 | 包内 cli-only `bt.exe` | 8 MB（CI 断言） | 2,322,432 字节（2.21 MiB） |
-| 包内 cli-only `btrecv.exe` | 8 MB（CI 断言） | 2,098,176 字节（2.00 MiB） |
+| 包内 cli-only `btrecv.exe` | 8 MB（CI 未单独断言） | 2,098,176 字节（2.00 MiB） |
 | 包内 GUI `bt-gui.exe` | 20 MB（CI 断言） | 7,521,792 字节（7.17 MiB） |
 | NSIS 安装器 | 15 MB（CI 断言） | 3,449,137 字节（3.29 MiB） |
 | Windows GUI 绿色包 | 无独立断言 | 3,434,227 字节（3.28 MiB） |

@@ -253,7 +253,7 @@ bt devices list --json
 | 指标 | 上限 | v2.0.1 实测 |
 | --- | --- | --- |
 | cli-only `bt.exe` | 8 MB（CI 断言） | 2,322,432 字节 |
-| cli-only `btrecv.exe` | 8 MB（CI 断言） | 2,098,176 字节 |
+| cli-only `btrecv.exe` | 8 MB（CI 未单独断言） | 2,098,176 字节 |
 | GUI `bt-gui.exe` | 20 MB（CI 断言） | 7,521,792 字节 |
 
 分发包：
