@@ -101,8 +101,8 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 | SYS-05 | Linux 桌面集成 | .desktop、AppRun 与打包脚本静态检查 | 文件存在且脚本可重复执行；未在桌面环境验证 |
 | SYS-06 | GUI 页面与交互 | 设备、发送、队列、接收、记录、日志、设置 | 页面状态与动作已接线；无显示环境未验证真实交互 |
 | SYS-07 | GUI selftest | `cargo run -p bt-gui -- --selftest` | 已验证：16 项检查退出 0；环境不满足项以 skipped 标记，不计入失败 |
-| SYS-08 | Windows 安装器 | NSIS 构建与安装/卸载/升级 | 脚本曾用 NSIS 编译；未在 Windows 安装/卸载/升级 |
-| SYS-09 | GitHub Actions 发布 | release.yml 静态检查 | 版本校验、矩阵与产物断言已接线；未在 GitHub 实际运行 |
+| SYS-08 | Windows 安装器 | NSIS 构建与安装/卸载/升级 | CI 已生成安装器并通过 PE 与 15 MB 断言；未在 Windows 安装/卸载/升级 |
+| SYS-09 | GitHub Actions 发布 | `ci.yml` 在 GitHub 实际运行 | v2.0.1 由 `main` 自动发布；幂等重跑输出 notice 并跳过，未重复上传资产 |
 
 ## CLI 契约专项
 
@@ -129,10 +129,11 @@ CLI e2e 用例位于 `crates/bt-cli/tests/e2e.rs` 与 `crates/bt-cli/tests/pair_
 
 | 指标 | 上限 | 当前状态 |
 | --- | --- | --- |
-| cli-only 发布体积 | 8 MB | 已验证：`bt` 3,609,904 字节、`btrecv` 3,352,048 字节（本机 release，无 GUI 特性） |
-| GUI 单文件 | 20 MB | 已验证：`bt-gui` 11,176,216 字节 |
-| .deb | 20 MB | 已验证：重建实测约 5.67 MB（字节数不可复现，方法与波动说明见 docs/RELEASE.md） |
-| NSIS 安装器 | 15 MB | 未生成：本机无 makensis 与 Windows 链接器 |
+| cli-only 发布体积 | 8 MB | 已验证：v2.0.1 的 cli-only 包 2,471,238 字节，包内 `bt.exe` 2,322,432 字节、`btrecv.exe` 2,098,176 字节；CI 断言 `bt.exe` 上限 |
+| GUI 单文件 | 20 MB | 已验证：v2.0.1 GUI 绿色包 3,434,227 字节，包内 `bt-gui.exe` 7,521,792 字节 |
+| .deb | 20 MB | 已验证：v2.0.1 发布资产 5,553,444 字节；重建字节数不可复现，见 docs/RELEASE.md |
+| NSIS 安装器 | 15 MB | 已验证：v2.0.1 发布资产 3,449,137 字节，CI 断言通过；Windows 真机安装未验证 |
+| AppImage | 25 MB（建议值，CI 未断言） | 已验证：v2.0.1 发布资产 8,559,096 字节 |
 | 接收最终文件额外字节 | 0 | 已验证：bt-app e2e 断言落盘长度等于载荷 |
 | 半成品 sidecar | 64 字节 | 已验证：53 字节 |
 | journal 单条目 | 256 字节 | 已验证：典型 182 字节，最坏 253 字节 |

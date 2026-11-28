@@ -142,19 +142,35 @@ Linux：
 
 ## 体积实测
 
-本机为 Linux x86_64，无 MSVC 链接器、无 Windows 运行环境、无 `makensis` 预装。实测与上限如下，安装器体积一栏标注了验证边界。
+发布产物以发布页资产与 Windows CI 打包日志为准；本机数值只作参考，不参与验收。包内二进制体积是解包后的可执行文件，分发包体积是发布页下载的原始文件。
 
-| 产物 | 上限 | 本机实测 | 说明 |
-| --- | --- | --- | --- |
-| cli-only 二进制 `bt` | 8 MB | 3,609,904 字节（3.44 MiB） | `cargo build -p bt-cli --no-default-features --release` |
-| cli-only 二进制 `btrecv` | 8 MB | 3,352,048 字节（3.20 MiB） | 同上，两个二进制合计 6.96 MB |
-| 完整 `bt` | 无独立上限 | 11,690,904 字节（11.15 MiB） | 默认特性含 GUI，用作 GUI 绿色包内的命令行入口 |
-| GUI 单文件 `bt-gui` | 20 MB | 11,176,216 字节（10.66 MiB） | 已开启 strip/LTO/opt-level z |
-| NSIS 安装器 | 15 MB | 未生成 | 本机无 makensis、无 MSVC 链接器，只能在 CI 的 Windows runner 生成 |
-| `.deb` | 20 MB（CI 断言） | 约 5.67 MB，字节数不可复现 | `VERSION=2.0.0 packaging/linux/build-deb.sh` 用 release 二进制构建；二进制变化、dpkg-deb 时间戳与压缩实现可致数十 KB 差异，文档只记录方法与量级，不记录精确字节 |
-| AppImage | 25 MB（建议值，未在 CI 断言） | 8,555,000 字节（8.16 MiB） | 用 appimagetool continuous 构建，`--selftest` 退出 0 |
+v2.0.1 发布产物：
 
-体积上限的依据：cli-only 目标来自架构文档；GUI 20 MB 与安装器 15 MB 来自任务验收目标，release 配置已开启 strip、LTO 与 `opt-level z`。本机没有 makensis 与 MSVC 链接器，NSIS 安装器无法生成，不用占位二进制伪造体积；真实安装器由 CI 的 Windows runner 构建并断言。
+| 产物 | 上限 | 实测 |
+| --- | --- | --- |
+| 包内 cli-only `bt.exe` | 8 MB（CI 断言） | 2,322,432 字节（2.21 MiB） |
+| 包内 cli-only `btrecv.exe` | 8 MB（CI 未单独断言） | 2,098,176 字节（2.00 MiB） |
+| 包内 GUI `bt-gui.exe` | 20 MB（CI 断言） | 7,521,792 字节（7.17 MiB） |
+| NSIS 安装器 | 15 MB（CI 断言） | 3,449,137 字节（3.29 MiB） |
+| Windows GUI 绿色包 | 无独立断言 | 3,434,227 字节（3.28 MiB） |
+| Windows cli-only 包 | 无独立断言 | 2,471,238 字节（2.36 MiB） |
+| `.deb` | 20 MB（CI 断言） | 5,553,444 字节（5.30 MiB） |
+| AppImage | 25 MB（建议值，未在 CI 断言） | 8,559,096 字节（8.16 MiB） |
+
+`.deb` 字节数不可复现：release 二进制变化、`dpkg-deb` 时间戳与压缩实现可致数十 KB 差异，同一版本重建也不保证得到相同字节。发布页上的资产是唯一验收数值。
+
+本机 Linux x86_64 构建参考值：
+
+| 产物 | 本机实测 |
+| --- | --- |
+| cli-only `bt` | 3,609,904 字节（3.44 MiB） |
+| cli-only `btrecv` | 3,352,048 字节（3.20 MiB） |
+| 完整 `bt` | 11,690,904 字节（11.15 MiB） |
+| GUI `bt-gui` | 11,176,216 字节（10.66 MiB） |
+
+完整 `bt` 为默认特性含 GUI 的构建，用作 GUI 绿色包内的命令行入口。
+
+体积上限的依据：cli-only 目标来自架构文档；GUI 20 MB 与安装器 15 MB 来自任务验收目标，release 配置已开启 strip、LTO 与 `opt-level z`。本机没有 makensis 与 MSVC 链接器，Windows 产物只能在 CI 的 Windows runner 构建；v2.0.1 安装器已由 CI 生成并通过 15 MB 断言。
 
 ## 签名与安全
 
@@ -182,12 +198,12 @@ Linux：
 - `cargo build -p bt-gui --release` 与 `cargo build -p bt-cli --no-default-features --release` 通过并记录体积。
 - Linux 托盘：在会话 D-Bus 上启动并持有 `org.kde.StatusNotifierItem` 名称；本机没有托盘宿主面板，图标未实际显示。
 - NSIS 脚本：PATH 无 `makensis`，使用 `target/t3/nsis` 下的 NSIS 3.10 解包副本复核。`packaging/windows/build-installer.py --version 2.0.1` 带占位载荷编译通过，makensis 以 `-INPUTCHARSET UTF8` 处理脚本并报告 `(UTF8)`；`-PPO` 预处理输出中 `蓝牙传输`、`用蓝牙传输发送` 等中文完整无乱码。同一脚本去掉 BOM 并以 `-INPUTCHARSET ACP` 预处理时按预期报 `Bad text encoding`，说明 BOM 与字符集参数确实生效。占位产物只用于脚本验证，不作为发布产物；Windows 上的真实安装、卸载与升级仍未验证。
-- `.deb` 构建脚本：用 release 二进制运行 `VERSION=2.0.0 packaging/linux/build-deb.sh`，产物约 5.67 MB 并通过 `dpkg-deb --info` 检查；精确字节随二进制、打包时间戳与压缩实现变化，不可复现，引用构建脚本输出而非固定值。
-- AppImage：用 appimagetool continuous 与 `packaging/linux/build-appimage.sh` 生成 8,555,000 字节产物，`APPIMAGE_EXTRACT_AND_RUN=1` 运行 `--selftest` 退出 0。
+- `.deb` 构建脚本：v2.0.1 发布资产 5,553,444 字节并通过 `dpkg-deb --info` 检查；本机用 `VERSION=2.0.0 packaging/linux/build-deb.sh` 重建约 5.67 MB，字节数随二进制、打包时间戳与压缩实现变化，不保证复现。
+- AppImage：v2.0.1 发布资产 8,559,096 字节；本机构建 8,555,000 字节，`APPIMAGE_EXTRACT_AND_RUN=1` 运行 `--selftest` 退出 0。
+- 自动发布路径：v2.0.1 由 `main` 上的流水线自动创建标签与 Release；随后在 `main` 上手动 dispatch，`发布 Release` 作业输出「Release v2.0.1 已存在，跳过发布」的 notice，资产未重复上传。
 
 未验证（环境缺失，不伪造结论）：
 
-- 自动发布路径：main 上自动创建标签与 Release 需要合并后由 GitHub Actions 运行验证；PR 运行不发布，只覆盖门禁与双平台打包。
 - Windows 真机上的安装、升级、静默安装、卸载、右键菜单、SendTo、开机自启与托盘显示。
 - Windows GUI 运行与 Windows 通知；本机 `cargo check -p bt-gui --target x86_64-pc-windows-msvc` 被依赖 `libsqlite3-sys` 的 C 构建脚本阻断：缺少 MSVC `lib.exe`，不是 GUI 代码类型错误。bt-platform 的 Windows 目标检查已通过。
 - 真实蓝牙设备发现、配对、OPP/助手通道传输与接收；本机无蓝牙硬件与 BlueZ 服务。

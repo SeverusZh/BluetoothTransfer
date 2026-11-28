@@ -60,7 +60,7 @@
 
 ### 校验和
 
-发布页提供 `combined-sha256sums.txt`，逐行列出全部发布的产物，行内只写文件名；下载全部资产后可直接校验：
+发布页提供 `combined-sha256sums.txt`，逐行列出除自身外的其余发布资产，行内只写文件名；下载全部资产后可直接校验：
 
 ```bash
 sha256sum -c combined-sha256sums.txt
@@ -235,6 +235,8 @@ bt devices list --json
 
 ## 轻量化指标
 
+结果文件与协议指标由单元测试固化；体积指标取 v2.0.1 发布资产与 Windows CI 打包日志。包内二进制体积是解包后的可执行文件，分发包体积是发布页下载的原始文件。
+
 | 指标 | 上限 | 实测 |
 | --- | --- | --- |
 | 接收最终文件额外字节 | 0 | 0 |
@@ -245,12 +247,26 @@ bt devices list --json
 | 导出 CSV 单行 | 200 字节 | 表头 74 字节，数据 94 字节 |
 | OPP 协议开销 | 0.03% 以内 | 0.00923% |
 | 助手协议开销 | 0.01% 以内 | 0.00725% |
-| cli-only 发布体积 | 8 MB | `bt` 3,609,904 字节，`btrecv` 3,352,048 字节 |
-| GUI 单文件 | 20 MB | 11,176,216 字节 |
-| deb 包 | 20 MB | 约 5.67 MB，字节数不可复现，随二进制与打包时间戳波动 |
-| NSIS 安装器 | 15 MB | 本机无 makensis，未生成 |
 
-体积实测方法与验证边界见 `docs/RELEASE.md`，协议与导出指标由单元测试固化，CLI 侧实测值见 `docs/ACCEPTANCE.md`。
+包内二进制：
+
+| 指标 | 上限 | v2.0.1 实测 |
+| --- | --- | --- |
+| cli-only `bt.exe` | 8 MB（CI 断言） | 2,322,432 字节 |
+| cli-only `btrecv.exe` | 8 MB（CI 未单独断言） | 2,098,176 字节 |
+| GUI `bt-gui.exe` | 20 MB（CI 断言） | 7,521,792 字节 |
+
+分发包：
+
+| 产物 | 上限 | v2.0.1 实测 |
+| --- | --- | --- |
+| Windows cli-only 包 | 无独立断言 | 2,471,238 字节 |
+| Windows GUI 绿色包 | 无独立断言 | 3,434,227 字节 |
+| NSIS 安装器 | 15 MB（CI 断言） | 3,449,137 字节 |
+| deb 包 | 20 MB（CI 断言） | 5,553,444 字节 |
+| AppImage | 25 MB（建议值，未在 CI 断言） | 8,559,096 字节 |
+
+体积实测方法与验证边界见 `docs/RELEASE.md`，协议与导出指标由单元测试固化。
 
 ## 构建与测试
 
@@ -270,7 +286,7 @@ cargo test -p bt-cli           # CLI 端到端用例，使用临时 BT_HOME 与 
 
 CI 在 `.github/workflows/ci.yml` 中按触发事件运行：`版本校验` 读取工作区版本并校验标签一致性；`质量门禁 (ubuntu-latest)` 与 `质量门禁 (windows-latest)` 依次执行 MSRV 元数据检查、格式化、静态检查、测试、发布构建、纯 CLI 构建与 GUI 自检；`MSRV 构建` 用 1.95.0 执行 `cargo check --workspace --all-targets` 校验声明的 MSRV；`Windows 打包` 与 `Linux 打包` 生成安装器、GUI 包、cli-only 包、`.deb` 与 AppImage，并断言体积与校验和。门禁与打包全部通过后，`main` 上的运行由 `发布 Release` 作业自动创建标签与 Release；PR 运行只验证不发布。
 
-测试数量：`cargo test --workspace` 共 296 项通过、0 失败，1 项因缺少桌面会话 D-Bus 被忽略；9 个 doc-test 目标无用例。`cargo test -p bt-cli` 合计 61 项，其中 `crates/bt-cli/tests/` 下的端到端用例 47 项，使用临时 `BT_HOME` 与 `BT_BACKEND=mock`，不依赖蓝牙硬件。
+测试数量：v2.0.1 的 CI 中，`cargo test --workspace` 在 Linux runner 上 303 项通过、0 失败，1 项因缺少桌面会话 D-Bus 被忽略；在 Windows runner 上 292 项通过、0 失败。9 个 doc-test 目标均无用例。`cargo test -p bt-cli` 在 Linux runner 上合计 61 项，其中 `crates/bt-cli/tests/` 下的端到端用例 47 项（Windows runner 为 58 项与 44 项），使用临时 `BT_HOME` 与 `BT_BACKEND=mock`，不依赖蓝牙硬件。
 
 ## 平台与限制
 
